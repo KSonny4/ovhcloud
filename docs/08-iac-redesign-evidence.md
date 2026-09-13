@@ -50,3 +50,30 @@
 - Automated path needs no browser login, KVM, or ad-hoc SSH debugging: `bash scripts/rehearse-fresh-environment.sh` proves it.
 - Optional human dashboard use only: log in at `https://coolify.pkubelka.cz` via the OTP/email policy (`ksonny4@gmail.com`).
 - Authorized production sequence: `backend.hcl` + `imports.tf` (both ignored) → reviewed `terraform plan` with zero replacements for preserved resources → authorized `terraform apply` → health + service-token + backup verification → evidence recorded here.
+
+## 2026-09-13 — live import-plan reconciliation (throwaway local state)
+
+- Copied committed Terraform (main/variables/versions/outputs + lock) to a
+  disposable directory and executed a real provider-backed `terraform plan`
+  with all 8 import blocks against live Cloudflare + OVH + OpenBao.
+- Result: **Plan: 8 to import, 2 to add, 6 to change, 0 to destroy.**
+  The 2 adds are `tunnel_cloudflared_config.admin` (ingress source) and
+  `vault_kv_secret_v2.access_service_token` (escrow record); the 7 changes
+  are in-place only (DNS comments, app `allowed_idps`, IdP name
+  `"" -> "One-time PIN"`, token `duration "8760h" -> "1y"`). Zero
+  replacements, zero destroys; the preserved VPS stays read-only
+  (`data "ovh_vps" "existing"`, `provision_ovh_vps=false`).
+- Correct import-ID formats learned from provider v5.25 errors and recorded
+  in `imports.tf.example`: Tunnel `ACCOUNT/TUNNEL`, Access apps/OTP/token
+  `accounts/ACCOUNT/ID`, R2 `ACCOUNT/BUCKET/default`.
+- Config drift corrected in this commit: app names match live
+  (`Coolify Dashboard`, `Coolify SSH Administration`), both apps carry the
+  machine service-token policy at precedence 1 + email at precedence 2,
+  `allowed_idps = []` matches live, OTP IdP ignores API-side empty-name drift.
+- Machine verification live: `curl` with escrowed service-token headers to
+  `https://coolify.pkubelka.cz/login` returns **HTTP 200** (clean cookie jar;
+  stale CF_AppSession cookies previously masked the result).
+- Live apply still not executed: this plan ran against disposable local
+  state; production requires the encrypted S3 backend (`backend.hcl`),
+  reviewed `imports.tf`, and explicit operator authorization per
+  `infra/terraform/README.md`. No live resources were modified by the plan.

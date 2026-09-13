@@ -97,11 +97,11 @@ else
   if [ "$dry_run" -eq 1 ]; then
     log 'DRY-RUN: curl dashboard login with CF-Access service-token headers'
   else
-    code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 \
+    code="$(curl -sS -o /dev/null -w '%{http_code}' --cookie-jar /dev/null --max-time 20 \
       -H "CF-Access-Client-Id: ${client_id}" \
       -H "CF-Access-Client-Secret: ${client_secret}" \
       "https://coolify.${domain}/login")"
-    log "dashboard machine verification HTTP status: ${code}"
+    log "dashboard machine verification HTTP status: ${code} (200 = service token accepted; use a clean cookie jar, stale CF_AppSession cookies mask the result)"
     case "$code" in
       200|302) ;;
       *) echo "machine verification failed with HTTP ${code}" >&2; exit 1 ;;
