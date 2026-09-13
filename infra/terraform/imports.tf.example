@@ -12,8 +12,9 @@
 #   rm imports.tf tfplan
 #
 # import {
-#   # Live Tunnel: coolify-admin (currently b145382e-d1cc-4e60-b910-3de56fa9ce2c).
-#   # Retrieve the canonical ID from Cloudflare before use; do not hardcode it.
+#   # Live Tunnel: coolify-admin. Retrieve the canonical ID from Cloudflare
+#   # before use; do not hardcode it. Verified import format (provider v5.25):
+#   # "ACCOUNT_ID/TUNNEL_ID" (no accounts/ prefix).
 #   to = cloudflare_zero_trust_tunnel_cloudflared.admin
 #   id = "REPLACE_WITH_ACCOUNT_ID/REPLACE_WITH_TUNNEL_ID"
 # }
@@ -31,29 +32,32 @@
 # }
 #
 # import {
-#   # Existing Access apps/policies/OTP provider/service token.
-#   # Keep one block per live object; all IDs come from provider discovery.
+#   # Existing Access apps. Verified import format (provider v5.25):
+#   # "accounts/ACCOUNT_ID/APP_ID" (accounts/ prefix required).
 #   to = cloudflare_zero_trust_access_application.coolify
-#   id = "REPLACE_WITH_ACCOUNT_ID/REPLACE_WITH_COOLIFY_ACCESS_APP_ID"
+#   id = "accounts/REPLACE_WITH_ACCOUNT_ID/REPLACE_WITH_COOLIFY_ACCESS_APP_ID"
 # }
 #
 # import {
 #   to = cloudflare_zero_trust_access_application.ssh
-#   id = "REPLACE_WITH_ACCOUNT_ID/REPLACE_WITH_SSH_ACCESS_APP_ID"
+#   id = "accounts/REPLACE_WITH_ACCOUNT_ID/REPLACE_WITH_SSH_ACCESS_APP_ID"
 # }
 #
 # import {
+#   # OTP identity provider. Verified format: "accounts/ACCOUNT_ID/IDP_ID".
 #   to = cloudflare_zero_trust_access_identity_provider.one_time_pin
-#   id = "REPLACE_WITH_ACCOUNT_ID/REPLACE_WITH_ONE_TIME_PIN_IDP_ID"
+#   id = "accounts/REPLACE_WITH_ACCOUNT_ID/REPLACE_WITH_ONE_TIME_PIN_IDP_ID"
 # }
 #
 # import {
+#   # Machine service token. Verified format: "accounts/ACCOUNT_ID/TOKEN_ID".
 #   to = cloudflare_zero_trust_access_service_token.machine
-#   id = "REPLACE_WITH_ACCOUNT_ID/REPLACE_WITH_MACHINE_SERVICE_TOKEN_ID"
+#   id = "accounts/REPLACE_WITH_ACCOUNT_ID/REPLACE_WITH_MACHINE_SERVICE_TOKEN_ID"
 # }
 #
 # import {
 #   # Existing private R2 backup bucket, when already created.
+#   # Verified format: "ACCOUNT_ID/BUCKET_NAME/default" (jurisdiction suffix required).
 #   to = cloudflare_r2_bucket.backups
-#   id = "REPLACE_WITH_ACCOUNT_ID/REPLACE_WITH_R2_BUCKET_NAME"
+#   id = "REPLACE_WITH_ACCOUNT_ID/REPLACE_WITH_R2_BUCKET_NAME/default"
 # }

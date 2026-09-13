@@ -94,6 +94,9 @@ resource "cloudflare_zero_trust_access_identity_provider" "one_time_pin" {
     # Accidentally replacing the human fallback identity provider would lock
     # out optional dashboard use. Keep replacement explicit.
     prevent_destroy = true
+    # The provider API returns an empty name for this built-in IdP; keep the
+    # configured value so refresh does not produce perpetual drift.
+    ignore_changes = [name]
   }
 }
 
@@ -128,10 +131,10 @@ resource "cloudflare_zero_trust_tunnel_cloudflared_config" "admin" {
 
 resource "cloudflare_zero_trust_access_application" "coolify" {
   account_id                = var.cloudflare_account_id
-  name                      = "Coolify administration"
+  name                      = "Coolify Dashboard"
   domain                    = "coolify.${var.domain}"
   type                      = "self_hosted"
-  allowed_idps              = [cloudflare_zero_trust_access_identity_provider.one_time_pin.id]
+  allowed_idps              = []
   auto_redirect_to_identity = false
   session_duration          = "24h"
   policies = concat(
@@ -162,24 +165,36 @@ resource "cloudflare_zero_trust_access_application" "coolify" {
 
 resource "cloudflare_zero_trust_access_application" "ssh" {
   account_id                = var.cloudflare_account_id
-  name                      = "OVH SSH administration"
+  name                      = "Coolify SSH Administration"
   domain                    = "ssh.${var.domain}"
   type                      = "self_hosted"
-  allowed_idps              = [cloudflare_zero_trust_access_identity_provider.one_time_pin.id]
+  allowed_idps              = []
   auto_redirect_to_identity = false
   session_duration          = "24h"
-  policies = [
-    for position, email in sort(tolist(var.admin_emails)) : {
-      name       = "Allow ${email}"
-      decision   = "allow"
-      precedence = position + 1
+  policies = concat(
+    [{
+      name       = "Allow machine service token"
+      decision   = "non_identity"
+      precedence = 1
       include = [{
-        email = {
-          email = email
+        service_token = {
+          token_id = cloudflare_zero_trust_access_service_token.machine.id
         }
       }]
-    }
-  ]
+    }],
+    [
+      for position, email in sort(tolist(var.admin_emails)) : {
+        name       = "Allow ${email}"
+        decision   = "allow"
+        precedence = position + 2
+        include = [{
+          email = {
+            email = email
+          }
+        }]
+      }
+    ]
+  )
 }
 
 resource "vault_kv_secret_v2" "access_service_token" {
