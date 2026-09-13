@@ -24,7 +24,13 @@
 | Coolify | `scripts/provision-coolify.sh` | pinned release (default `4.3.19`), Snap-Docker refusal, skips healthy installs, origin `/login` probe |
 | Tunnel + Access | `scripts/configure-tunnel-access.sh` | official cloudflared install, token stays in one command env, service-token `curl` must return 200/302 |
 | R2 backups | `scripts/backup-r2-probe.sh` | scoped credentials from OpenBao env only; put/head/get/delete probe; retention/rollback expectations printed |
-| Full rehearsal | `scripts/rehearse-fresh-environment.sh` | every fresh script runs twice in dry-run (byte-identical), Terraform gates pass, no plaintext secrets, `graft check` OK, JSON report in `/tmp/ovh-coolify-rehearsal/rehearsal-report.json` |
+| Full rehearsal | `scripts/rehearse-fresh-environment.sh` | every fresh script runs twice in dry-run (byte-identical), Terraform gates pass, no plaintext secrets, `graft check` OK, JSON report in `/tmp/ovh-coolify-rehearsal/rehearsal-report.json`; 9/9 pass 2026-09-13 |
+
+## Live backup evidence (2026-09-13, preserved VPS, no mutation)
+
+- Coolify release verified live: `docker.io/coollabsio/coolify:4.3.19`; all 6 containers healthy; origin `/login` → 200, `/` → 302.
+- Postgres `pg_dump -Fc` of the live Coolify DB produced a 295 KB dump; restore into disposable database `coolify_restore_probe` succeeded and returned the known row (`users` count 1, `ksonny4@gmail.com`); probe database dropped and dump artifacts removed afterwards.
+- R2 bucket `ovh-coolify-backups` created via API (EEUR, Standard); bucket GET confirms it. Scoped S3 credential issuance is blocked: `/r2/api-tokens` routes return 404 under the R2-scoped token and `/user/tokens` returns 403; the escrowed full-access token is stale (`Invalid API Token`). Coolify-scheduled R2 backup wiring needs a fresh full-access token from the operator.
 
 ## Secret boundary
 

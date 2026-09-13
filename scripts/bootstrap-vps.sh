@@ -8,6 +8,8 @@
 # - Never reinstalls, reboots without BOOTSTRAP_ALLOW_REBOOT=1, or touches a
 #   preserved production host unless BOOTSTRAP_TARGET_HOST is explicit.
 # - Version-aware: refuses unsupported Ubuntu releases before changing anything.
+# - Verifies Docker itself (engine version + hello-world), because the
+#   official Coolify installer assumes it can install/configure Docker.
 #
 # Usage:
 #   BOOTSTRAP_TARGET_HOST=fresh-host.example \
@@ -150,6 +152,23 @@ if ! swapon --show 2>/dev/null | grep -q .; then
 fi
 
 run systemctl enable --now unattended-upgrades || true
+
+if ! command -v docker >/dev/null 2>&1; then
+  if [ "$dry_run" -eq 1 ]; then
+    log 'DRY-RUN: verify Docker engine (docker version + hello-world)'
+  else
+    echo 'Docker engine not found after bootstrap; refusing to continue (Coolify requires Docker).' >&2
+    exit 2
+  fi
+else
+  run docker version --format '{{.Server.Version}}'
+  if [ "$dry_run" -eq 1 ]; then
+    log 'DRY-RUN: docker run --rm hello-world'
+  else
+    run docker run --rm hello-world >/dev/null
+  fi
+  log 'Docker engine verified (hello-world ran successfully).'
+fi
 
 log 'bootstrap ready: guest packages, key-only SSH, swap, and time configured.'
 if [ -f /var/run/reboot-required ] && [ "${BOOTSTRAP_ALLOW_REBOOT:-0}" = '1' ] && [ "$dry_run" -eq 0 ]; then
