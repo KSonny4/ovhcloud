@@ -11,7 +11,7 @@ Assumptions:
 - Cloudflare will provide DNS, Tunnel/Access for administration and R2 backup storage;
 - the baseline 4 GB VPS will use a 2 GB swap file.
 
-Replace every `<...>` placeholder before running a command.
+Replace every `<...>` placeholder before running a command. The canonical domain is intentionally not stored in this repository; confirm it in `docs/deployment-plan.md` and provide it through the ignored Terraform variables file before creating DNS or Tunnel resources. `example.com` is documentation-only.
 
 ## Phase 1: prepare OVH
 

@@ -1,6 +1,6 @@
 # 07. Deploy OmniRoute safely on Coolify
 
-OmniRoute is a good fit for this Coolify VPS, but treat it as a **stateful single-replica service**.
+OmniRoute is a good fit for this Coolify VPS, but treat it as a **stateful single-replica service**. Its public hostname must use the approved canonical domain recorded in `docs/deployment-plan.md`; `example.com` below is only a documentation placeholder.
 
 ## Target architecture
 

@@ -1,0 +1,33 @@
+name: Validate deployment plan
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: '1.9.8'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+      - name: Install graft freshness checker
+        run: npm install --global graft@0.3.1
+      - name: Validate repository and non-live IaC
+        run: bash scripts/validate-repository.sh
+      - name: Scan repository for secrets
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Validate shell healthcheck
+        run: shellcheck scripts/healthcheck.sh

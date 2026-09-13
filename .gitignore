@@ -24,3 +24,18 @@ local/
 backups/
 *.local
 .DS_Store
+
+# graft's local graph cache — regenerable, not committed (run `graft build`).
+/graft/
+
+# Terraform local state, provider cache and operator-only inputs
+**/.terraform/
+*.tfstate
+*.tfstate.*
+terraform.tfvars
+backend.hcl
+imports.tf
+*.tfvars
+!*.tfvars.example
+!backend.hcl.example
+!imports.tf.example

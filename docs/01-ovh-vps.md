@@ -111,7 +111,7 @@ Important facts from OVH's current documentation:
 
 For this Coolify host, the intended public application surface is eventually only TCP 80 and 443. SSH and Coolify bootstrap ports should be temporary/restricted.
 
-Do **not** blindly build a deny-all Edge Network Firewall before you have Tailscale and a tested recovery route. A bad rule can lock out legitimate traffic during DDoS mitigation.
+Do **not** blindly build a deny-all Edge Network Firewall before Cloudflare Tunnel + Access and a tested OVH recovery route are working. A bad rule can lock out legitimate traffic during DDoS mitigation.
 
 Official reference:
 

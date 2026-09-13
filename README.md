@@ -6,7 +6,7 @@ Opinionated runbook for turning a fresh OVHcloud VPS into a small self-hosted ap
 
 ## Start here
 
-If you have just bought the VPS and nothing is configured yet, follow:
+Read [`CONTEXT.md`](CONTEXT.md) for the architectural invariants, then use the [deployment plan](docs/deployment-plan.md) for the evidence table and non-live IaC handoff. If you have just bought the VPS and nothing is configured yet, follow:
 
 **[00. From zero to a working Coolify VPS](docs/00-quickstart.md)**
 
@@ -37,6 +37,8 @@ OVHcloud VPS
 This repository intentionally contains **no IP addresses, passwords, tokens, private SSH keys, R2 credentials, Cloudflare Tunnel tokens or Coolify APP_KEY**. It is public infrastructure documentation only.
 
 ## Full runbook
+
+The implementation handoff, evidence table, IaC boundaries and authorized-apply sequence are in [the deployment plan](docs/deployment-plan.md).
 
 1. [From zero to a working Coolify VPS](docs/00-quickstart.md)
 2. [Prepare the OVH VPS](docs/01-ovh-vps.md)
