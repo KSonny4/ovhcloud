@@ -1,0 +1,26 @@
+# Environment / application secrets
+.env
+.env.*
+!.env.example
+
+# Private keys and certificates
+*.pem
+*.key
+id_rsa
+id_ed25519
+*_rsa
+*_ed25519
+
+# Provider / tooling credentials
+ovh.conf
+.ovh.conf
+credentials.json
+*.secret
+secrets.json
+
+# Local-only state
+private/
+local/
+backups/
+*.local
+.DS_Store
