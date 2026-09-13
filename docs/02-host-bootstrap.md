@@ -113,51 +113,90 @@ ssh -i ~/.ssh/ovh_vps_ed25519 root@<VPS_IPV4>
 
 `PermitRootLogin prohibit-password` is intentional. Coolify's self-hosted localhost connection expects SSH and the official setup supports this mode.
 
-## 5. Install Tailscale
+## 5. Install Cloudflare Tunnel for administration
 
-Tailscale becomes the normal administrative path so public SSH can later be restricted.
+Cloudflare Tunnel becomes the normal human-administration path. `cloudflared` establishes outbound-only connections from the VPS, so SSH does not need a public inbound port after the tunnel is proven.
 
-```bash
-curl -fsSL https://tailscale.com/install.sh | sh
-sudo tailscale up
-```
+In Cloudflare:
 
-Authenticate using the URL printed by the command.
+1. go to `Networking -> Tunnels`;
+2. create a Cloudflare Tunnel for this VPS;
+3. choose the Linux connector instructions;
+4. run the generated install command on the VPS;
+5. verify the connector shows **Healthy**.
 
-Verify:
+The dashboard-generated command normally installs `cloudflared` as a service with a tunnel token. Treat that token as a secret and never commit it.
 
-```bash
-tailscale status
-tailscale ip -4
-```
-
-From your workstation, test normal OpenSSH over the Tailscale address:
+Verify locally:
 
 ```bash
-ssh -i ~/.ssh/ovh_vps_ed25519 root@<TAILSCALE_IPV4>
+systemctl status cloudflared --no-pager
+journalctl -u cloudflared -n 50 --no-pager
 ```
 
-You can optionally enable Tailscale SSH later with:
+## 6. Publish SSH through Cloudflare and protect it with Access
+
+On the tunnel, add a published application route:
+
+```text
+Hostname: ssh.example.com
+Service:  SSH
+Target:   localhost:22
+```
+
+Then create a Cloudflare Access self-hosted application for `ssh.example.com` and restrict it to your chosen identity/account. Do not leave the SSH hostname without an Access policy.
+
+On your Mac/workstation, install `cloudflared`. With Homebrew:
 
 ```bash
-sudo tailscale set --ssh
+brew install cloudflared
+command -v cloudflared
 ```
 
-That introduces Tailscale SSH policy/ACL semantics, so it is not required for this baseline. Plain OpenSSH over the encrypted tailnet is sufficient.
+Add an SSH config entry using the actual path printed by `command -v cloudflared`:
 
-## 6. Restrict public SSH after Tailscale works
+```sshconfig
+Host ovh-cloudflare
+    HostName ssh.example.com
+    User root
+    IdentityFile ~/.ssh/ovh_vps_ed25519
+    ProxyCommand /opt/homebrew/bin/cloudflared access ssh --hostname %h
+```
 
-Only do this after you have successfully logged in over Tailscale and know where the OVH KVM console is.
+If `cloudflared` is installed somewhere else, replace `/opt/homebrew/bin/cloudflared` accordingly.
+
+Test:
+
+```bash
+ssh ovh-cloudflare
+```
+
+Cloudflare Access should open a browser authentication flow and then establish the native SSH session.
+
+Do not remove public SSH until this works and you know how to use OVH KVM/rescue mode.
+
+## 7. Restrict public SSH after Cloudflare access works
+
+Only do this after you have successfully logged in through Cloudflare and know where the OVH KVM console is.
 
 Preferred steady state:
 
-- public Internet: 80/443 only
-- administration: Tailscale
-- emergency: OVH KVM/rescue mode
+- public Internet: 80/443 for normal Coolify web applications;
+- administration: Cloudflare Tunnel + Access;
+- SSH daemon: still listening locally for Coolify and the tunnel;
+- emergency: OVH KVM/rescue mode.
 
-At the OVH/provider firewall, remove unrestricted public TCP 22 or restrict it to a trusted source IP. Keep the host SSH daemon listening normally so the Tailscale path still works.
+At the OVH/provider firewall, remove unrestricted public TCP 22. The Cloudflare connector reaches `localhost:22` from inside the VPS, so port 22 does not need to be Internet-accessible.
 
-## 7. Host firewall note: Docker changes the rules
+After changing the provider firewall, verify both:
+
+```bash
+ssh ovh-cloudflare
+```
+
+and that direct public-IP SSH no longer succeeds from an untrusted network.
+
+## 8. Host firewall note: Docker changes the rules
 
 Ubuntu UFW alone is **not sufficient protection for Docker-published ports**. Docker creates NAT/firewall rules that can route published container traffic before UFW's normal input rules.
 
@@ -181,7 +220,7 @@ After Docker exists:
 docker ps --format 'table {{.Names}}\t{{.Ports}}'
 ```
 
-## 8. Enable unattended security updates
+## 9. Enable unattended security updates
 
 Ubuntu installs `unattended-upgrades`; verify it is active:
 
@@ -198,9 +237,9 @@ Review configuration in:
 
 Do not blindly auto-reboot a production host. Apply kernel/reboot-requiring updates deliberately when you can verify the services afterwards.
 
-## 9. Optional swap for VPS-1-sized hosts
+## 10. Configure 2 GB swap on a 4 GB VPS
 
-If the host has 4 GB RAM, a small swap file can reduce the chance that a temporary Docker build spike kills the host. It is a safety net, not extra RAM.
+For this host, use **2 GB swap** as the baseline. It reduces the chance that a temporary Docker build or deployment spike causes an OOM kill. It is a safety net, not extra RAM for sustained workloads.
 
 Check first:
 
@@ -208,7 +247,7 @@ Check first:
 swapon --show
 ```
 
-If there is no swap and you want 2 GB:
+If there is no existing swap:
 
 ```bash
 sudo fallocate -l 2G /swapfile
@@ -225,9 +264,19 @@ Verify:
 ```bash
 free -h
 swapon --show
+sysctl vm.swappiness
 ```
 
-## 10. Pre-Coolify checks
+Expected baseline:
+
+```text
+swap:       ~2 GiB
+swappiness: 10
+```
+
+Operational rule: occasional swap usage during a build is acceptable. Regular swap growth, noticeable latency due to swapping, or OOM kills means the workload needs memory limits/tuning or a VPS upgrade.
+
+## 11. Pre-Coolify checks
 
 ```bash
 cat /etc/os-release
@@ -236,6 +285,7 @@ free -h
 df -hT
 sudo ss -lntup
 systemctl --failed
+systemctl status cloudflared --no-pager
 ```
 
 Do not pre-install Docker from Snap. Coolify explicitly does not support Docker installed through Snap. Let the official Coolify installer install/configure Docker unless you have a specific reason to manage Docker yourself.
@@ -245,11 +295,13 @@ Do not pre-install Docker from Snap. Coolify explicitly does not support Docker 
 - [ ] packages updated
 - [ ] key-only SSH works for `root`
 - [ ] password and keyboard-interactive SSH disabled
-- [ ] Tailscale is connected
-- [ ] root SSH over Tailscale works
+- [ ] 2 GB swap configured on a 4 GB VPS
+- [ ] Cloudflare Tunnel connector is healthy
+- [ ] Cloudflare Access policy protects the SSH hostname
+- [ ] root SSH through Cloudflare works
+- [ ] unrestricted public TCP 22 removed/restricted
 - [ ] OVH KVM/rescue path known
 - [ ] Docker is not installed via Snap
-- [ ] optional swap configured if wanted
 - [ ] `systemctl --failed` is clean or understood
 
 Next: [03. Install Coolify](03-coolify.md)
@@ -257,5 +309,6 @@ Next: [03. Install Coolify](03-coolify.md)
 ## References
 
 - Coolify OpenSSH: https://coolify.io/docs/core/infrastructure/servers/openssh
-- Tailscale Linux: https://tailscale.com/docs/install/linux
+- Cloudflare Tunnel: https://developers.cloudflare.com/tunnel/
+- Cloudflare SSH through Access: https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/use-cases/ssh/ssh-cloudflared-authentication/
 - Docker firewall behaviour: https://docs.docker.com/engine/network/packet-filtering-firewalls/
