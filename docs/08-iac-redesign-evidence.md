@@ -58,9 +58,10 @@
   with all 8 import blocks against live Cloudflare + OVH + OpenBao.
 - Result: **Plan: 8 to import, 2 to add, 6 to change, 0 to destroy.**
   The 2 adds are `tunnel_cloudflared_config.admin` (ingress source) and
-  `vault_kv_secret_v2.access_service_token` (escrow record); the 7 changes
-  are in-place only (DNS comments, app `allowed_idps`, IdP name
-  `"" -> "One-time PIN"`, token `duration "8760h" -> "1y"`). Zero
+  `vault_kv_secret_v2.access_service_token` (escrow record); the 6 changes
+  are in-place only (2x DNS comments, 2x app `allowed_idps`, tunnel
+  computed-attribute refresh, token `duration "8760h" -> "1y"`; OTP IdP
+  name drift is ignored in config). Zero
   replacements, zero destroys; the preserved VPS stays read-only
   (`data "ovh_vps" "existing"`, `provision_ovh_vps=false`).
 - Correct import-ID formats learned from provider v5.25 errors and recorded
