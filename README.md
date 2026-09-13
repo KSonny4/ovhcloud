@@ -4,6 +4,14 @@ Opinionated runbook for turning a fresh OVHcloud VPS into a small self-hosted ap
 
 **Last verified:** 2026-09-13
 
+## Start here
+
+If you have just bought the VPS and nothing is configured yet, follow:
+
+**[00. From zero to a working Coolify VPS](docs/00-quickstart.md)**
+
+It is the exact first-day sequence. The remaining documents explain each area in more detail and contain recovery/operational notes.
+
 ## Target architecture
 
 ```text
@@ -27,16 +35,17 @@ OVHcloud VPS
 
 This repository intentionally contains **no IP addresses, passwords, tokens, private SSH keys, R2 credentials or Coolify APP_KEY**. It is public infrastructure documentation only.
 
-## The short version
+## Full runbook
 
-If the VPS is completely fresh, do these in order:
+1. [From zero to a working Coolify VPS](docs/00-quickstart.md)
+2. [Prepare the OVH VPS](docs/01-ovh-vps.md)
+3. [Secure and bootstrap Ubuntu](docs/02-host-bootstrap.md)
+4. [Install and configure Coolify](docs/03-coolify.md)
+5. [Configure Cloudflare DNS and R2](docs/04-cloudflare.md)
+6. [Configure backups and test recovery](docs/05-backup-recovery.md)
+7. [Operate and upgrade the server](docs/06-operations.md)
 
-1. [Prepare the OVH VPS](docs/01-ovh-vps.md)
-2. [Secure and bootstrap Ubuntu](docs/02-host-bootstrap.md)
-3. [Install and configure Coolify](docs/03-coolify.md)
-4. [Configure Cloudflare DNS and R2](docs/04-cloudflare.md)
-5. [Configure backups and test recovery](docs/05-backup-recovery.md)
-6. [Operate and upgrade the server](docs/06-operations.md)
+There is also a read-only [`scripts/healthcheck.sh`](scripts/healthcheck.sh) for routine server checks.
 
 Do not skip the backup/recovery section. A Coolify instance backup does not contain all application, database and volume data.
 
