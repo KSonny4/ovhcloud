@@ -25,6 +25,8 @@ echo
 echo '== memory / swap =='
 free -h
 swapon --show || true
+printf 'swappiness: '
+sysctl -n vm.swappiness 2>/dev/null || echo 'unknown'
 
 echo
 echo '== filesystems =='
@@ -47,13 +49,17 @@ else
 fi
 
 echo
-echo '== tailscale =='
-if command -v tailscale >/dev/null 2>&1; then
-  tailscale status || true
-  printf 'tailscale IPv4: '
-  tailscale ip -4 2>/dev/null || true
+echo '== cloudflare tunnel =='
+if command -v cloudflared >/dev/null 2>&1; then
+  cloudflared --version || true
+  if systemctl list-unit-files cloudflared.service >/dev/null 2>&1; then
+    systemctl is-active cloudflared.service || true
+    systemctl status cloudflared.service --no-pager -n 10 || true
+  else
+    echo 'cloudflared installed but cloudflared.service not found'
+  fi
 else
-  echo 'tailscale not installed'
+  echo 'cloudflared not installed'
 fi
 
 echo
