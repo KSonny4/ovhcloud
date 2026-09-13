@@ -1,9 +1,10 @@
 # 04. Configure Cloudflare
 
-Cloudflare has two roles in this setup:
+Cloudflare has three roles in this setup:
 
-1. DNS / optional reverse proxy in front of web applications.
-2. R2 as off-machine S3-compatible backup storage.
+1. DNS / reverse proxy in front of public web applications.
+2. Tunnel + Access for human administration, especially SSH.
+3. R2 as off-machine S3-compatible backup storage.
 
 The VPS itself remains at OVHcloud.
 
@@ -13,11 +14,12 @@ A simple layout for one domain is:
 
 ```text
 coolify.example.com   -> Coolify dashboard
+ssh.example.com       -> Cloudflare Tunnel -> localhost:22
 *.example.com         -> generated/experimental application subdomains
 example.com           -> optional application/root site
 ```
 
-Create these records in Cloudflare DNS:
+For normal Coolify web traffic, create:
 
 ```text
 Type  Name      Value
@@ -31,9 +33,11 @@ Add an apex record only if you actually want the root domain on this VPS:
 A     @         <VPS_IPV4>
 ```
 
-Do not create an `AAAA` record until you have deliberately tested IPv6 end to end. Coolify warns that a broken IPv6 path can cause domains/certificate requests to fail even when IPv4 is healthy.
+The SSH hostname is created as a Cloudflare Tunnel route and should not point directly to the VPS IP.
 
-## 2. Start DNS-only, then optionally proxy
+Do not create an `AAAA` record until you have deliberately tested IPv6 end to end. A broken IPv6 path can cause domain/certificate problems even when IPv4 is healthy.
+
+## 2. Public web proxying
 
 During the first Coolify/domain setup, using Cloudflare **DNS only** is the easiest path to debug:
 
@@ -41,13 +45,13 @@ During the first Coolify/domain setup, using Cloudflare **DNS only** is the easi
 client -> DNS -> OVH VPS -> Coolify proxy
 ```
 
-Once origin HTTPS works, you can turn Cloudflare proxying on:
+Once origin HTTPS works, turn Cloudflare proxying on:
 
 ```text
 client -> Cloudflare -> OVH VPS -> Coolify proxy
 ```
 
-If proxying through Cloudflare, use:
+Use:
 
 ```text
 SSL/TLS mode: Full (strict)
@@ -55,9 +59,73 @@ SSL/TLS mode: Full (strict)
 
 Do not use Flexible SSL.
 
-Coolify's current Cloudflare integration guidance also recommends `Full (strict)` and optionally `Always Use HTTPS`.
+For important public web applications, proxying through Cloudflare gives you Cloudflare's edge protections while Coolify continues to route the application on the origin.
 
-## 3. Coolify dashboard record
+## 3. Create the administrative Cloudflare Tunnel
+
+In Cloudflare:
+
+1. go to `Networking -> Tunnels`;
+2. create a tunnel for the OVH VPS;
+3. select the Linux connector;
+4. run the generated `cloudflared` installation command on the VPS;
+5. verify the connector becomes **Healthy**.
+
+Cloudflare Tunnel establishes outbound-only connections from `cloudflared` to Cloudflare. The administrative tunnel therefore does not require opening a new inbound port on the VPS.
+
+On the VPS:
+
+```bash
+systemctl status cloudflared --no-pager
+journalctl -u cloudflared -n 50 --no-pager
+```
+
+Treat the tunnel token as a secret. Do not commit it.
+
+## 4. Publish SSH through the tunnel
+
+Add a published application route:
+
+```text
+Hostname: ssh.example.com
+Service:  SSH
+Target:   localhost:22
+```
+
+Then create a Cloudflare Access self-hosted application for `ssh.example.com` and require your chosen identity/account.
+
+Do not expose the SSH tunnel hostname without an Access policy.
+
+On the workstation, install `cloudflared` and configure OpenSSH:
+
+```bash
+brew install cloudflared
+command -v cloudflared
+```
+
+Example `~/.ssh/config`:
+
+```sshconfig
+Host ovh-cloudflare
+    HostName ssh.example.com
+    User root
+    IdentityFile ~/.ssh/ovh_vps_ed25519
+    ProxyCommand /opt/homebrew/bin/cloudflared access ssh --hostname %h
+```
+
+Replace the `cloudflared` path with the path returned by `command -v cloudflared` if needed.
+
+Test:
+
+```bash
+ssh ovh-cloudflare
+```
+
+Cloudflare Access should authenticate you before the SSH session is established.
+
+After this works and OVH KVM/rescue access is understood, remove unrestricted public TCP 22 at the provider firewall. Keep the local SSH daemon running because both Coolify and the tunnel still use it.
+
+## 5. Coolify dashboard
 
 After creating:
 
@@ -85,7 +153,9 @@ curl -I https://coolify.example.com
 
 Only after this works should direct public Coolify ports 8000/6001/6002 be closed.
 
-## 4. Wildcard application domains
+For extra protection, put a Cloudflare Access policy in front of `coolify.example.com` as well. Keep the Access policy limited to the dashboard/admin hostname. Do not accidentally apply it to public application wildcard domains.
+
+## 6. Wildcard application domains
 
 For many small apps, a wildcard record avoids adding DNS manually for every experiment:
 
@@ -113,18 +183,27 @@ The wildcard DNS record does **not** cover the apex `example.com`, so create a s
 
 For important public applications, explicit names such as `radar.example.com` are easier to understand than generated IDs even if the wildcard record already resolves them.
 
-## 5. Cloudflare proxying policy
+## 7. Why the baseline does not tunnel every web application
 
-Reasonable baseline:
+Cloudflare Tunnel can publish HTTP/HTTPS services and supports wildcard hostname ingress rules. A fully tunnelled architecture can therefore hide the origin and remove direct inbound 80/443 as well.
 
-- public websites/APIs: proxy through Cloudflare if compatible;
-- Coolify dashboard: can be proxied after origin HTTPS is proven;
-- non-HTTP protocols: do not expect the normal Cloudflare HTTP proxy to carry arbitrary TCP/UDP traffic;
-- databases: do not publish them just because DNS can point at them.
+This runbook deliberately starts simpler:
 
-If every public HTTP hostname is proxied through Cloudflare, you can later consider restricting origin 80/443 to Cloudflare source ranges. Do that only after testing certificate renewal, health checks and every required direct path. It increases security but also makes recovery/debugging less forgiving.
+```text
+public apps: Cloudflare proxy -> public 80/443 -> Coolify proxy
+administration: Cloudflare Access -> Tunnel -> localhost services
+```
 
-## 6. Create the R2 backup bucket
+Reasons:
+
+- Coolify's normal domain/TLS/proxy flow remains straightforward;
+- wildcard application domains require less tunnel-specific configuration;
+- recovery/debugging is simpler;
+- the highest-value administrative surface, SSH, no longer needs a public inbound port.
+
+Moving public applications behind Tunnel later is a valid hardening step, but do it deliberately and test wildcard routing, WebSockets, uploads, callbacks and certificate behaviour first.
+
+## 8. Create the R2 backup bucket
 
 In Cloudflare:
 
@@ -140,7 +219,7 @@ The bucket should be private.
 
 Do not enable public access for backups.
 
-## 7. Create an R2 token
+## 9. Create an R2 token
 
 Create an R2 API token with **Object Read & Write** access, scoped only to the backup bucket if possible.
 
@@ -154,7 +233,7 @@ Copy them immediately into your password/secrets manager.
 
 Never commit them here.
 
-## 8. Add R2 to Coolify
+## 10. Add R2 to Coolify
 
 In Coolify:
 
@@ -177,7 +256,17 @@ Coolify validates the storage by making an S3-compatible object-list request.
 
 Do not continue to the backup section until validation succeeds.
 
-## 9. Backup bucket separation
+## 11. R2 free-tier expectations
+
+Cloudflare R2 Standard currently includes a monthly free tier. Treat it as a useful allowance rather than a backup-retention guarantee.
+
+For a small OmniRoute deployment, daily compressed `/app/data` archives with roughly 30-copy retention are expected to be small enough to fit comfortably unless the application state grows substantially.
+
+Do not rely on assumptions. Watch actual bucket size in Cloudflare and keep retention limits configured in Coolify.
+
+The repository owner also has a separate pricing watch configured to flag future R2 free-tier/pricing changes.
+
+## 12. Backup bucket separation
 
 If this server starts hosting important data, prefer either:
 
@@ -186,19 +275,18 @@ If this server starts hosting important data, prefer either:
 
 Do not reuse application object-storage credentials as backup credentials. Separate credentials reduce the blast radius of a compromised application.
 
-## 10. Optional Cloudflare Tunnel
-
-A Cloudflare Tunnel is possible with Coolify and can send a wildcard route to the Coolify proxy on `http://localhost:80`.
-
-It is **not** the baseline here because the OVH VPS already has a public IP, unlimited traffic and a normal 80/443 reverse-proxy setup is simpler. Add Tunnel only when you have a specific reason, such as hiding the origin completely or avoiding inbound firewall exposure.
-
 ## Done when
 
 - [ ] `coolify.example.com` resolves to the VPS
 - [ ] dashboard works over HTTPS
 - [ ] wildcard DNS exists if wanted
-- [ ] Cloudflare proxy mode is deliberate, not accidental
+- [ ] Cloudflare proxy mode is deliberate
 - [ ] SSL mode is Full (strict) when proxied
+- [ ] Cloudflare Tunnel connector is healthy
+- [ ] `ssh.example.com` routes through the tunnel to `localhost:22`
+- [ ] Cloudflare Access protects the SSH hostname
+- [ ] SSH through Cloudflare works from the workstation
+- [ ] unrestricted public TCP 22 has been removed/restricted
 - [ ] private R2 backup bucket exists
 - [ ] R2 token is scoped and stored outside Git
 - [ ] Coolify validates R2 successfully
@@ -211,3 +299,6 @@ Next: [05. Backups and recovery](05-backup-recovery.md)
 - Coolify domains: https://coolify.io/docs/core/networking/domains
 - Coolify R2: https://coolify.io/docs/core/s3-storage/r2
 - Coolify Cloudflare protection: https://coolify.io/docs/integrations/security/cloudflare/ddos-protection
+- Cloudflare Tunnel: https://developers.cloudflare.com/tunnel/
+- Cloudflare Tunnel routing: https://developers.cloudflare.com/tunnel/concepts/routing/
+- Cloudflare SSH through Access: https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/use-cases/ssh/ssh-cloudflared-authentication/
