@@ -9,12 +9,14 @@ Run:
 ```bash
 uptime
 free -h
+swapon --show
 df -hT
 systemctl --failed
 sudo ss -lntup
 docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
 docker stats --no-stream
 docker system df
+systemctl status cloudflared --no-pager
 ```
 
 A helper script with these read-only checks is in [`scripts/healthcheck.sh`](../scripts/healthcheck.sh).
@@ -48,11 +50,12 @@ du -xh /data/coolify --max-depth=2 2>/dev/null | sort -h | tail -30
 
 ```bash
 free -h
+swapon --show
 docker stats --no-stream
 journalctl -k --since '24 hours ago' | grep -i -E 'oom|out of memory|killed process' || true
 ```
 
-Regular OOM kills or heavy swap usage mean the box is undersized or a workload has no sensible limits.
+The 2 GB swap file on the 4 GB baseline host is there for short-lived spikes. Regular OOM kills or sustained/heavy swap usage mean the box is undersized or a workload has no sensible limits.
 
 ### CPU / load
 
@@ -144,10 +147,11 @@ If reboot required:
 sudo reboot
 ```
 
-After reconnecting:
+After reconnecting through Cloudflare Access:
 
 ```bash
 systemctl --failed
+systemctl status cloudflared --no-pager
 docker ps
 curl -I https://coolify.example.com
 ```
@@ -182,7 +186,7 @@ Upgrade when the constraint is persistent rather than a one-off spike. Examples:
 - disk is too small even after sensible Docker cleanup/log retention;
 - several databases/services now share the host.
 
-Do not upgrade only because a single build briefly uses 100% CPU.
+Do not upgrade only because a single build briefly uses 100% CPU or touches swap.
 
 ## 8. OVH in-place VPS upgrade
 
@@ -207,7 +211,7 @@ From there OVH exposes higher vCore/memory/storage options when available.
 - [ ] verify OVH Automated Backup
 - [ ] take optional OVH snapshot before a major change
 - [ ] record `lsblk` and `df -hT`
-- [ ] record `free -h` and `nproc`
+- [ ] record `free -h`, `swapon --show` and `nproc`
 - [ ] ensure no deployment or database migration is running
 
 ### After upgrade
@@ -215,6 +219,7 @@ From there OVH exposes higher vCore/memory/storage options when available.
 ```bash
 nproc
 free -h
+swapon --show
 lsblk
 df -hT
 docker ps
@@ -251,7 +256,7 @@ sudo ss -lntup
 docker ps --format 'table {{.Names}}\t{{.Ports}}'
 ```
 
-For normal Coolify web apps, the public host should mostly expose 80/443.
+For normal Coolify web apps, the public host should mostly expose 80/443. Public TCP 22 should not be part of the steady-state path because SSH administration goes through Cloudflare Tunnel + Access.
 
 Treat entries like these as a reason to investigate:
 
@@ -270,15 +275,16 @@ Remember: Docker-published ports can bypass normal UFW input rules.
 - [ ] package updates reviewed/applied
 - [ ] Coolify update status reviewed
 - [ ] R2 backup executions inspected
-- [ ] one recent DB backup spot-checked
+- [ ] one recent DB/volume backup spot-checked
 - [ ] OVH Automated Backup present
 - [ ] disk usage checked
 - [ ] Docker cleanup results checked
-- [ ] memory/OOM history checked
-- [ ] public listeners reviewed
+- [ ] memory/OOM/swap history checked
+- [ ] public listeners reviewed; TCP 22 is not unintentionally public
+- [ ] Cloudflare Tunnel connector health reviewed
+- [ ] Cloudflare Access policies and authorised identities reviewed
 - [ ] stale apps/databases removed deliberately
 - [ ] secrets/access for departed/unused integrations revoked
-- [ ] Tailscale device/access list reviewed
 
 ## 12. Before any risky infrastructure change
 
@@ -301,4 +307,6 @@ Do not make a destructive storage/firewall/SSH change if those answers are unkno
 - Coolify updates: https://coolify.io/docs/core/instance-management/update
 - Coolify Docker cleanup: https://coolify.io/docs/core/infrastructure/servers/automated-docker-cleanup
 - Coolify notification events: https://coolify.io/docs/core/notifications/events
+- Cloudflare Tunnel: https://developers.cloudflare.com/tunnel/
+- Cloudflare SSH through Access: https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/use-cases/ssh/ssh-cloudflared-authentication/
 - Docker firewall behaviour: https://docs.docker.com/engine/network/packet-filtering-firewalls/
