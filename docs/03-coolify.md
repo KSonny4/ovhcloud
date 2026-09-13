@@ -1,6 +1,6 @@
 # 03. Install and configure Coolify
 
-This runbook uses **self-hosted Coolify on the same OVH VPS that initially runs the applications**.
+This runbook uses **self-hosted Coolify on the same OVH VPS that initially runs the applications**. The dashboard and application hostnames are derived from the approved canonical domain in `docs/deployment-plan.md`; the example values below are not deployable defaults.
 
 Coolify currently recommends a fresh server, at least 2 CPU cores, 2 GB RAM and free disk space. Builds and deployed workloads consume additional resources.
 
@@ -154,7 +154,7 @@ Coolify's documentation states these direct-IP ports are no longer required publ
 
 Keep 80/443 public.
 
-SSH should normally be reachable through Tailscale rather than unrestricted public 22.
+SSH should normally be reached through the Cloudflare Tunnel + Access administration path rather than unrestricted public 22. Keep the OVH KVM/rescue path available as the emergency fallback.
 
 ## 9. Configure a wildcard application domain
 
