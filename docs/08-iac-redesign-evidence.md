@@ -77,3 +77,16 @@
   state; production requires the encrypted S3 backend (`backend.hcl`),
   reviewed `imports.tf`, and explicit operator authorization per
   `infra/terraform/README.md`. No live resources were modified by the plan.
+
+## 2026-09-13 — live Coolify backup-schedule state (preserved VPS, read-only)
+
+- Queried `coolify-db` backup tables directly (no mutation): `scheduled_database_backups=0`,
+  `scheduled_volume_backups=0`, `scheduled_tasks=0`, `s3_storages=0`.
+- Conclusion: no automatic backup schedule exists yet on the preserved VPS.
+  Wiring the schedule (S3 destination -> R2 + daily instance/database/volume
+  backups) requires the R2 S3 credential, which is operator-blocked: even the
+  fresh admin token gets 403 on `POST /user/tokens` (needs User API-Token Write
+  or a dashboard-minted Account API token for `ovh-coolify-backups`).
+- The pg_dump/restore proof earlier in this file stands as the verified
+  recovery path until the credential lands; the probe script
+  (`scripts/backup-r2-probe.sh`) remains the live acceptance test.
