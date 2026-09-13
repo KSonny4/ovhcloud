@@ -38,17 +38,17 @@
 | Tunnel ingress | `coolify.pkubelka.cz` → `http://localhost:8000`; `ssh.pkubelka.cz` → `ssh://localhost:22`; fallback 404 | Declare idempotently |
 | Coolify Access app | Self-hosted app for `coolify.pkubelka.cz`; email allow policy for `ksonny4@gmail.com` | Retain human dashboard policy |
 | SSH Access app | Self-hosted app for `ssh.pkubelka.cz`; email allow policy for `ksonny4@gmail.com` | Add scoped service-token machine policy for verification |
-| R2 | Account API reports R2 enabled; no backup bucket currently exists | Terraform must create/import a private bucket and backup credentials |
+| R2 | Account API reports R2 enabled; bucket `ovh-coolify-backups` created 2026-09-13 via API (EEUR, Standard) | Terraform must import the existing bucket; scoped S3 credential issuance is blocked on a fresh full-access token (see gaps) |
 | Other Cloudflare resources | The account contains unrelated existing tunnels, DNS records, and Access apps | Do not claim or destroy unrelated resources; scope Terraform by explicit names/IDs |
 
 ## Current gaps against the redesign
 
-1. The existing Terraform root is a review-only partial model: it declares an origin A record, email-only Access policies, a Tunnel, and an R2 bucket, but not the current Tunnel-backed dashboard route, service-token policy, bootstrap, Coolify administrator, backups, or import/state workflow.
-2. There is no committed encrypted Terraform backend or live state import evidence.
-3. The current VPS was bootstrapped imperatively; fresh-host bootstrap must move to an API-driven, repeatable mechanism.
-4. Initial Coolify administrator creation and Cloudflare human dashboard login are separate post-deployment user actions; machine verification must not depend on them.
-5. R2 is enabled but the backup bucket and restore rehearsal remain to be implemented.
-6. The supported guest OS baseline is version-sensitive: the current host reports Ubuntu 26.04 LTS while the older runbooks mention Ubuntu 24.04 LTS. Fresh bootstrap must make the supported image explicit and test it.
+1. The existing Terraform root declares the edge/access/R2 model but production state import (`imports.tf` + `backend.hcl`) remains an authorized operator action; the live R2 bucket `ovh-coolify-backups` (created 2026-09-13, EEUR) is recorded here for that import.
+2. Scoped R2 S3 API-token creation has no working v4 API route under the current R2-scoped token (`/r2/api-tokens` and per-bucket credential routes return 404; `/user/tokens` returns 403); the full-access deployment token in OpenBao is stale (`Invalid API Token`). Issuing a fresh scoped Cloudflare token requires the operator's dashboard authorization.
+3. The current VPS was bootstrapped imperatively; fresh-host bootstrap is scripted but a paid disposable-VPS rehearsal has not been ordered.
+4. Coolify administrator bootstrap via `ROOT_USERNAME/ROOT_USER_EMAIL/ROOT_USER_PASSWORD` is implemented in `scripts/provision-coolify.sh`; the live host already has its admin (`ksonny4@gmail.com`, 1 user) so no live bootstrap is needed.
+5. R2 bucket exists; Coolify/R2 backup scheduling + automated restore evidence: live DB backup (`pg_dump -Fc`, 295 KB) and restore probe into a disposable database succeeded 2026-09-13 (`users` count 1, email verified, probe DB dropped, artifacts removed). Full Coolify-scheduled R2 backup wiring still requires the scoped S3 credential (blocked on 2).
+6. The supported guest OS baseline is version-sensitive: the current host reports Ubuntu 26.04 LTS while the older runbooks mention Ubuntu 24.04 LTS. Fresh bootstrap supports both and verifies Docker itself.
 
 ## Safety boundary (validated 2026-09-13)
 

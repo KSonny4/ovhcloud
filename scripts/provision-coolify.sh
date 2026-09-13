@@ -5,6 +5,9 @@
 # - Idempotent: safe to run twice; skips completed stages when healthy.
 # - Pinned release via COOLIFY_VERSION (default matches the preserved host).
 # - Reads generated values only from environment/stdin; never prints secrets.
+# - Creates or reconciles the first administrator noninteractively via the
+#   official ROOT_USERNAME/ROOT_USER_EMAIL/ROOT_USER_PASSWORD installer
+#   contract; escrows APP_KEY + admin recovery metadata to OpenBao.
 # - Machine verification must not depend on browser login or dashboard clicks.
 # - Never targets the preserved production VPS.
 #
@@ -51,7 +54,7 @@ fi
 
 log "target host: ${target_host}"
 log "domain: ${domain}"
-log "pinned Coolify release: ${version}"
+log "pinned Coolify release: ${version} (passed as installer version argument)"
 log "dry run: ${dry_run}"
 
 if command -v snap >/dev/null 2>&1 && snap list 2>/dev/null | grep -q '^docker '; then
@@ -74,12 +77,17 @@ if [ "$coolify_healthy" -eq 1 ]; then
 else
   installer="$(mktemp /tmp/coolify-install.XXXXXX.sh)"
   if [ "$dry_run" -eq 1 ]; then
-    log "DRY-RUN: download pinned official installer to ${installer} and run as root"
+    log "DRY-RUN: download official installer to ${installer}, verify pinned release ${version}, and run as root with ROOT_USERNAME/ROOT_USER_EMAIL/ROOT_USER_PASSWORD from OpenBao-backed env"
     rm -f "$installer"
   else
     trap 'rm -f "$installer"' EXIT
     run curl -fsSL "https://cdn.coollabs.io/coolify/install.sh" -o "$installer"
-    run bash "$installer"
+    if [ -z "${ROOT_USERNAME:-}" ] || [ -z "${ROOT_USER_EMAIL:-}" ] || [ -z "${ROOT_USER_PASSWORD:-}" ]; then
+      echo 'ROOT_USERNAME, ROOT_USER_EMAIL and ROOT_USER_PASSWORD must come from OpenBao-backed env (first-admin bootstrap).' >&2
+      exit 2
+    fi
+    # The installer pins the release via its first positional version argument.
+    run env ROOT_USERNAME="$ROOT_USERNAME" ROOT_USER_EMAIL="$ROOT_USER_EMAIL" ROOT_USER_PASSWORD="$ROOT_USER_PASSWORD" bash "$installer" "$version"
     trap - EXIT
     rm -f "$installer"
   fi
@@ -100,6 +108,17 @@ else
     log 'origin dashboard login route reachable on http://127.0.0.1:8000/login'
   else
     echo 'WARNING: origin dashboard did not answer on http://127.0.0.1:8000/login.' >&2
+  fi
+  if command -v bao >/dev/null 2>&1 && [ -n "${BAO_ADDR:-}" ]; then
+    app_key="$(grep -E '^APP_KEY=' /data/coolify/source/.env 2>/dev/null | cut -d= -f2- || true)"
+    if [ -z "$app_key" ]; then
+      echo 'WARNING: APP_KEY not found in /data/coolify/source/.env; escrow skipped.' >&2
+    else
+      printf 'app_key=%s\nemail=%s\n' "$app_key" "${ROOT_USER_EMAIL:-}" | bao kv put -mount=secret projects/ovhcloud/COOLIFY_ADMIN - >/dev/null
+      log 'escrowed Coolify APP_KEY + admin email to secret/projects/ovhcloud/COOLIFY_ADMIN (value not printed)'
+    fi
+  else
+    echo 'WARNING: bao/BAO_ADDR unavailable; APP_KEY escrow must be completed by the runner.' >&2
   fi
 fi
 

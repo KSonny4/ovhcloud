@@ -196,7 +196,7 @@ resource "vault_kv_secret_v2" "access_service_token" {
 resource "cloudflare_r2_bucket" "backups" {
   account_id    = var.cloudflare_account_id
   name          = var.r2_bucket_name
-  location      = "weur"
+  location      = "EEUR"
   storage_class = "Standard"
 
   lifecycle {
