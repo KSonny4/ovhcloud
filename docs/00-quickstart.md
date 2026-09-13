@@ -8,8 +8,8 @@ Assumptions:
 - nothing important is stored on it yet;
 - target OS is Ubuntu 24.04 LTS;
 - target platform is Coolify;
-- Cloudflare will provide DNS and R2 backup storage;
-- Tailscale will be the normal administration path.
+- Cloudflare will provide DNS, Tunnel/Access for administration and R2 backup storage;
+- the baseline 4 GB VPS will use a 2 GB swap file.
 
 Replace every `<...>` placeholder before running a command.
 
@@ -137,30 +137,65 @@ From the second terminal, test root and ubuntu key login again.
 
 Keep the original session open until both tests pass.
 
-### 7. Install Tailscale
+### 7. Install Cloudflare Tunnel
+
+In Cloudflare:
+
+1. go to `Networking -> Tunnels`;
+2. create a tunnel for this VPS;
+3. choose the Linux connector instructions;
+4. run Cloudflare's generated `cloudflared` install command on the VPS;
+5. wait until the connector shows **Healthy**.
+
+Treat the tunnel token as a secret. Never commit it.
+
+Verify on the VPS:
 
 ```bash
-curl -fsSL https://tailscale.com/install.sh | sh
-sudo tailscale up
+systemctl status cloudflared --no-pager
+journalctl -u cloudflared -n 50 --no-pager
 ```
 
-Authenticate using the printed URL.
+### 8. Route SSH through Cloudflare Access
 
-Get the tailnet IP:
+Add a published application route to the tunnel:
+
+```text
+Hostname: ssh.example.com
+Service:  SSH
+Target:   localhost:22
+```
+
+Create a Cloudflare Access self-hosted application for that hostname and allow only your identity/account.
+
+On your Mac/workstation:
 
 ```bash
-tailscale ip -4
+brew install cloudflared
+command -v cloudflared
 ```
 
-From your workstation:
+Add to `~/.ssh/config`, replacing the `cloudflared` path if Homebrew reports a different one:
+
+```sshconfig
+Host ovh-cloudflare
+    HostName ssh.example.com
+    User root
+    IdentityFile ~/.ssh/ovh_vps_ed25519
+    ProxyCommand /opt/homebrew/bin/cloudflared access ssh --hostname %h
+```
+
+Test:
 
 ```bash
-ssh -i ~/.ssh/ovh_vps_ed25519 root@<TAILSCALE_IPV4>
+ssh ovh-cloudflare
 ```
+
+The first connection should invoke Cloudflare Access authentication in your browser.
 
 Do not remove public SSH until this works and you know how to use OVH KVM/rescue mode.
 
-### 8. Optional: add 2 GB swap on a 4 GB VPS
+### 9. Add 2 GB swap on the 4 GB VPS
 
 Check first:
 
@@ -185,11 +220,14 @@ Verify:
 ```bash
 free -h
 swapon --show
+sysctl vm.swappiness
 ```
+
+The 2 GB swap file is intentionally a safety buffer for temporary memory spikes. Regular heavy swapping or OOM kills means the machine needs tuning or more RAM.
 
 ## Phase 3: install Coolify
 
-### 9. Make sure Docker was not installed from Snap
+### 10. Make sure Docker was not installed from Snap
 
 ```bash
 snap list 2>/dev/null | grep -i docker || true
@@ -197,7 +235,7 @@ snap list 2>/dev/null | grep -i docker || true
 
 If that prints a Snap Docker installation, remove it before continuing. The Coolify automatic installer does not support Docker installed through Snap.
 
-### 10. Make the bootstrap ports reachable temporarily
+### 11. Make the bootstrap ports reachable temporarily
 
 You need:
 
@@ -212,7 +250,7 @@ Direct dashboard functionality can also use 6001/6002. If you need them during i
 
 Provider-level firewalling is preferred because Docker-published ports can bypass ordinary UFW input rules.
 
-### 11. Install Coolify
+### 12. Install Coolify
 
 Become root if needed:
 
@@ -233,7 +271,7 @@ docker ps
 ss -lntup
 ```
 
-### 12. Create the Coolify administrator immediately
+### 13. Create the Coolify administrator immediately
 
 Open:
 
@@ -243,7 +281,7 @@ http://<VPS_IPV4>:8000
 
 Create your administrator account immediately. Do not leave an unclaimed Coolify registration page on the public Internet.
 
-### 13. Save the Coolify recovery secret
+### 14. Save the Coolify recovery secret
 
 On the VPS:
 
@@ -257,7 +295,7 @@ Never commit `/data/coolify/source/.env`.
 
 ## Phase 4: give Coolify a proper domain
 
-### 14. Create DNS records in Cloudflare
+### 15. Create DNS records in Cloudflare
 
 Example, using `example.com`:
 
@@ -270,7 +308,7 @@ Start with **DNS only** while validating the origin.
 
 Do not add an `AAAA` record until IPv6 has deliberately been tested.
 
-### 15. Configure the Coolify instance URL
+### 16. Configure the Coolify instance URL
 
 In Coolify set the instance URL to:
 
@@ -284,30 +322,35 @@ Verify:
 curl -I https://coolify.example.com
 ```
 
-Once origin HTTPS works, Cloudflare proxying is optional. If enabled, use **Full (strict)** SSL/TLS mode.
+Once origin HTTPS works, enable Cloudflare proxying if desired. If enabled, use **Full (strict)** SSL/TLS mode.
 
-### 16. Close bootstrap/direct dashboard ports
+For the dashboard, adding a Cloudflare Access policy gives an additional identity gate in front of Coolify's own authentication.
 
-Once Coolify works at its HTTPS domain, direct public access to these should go away:
+### 17. Close bootstrap/admin ports
+
+Once Coolify works at its HTTPS domain and SSH through Cloudflare is verified, remove direct public access to:
 
 ```text
+22/tcp
 8000/tcp
 6001/tcp
 6002/tcp
 ```
 
-Normal final public surface:
+Keep the SSH daemon itself running because Coolify uses SSH locally and the Cloudflare tunnel forwards to `localhost:22`.
+
+Normal public surface for this baseline remains:
 
 ```text
 80/tcp
 443/tcp
 ```
 
-For SSH, use Tailscale. Restrict/remove unrestricted public TCP 22 at the provider firewall after verifying Tailscale and OVH recovery access.
+A later fully-tunnelled web architecture can remove those inbound ports too, but it is not required for this baseline.
 
 ## Phase 5: prove deployment works
 
-### 17. Deploy a disposable nginx app
+### 18. Deploy a disposable nginx app
 
 In Coolify:
 
@@ -324,7 +367,7 @@ If this succeeds, Coolify, Docker, proxying, DNS and TLS are basically working.
 
 ## Phase 6: configure off-machine backups
 
-### 18. Create a private Cloudflare R2 bucket
+### 19. Create a private Cloudflare R2 bucket
 
 Suggested name:
 
@@ -342,7 +385,7 @@ Store:
 
 in your external secrets manager.
 
-### 19. Add R2 to Coolify
+### 20. Add R2 to Coolify
 
 In:
 
@@ -350,7 +393,7 @@ In:
 
 enter the R2 bucket, endpoint and credentials, then validate it.
 
-### 20. Configure three different backup types
+### 21. Configure three different backup types
 
 Do all of these separately:
 
@@ -360,13 +403,15 @@ Do all of these separately:
 
 The Coolify instance backup does not contain all application/database/volume data.
 
-### 21. Verify OVH Automated Backup
+For OmniRoute specifically, back up its `/app/data` persistent mount daily to R2. Because it contains SQLite state, enable **Stop containers while creating the archive** for a safer file-level backup. Keep approximately 30 remote backups and a small number of local copies. See [07. Deploy OmniRoute safely](07-omniroute.md).
+
+### 22. Verify OVH Automated Backup
 
 In OVH:
 
 `Bare Metal Cloud -> Virtual private servers -> <VPS> -> Automated backup`
 
-Current OVH VPS plans document one daily Automated Backup as a free service option. Verify it is actually enabled on your service and choose a sensible UTC time.
+Verify it is actually enabled on your service and choose a sensible UTC time.
 
 Also install/enable QEMU guest agent if it is not already present:
 
@@ -381,7 +426,7 @@ This OVH backup is an extra recovery layer. Keep R2 backups as the off-provider 
 
 ## Phase 7: finish hardening
 
-### 22. Audit everything listening publicly
+### 23. Audit everything listening publicly
 
 ```bash
 sudo ss -lntup
@@ -392,7 +437,7 @@ Investigate unexpected public bindings, especially databases such as 5432, 3306 
 
 Remember that Docker-published ports can bypass normal UFW input filtering.
 
-### 23. Enable notifications
+### 24. Enable notifications
 
 In Coolify configure an external notification channel and enable at least:
 
@@ -402,7 +447,7 @@ In Coolify configure an external notification channel and enable at least:
 - Server Unreachable;
 - Container Status Changes.
 
-### 24. Configure conservative Docker cleanup
+### 25. Configure conservative Docker cleanup
 
 In:
 
@@ -420,7 +465,7 @@ application image retention: ON
 
 Do not casually run `docker system prune -a --volumes` on a server containing state.
 
-### 25. Run the repo health check
+### 26. Run the repo health check
 
 Clone this repository on your workstation or server if desired, then:
 
@@ -437,6 +482,7 @@ Before moving anything important onto the VPS:
 - trigger one Coolify instance backup and verify it exists in R2;
 - trigger one database backup and verify it exists in R2;
 - back up one persistent mount if you use one;
+- for OmniRoute, restore `/app/data` into a disposable test deployment at least once;
 - confirm the `APP_KEY` exists outside the VPS;
 - confirm OVH Automated Backup exists;
 - perform at least one disposable application-data restore test.
@@ -448,17 +494,22 @@ Then the platform is ready for real workloads.
 ```text
 Internet
    |
-Cloudflare DNS / optional proxy
+Cloudflare
+   |-- DNS / proxy for public web apps
+   |-- Tunnel + Access for SSH administration
+   `-- R2 backups
    |
-80,443 only
+80,443 only to public web path
    |
 OVH VPS
    |-- Ubuntu 24.04
-   |-- Tailscale admin path
+   |-- 2 GB swap on the 4 GB baseline
+   |-- cloudflared outbound admin tunnel
    |-- Coolify
    |-- Docker workloads
    `-- backups ----------> Cloudflare R2
 
+Human SSH: Cloudflare Access -> Tunnel -> localhost:22
 Emergency access: OVH KVM / rescue mode
 Whole-server safety net: OVH Automated Backup
 ```
@@ -471,3 +522,4 @@ Whole-server safety net: OVH Automated Backup
 - [Cloudflare/R2 details](04-cloudflare.md)
 - [Backup and restore details](05-backup-recovery.md)
 - [Operations and upgrades](06-operations.md)
+- [OmniRoute deployment](07-omniroute.md)
