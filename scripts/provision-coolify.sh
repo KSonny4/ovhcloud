@@ -8,6 +8,13 @@
 # - Creates or reconciles the first administrator noninteractively via the
 #   official ROOT_USERNAME/ROOT_USER_EMAIL/ROOT_USER_PASSWORD installer
 #   contract; escrows APP_KEY + admin recovery metadata to OpenBao.
+# - Configures the dashboard FQDN (instance_settings.fqdn), restarts the
+#   Coolify container, and re-verifies origin health (fail closed).
+# - Closes bootstrap ports with UFW (SSH-only inbound; Tunnel is
+#   outbound-only) and verifies the firewall state (fail closed).
+# - Performs the domain smoke deployment check via service-token headers,
+#   requiring HTTP 200 (fail closed; skipped by name when the token env is
+#   absent because the tunnel stage owns that check).
 # - Machine verification must not depend on browser login or dashboard clicks.
 # - Never targets the preserved production VPS.
 #
@@ -97,6 +104,9 @@ if [ "$dry_run" -eq 1 ]; then
   log 'DRY-RUN: verify coolify containers healthy'
   log 'DRY-RUN: verify origin http://127.0.0.1:8000 responds without printing secrets'
   log 'DRY-RUN: escrow Coolify APP_KEY/admin bootstrap metadata to OpenBao by name only'
+  log "DRY-RUN: set instance_settings.fqdn to https://${domain} in coolify-db, restart coolify container, re-verify origin login"
+  log 'DRY-RUN: close bootstrap ports with UFW (allow 22/tcp, deny 80/443/8000/8080/6001/6002, default deny incoming) and verify active'
+  log "DRY-RUN: domain smoke deployment check https://${domain}/login via service-token headers, require HTTP 200 (fail closed)"
 else
   run docker ps --format 'table {{.Names}}\t{{.Status}}'
   if [ -f /data/coolify/source/.env ]; then
@@ -124,4 +134,75 @@ else
   fi
 fi
 
-log 'provisioning stage complete: release pinned, containers checked, secrets remain in OpenBao/env only.'
+# Stage: dashboard URL. Coolify serves the configured FQDN (used for generated
+# app URLs, webhooks and redirects); a fresh install leaves it empty.
+if [ "$dry_run" -eq 0 ]; then
+  current_fqdn="$(docker exec coolify-db psql -U coolify -d coolify -tAc 'SELECT fqdn FROM instance_settings WHERE id = 0;' 2>/dev/null || true)"
+  if [ "$current_fqdn" = "https://${domain}" ]; then
+    log "dashboard FQDN already https://${domain}; skipping."
+  else
+    log "setting dashboard FQDN to https://${domain} (was: '${current_fqdn:-empty}')"
+    docker exec coolify-db psql -U coolify -d coolify -c "UPDATE instance_settings SET fqdn = 'https://${domain}', updated_at = NOW() WHERE id = 0;" >/dev/null
+    run docker restart coolify >/dev/null
+    log 'coolify container restarted to pick up the FQDN.'
+    sleep 15
+    if curl -fsS --max-time 20 http://127.0.0.1:8000/login >/dev/null 2>&1; then
+      log 'origin login route healthy after FQDN change.'
+    else
+      echo 'origin did not recover after FQDN change; refusing to continue.' >&2
+      exit 1
+    fi
+  fi
+fi
+
+# Stage: close bootstrap ports. With Cloudflare Tunnel as the exclusive public
+# edge, the origin needs no public inbound ports except SSH (tunnel traffic is
+# outbound-only). Direct-IP/bootstrap ports 80/443/8000/8080/6001/6002 go dark.
+if [ "$dry_run" -eq 0 ]; then
+  if ufw status 2>/dev/null | grep -q 'Status: active'; then
+    log 'UFW already active; reconciling bootstrap-port rules.'
+  else
+    log 'enabling UFW with SSH-only inbound.'
+  fi
+  run ufw --force reset >/dev/null
+  run ufw default deny incoming
+  run ufw default allow outgoing
+  run ufw allow 22/tcp
+  run ufw deny 80/tcp
+  run ufw deny 443/tcp
+  run ufw deny 8000/tcp
+  run ufw deny 8080/tcp
+  run ufw deny 6001/tcp
+  run ufw deny 6002/tcp
+  run ufw --force enable
+  if ufw status | grep -q 'Status: active' && ufw status | grep -q '22/tcp.*ALLOW'; then
+    log 'firewall active: SSH allowed, bootstrap/web ports denied (tunnel is outbound-only, unaffected).'
+  else
+    echo 'UFW did not reach the expected state; refusing to continue.' >&2
+    exit 1
+  fi
+fi
+
+# Stage: domain smoke deployment check. Proves the full chain (Coolify origin +
+# Tunnel + DNS + Access policy) without browser login: the machine service
+# token must be ACCEPTED (HTTP 200). Credentials arrive via OpenBao-backed env;
+# when absent (tunnel not yet configured), the check is skipped by name and the
+# tunnel script performs it instead.
+if [ "$dry_run" -eq 0 ]; then
+  if [ -n "${COOLIFY_SERVICE_TOKEN_CLIENT_ID:-}" ] && [ -n "${COOLIFY_SERVICE_TOKEN_CLIENT_SECRET:-}" ]; then
+    smoke_code="$(curl -sS -o /dev/null -w '%{http_code}' --cookie-jar /dev/null --max-time 20 \
+      -H "CF-Access-Client-Id: ${COOLIFY_SERVICE_TOKEN_CLIENT_ID}" \
+      -H "CF-Access-Client-Secret: ${COOLIFY_SERVICE_TOKEN_CLIENT_SECRET}" \
+      "https://${domain}/login")"
+    if [ "$smoke_code" = '200' ]; then
+      log "domain smoke deployment check passed: https://${domain}/login -> HTTP 200 (service token accepted)."
+    else
+      echo "domain smoke check failed: https://${domain}/login -> HTTP ${smoke_code} (required 200); refusing to continue." >&2
+      exit 1
+    fi
+  else
+    log 'domain smoke check skipped: no service-token env present (covered by scripts/configure-tunnel-access.sh after tunnel setup).'
+  fi
+fi
+
+log 'provisioning stage complete: release pinned, FQDN configured, bootstrap ports closed, domain smoke checked, secrets remain in OpenBao/env only.'

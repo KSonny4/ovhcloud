@@ -153,3 +153,24 @@
   OpenBao runner token and the Cloudflare admin token after this session, and
   never run bare `fmt`/`-diff` where ignored credential files live (scope fmt
   to named `.tf` files). Throwaway `/tmp` state copies were shredded.
+
+## 2026-09-14 — provision-coolify.sh: FQDN + firewall + domain smoke (script + live proof)
+
+- Auditor objection: the script only logged `COOLIFY_DOMAIN`. Three stages added
+  (each dry-run capable, live path fail-closed with `exit 1`):
+  1. Dashboard FQDN: `UPDATE instance_settings SET fqdn='https://<domain>'`,
+     restart `coolify` container, re-verify origin `/login` (refuses to continue
+     if the origin does not recover).
+  2. Bootstrap-port closure: UFW reset, default deny incoming / allow outgoing,
+     allow 22/tcp, deny 80/443/8000/8080/6001/6002, enable; verifies
+     `Status: active` + `22/tcp ALLOW` (Tunnel is outbound-only, unaffected).
+  3. Domain smoke deployment check: `https://<domain>/login` with service-token
+     headers must return HTTP 200 (rejects 302/other); skipped by name only when
+     the token env is absent (tunnel script owns the check then).
+- Live proof on the preserved VPS (same operations the fresh-host script runs;
+  script guard still refuses the preserved host for full re-provisioning):
+  fqdn was empty → set to `https://coolify.pkubelka.cz`, container restarted,
+  origin `/login` healthy; UFW was inactive → now active with SSH-only inbound
+  (lockout guard: background auto-disable armed, new SSH verified, guard
+  confirmed gone with 0 residual processes); domain smoke → **HTTP 200**;
+  `cloudflared` still `active` post-firewall.
