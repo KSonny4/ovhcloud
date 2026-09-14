@@ -36,11 +36,7 @@ done
 log() { printf '%s\n' "$*"; }
 
 if [ "$(id -u)" -ne 0 ] && [ "$dry_run" -eq 0 ]; then
-  echo 'must run as root (reads the root-only R2 env file).' >&2
-  exit 2
-fi
-if [ ! -f "$env_file" ] && [ "$dry_run" -eq 0 ]; then
-  echo "R2 env file not found: ${env_file}." >&2
+  echo 'must run as root.' >&2
   exit 2
 fi
 
@@ -54,10 +50,14 @@ if [ "$dry_run" -eq 1 ]; then
   exit 0
 fi
 
-# shellcheck source=/dev/null
-source "$env_file"
+# Credentials arrive via environment from fetch-r2-env.sh (memory-only); a
+# legacy root-only env file is honored only as a fallback.
+if [ -z "${R2_ACCESS_KEY_ID:-}" ] && [ -f "$env_file" ]; then
+  # shellcheck source=/dev/null
+  source "$env_file"
+fi
 for v in R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY R2_ENDPOINT R2_BUCKET; do
-  if [ -z "${!v:-}" ]; then echo "missing ${v} in ${env_file}." >&2; exit 2; fi
+  if [ -z "${!v:-}" ]; then echo "missing ${v}: run through fetch-r2-env.sh (memory-only OpenBao pull)." >&2; exit 2; fi
 done
 export AWS_ACCESS_KEY_ID="$R2_ACCESS_KEY_ID" AWS_SECRET_ACCESS_KEY="$R2_SECRET_ACCESS_KEY"
 export AWS_DEFAULT_REGION="${AWS_DEFAULT_REGION:-auto}"

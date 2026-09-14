@@ -447,3 +447,30 @@
   active, machine /login 200, human / 302. Rotations complete (admin token
   mint-grant proven, R2 keys proven, both escrowed + rewired, old tokens
   revoked by operator).
+
+## 2026-09-14 — fresh-edge wiring + fileless R2 delivery (audit round)
+
+- New `scripts/wire-fresh-edge.sh` (operator side): binds a tunnel identity to
+  a hostname — ingress PUT (hostname -> 127.0.0.1:8000, `http_status:404`
+  catch-all, existing rules preserved, PUT only on drift) + DNS CNAME create
+  (proxied, idempotent; refuses to overwrite unrelated records) + end-to-end
+  gate (DNS + exactly HTTP 200 with service token, 6 propagation retries).
+  Runner calls it in the edge stage before the connector runs, resolving the
+  tunnel ID from the `tunnel_id` field or the token's `t` claim.
+- API paths proven with disposable artifacts (production untouched):
+  tunnel create 200 -> ingress PUT 200 (after fixing `http404` -> 400/1056 to
+  `http_status:404`) -> GET confirms rule -> DNS CNAME create 200 -> record
+  + tunnel deleted (200/200, 0 remaining afterwards).
+- R2 keys are now memory-only: new `scripts/fetch-r2-env.sh` pulls the four
+  fields per run through a least-privilege accessor (OpenBao policy
+  `coolify-r2-reader`, read-only on COOLIFY_R2; denied ADMIN/COOLIFY_ADMIN
+  proven) and execs the backup. Timer unit has NO EnvironmentFile; both
+  ExecStarts go through the wrapper. `/root/coolify-backup/r2.env` DELETED
+  from the live host; the fileless timer run completed instance + workload
+  backups (coolify-db-20260914T103710Z.dump.gz + app prefixes). Runner mints a
+  fresh accessor per run and pipes it (stdin, 0600); R2 keys left the blob
+  entirely; stage blob now travels on stdin (never argv).
+- Gates: rehearsal fails if any script writes r2.env, if the unit references
+  a credential EnvironmentFile, if the fetch wrapper is missing, or if the
+  runner omits wire-fresh-edge.sh. Clean-target test asserts fetch install +
+  no-EnvironmentFile + wrapper ExecStarts (now 9 checks).

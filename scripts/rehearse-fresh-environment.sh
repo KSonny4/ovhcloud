@@ -142,8 +142,14 @@ if grep -q 'coolify.coolify\.' /tmp/rehearsal-runner-1.log; then echo 'doubled d
 # stage the workload companion alongside the schedule script, and the
 # schedule script must install both timer commands.
 grep -q 'backup-app-workloads.sh' scripts/run-remote-provision.sh || { echo 'runner does not stage backup-app-workloads.sh.' >&2; exit 1; }
-grep -q "ExecStart=\${app_installed}" scripts/schedule-coolify-backup.sh || { echo 'schedule script omits the workload ExecStart.' >&2; exit 1; }
-log 'runner dry-run idempotent across two passes; all four stages present; backup companion staged + scheduled; no network touched.'
+grep -q 'fetch-r2-env.sh -- ${app_installed}' scripts/schedule-coolify-backup.sh || { echo 'schedule script omits the workload ExecStart via fetch wrapper.' >&2; exit 1; }
+# Secret-delivery gates: no script may (re)create a static R2 credential file;
+# delivery is memory-only via fetch-r2-env.sh, and the unit must exec through it.
+grep -q 'fetch-r2-env.sh' scripts/schedule-coolify-backup.sh || { echo 'schedule script omits the fetch wrapper.' >&2; exit 1; }
+if grep -rnE '(tee|>)[^|]*r2\.env' scripts/*.sh | grep -v test-clean-target-install >/dev/null; then echo 'a script still writes r2.env.' >&2; exit 1; fi
+if grep -q 'EnvironmentFile=.*r2' scripts/schedule-coolify-backup.sh; then echo 'unit still consumes a credential EnvironmentFile.' >&2; exit 1; fi
+grep -q 'wire-fresh-edge.sh' scripts/run-remote-provision.sh || { echo 'runner omits fresh-edge wiring.' >&2; exit 1; }
+log 'runner dry-run idempotent across two passes; all four stages present; backup companion staged + scheduled; fileless R2 delivery enforced; fresh edge wired; no network touched.'
 phase_ok runner_channel | tee -a "$artifact_dir/phases.log"
 
 log '== backup_ready (dry-run) =='

@@ -35,7 +35,8 @@ if [ -n "$host" ]; then
   # shellcheck disable=SC2029
   ssh "${ssh_opts[@]}" "$host" "mkdir -p $remote_stage"
   scp "${ssh_opts[@]}" "$repo_root/scripts/schedule-coolify-backup.sh" \
-    "$repo_root/scripts/backup-app-workloads.sh" "$0" "$host:$remote_stage/"
+    "$repo_root/scripts/backup-app-workloads.sh" \
+    "$repo_root/scripts/fetch-r2-env.sh" "$0" "$host:$remote_stage/"
   # shellcheck disable=SC2029
   ssh "${ssh_opts[@]}" "$host" "sudo bash $remote_stage/test-clean-target-install.sh --local-dir $remote_stage"
   rc=$?
@@ -55,21 +56,18 @@ prefix="$(mktemp -d /tmp/clean-target-install.XXXXXX)"
 trap 'rm -rf "$prefix"' EXIT
 export BACKUP_DIR="$prefix/backup" SYSTEMD_DIR="$prefix/systemd"
 mkdir -p "$SYSTEMD_DIR"
-{
-echo 'R2_ACCESS_KEY_ID=test-only'
-echo 'R2_SECRET_ACCESS_KEY=test-only'
-echo 'R2_ENDPOINT=https://test-only'
-echo 'R2_BUCKET=test-only'
-} >"$prefix/r2.env"
-chmod 600 "$prefix/r2.env"
+# No credential file: the installer is fileless (fetch wrapper pulls per run).
 
 fail=0
 check() { if [ "$1" -ne 0 ]; then echo "FAIL: $2" >&2; fail=1; else echo "ok: $2"; fi; }
 
-bash "${stage_dir}/schedule-coolify-backup.sh" --env-file "$prefix/r2.env" --install-only >/dev/null 2>&1
+bash "${stage_dir}/schedule-coolify-backup.sh" --install-only >/dev/null 2>&1
 check $? 'installer exits 0 non-dry-run into isolated prefix'
 [ -x "$BACKUP_DIR/backup-to-r2.sh" ]; check $? 'instance backup script installed executable'
 [ -x "$BACKUP_DIR/backup-app-workloads.sh" ]; check $? 'workload companion installed executable'
+[ -x "$BACKUP_DIR/fetch-r2-env.sh" ]; check $? 'fetch wrapper installed executable'
+if grep -q 'EnvironmentFile' "$SYSTEMD_DIR/coolify-backup.service" 2>/dev/null; then echo 'FAIL: unit still references EnvironmentFile' >&2; fail=1; else echo 'ok: unit carries no EnvironmentFile (memory-only)'; fi
+if grep -q 'fetch-r2-env.sh -- ' "$SYSTEMD_DIR/coolify-backup.service" 2>/dev/null; then echo 'ok: unit execs through fetch wrapper'; else echo 'FAIL: unit bypasses fetch wrapper' >&2; fail=1; fi
 grep -q "^ExecStart=${BACKUP_DIR}/backup-to-r2.sh$" "$SYSTEMD_DIR/coolify-backup.service" 2>/dev/null; check $? 'unit carries instance ExecStart'
 grep -q "^ExecStart=${BACKUP_DIR}/backup-app-workloads.sh$" "$SYSTEMD_DIR/coolify-backup.service" 2>/dev/null; check $? 'unit carries workload ExecStart'
 [ -f "$SYSTEMD_DIR/coolify-backup.timer" ]; check $? 'timer unit installed'

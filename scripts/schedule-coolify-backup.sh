@@ -24,13 +24,10 @@ set -euo pipefail
 
 dry_run=0
 install_only=0
-env_file='/root/coolify-backup/r2.env'
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --dry-run) dry_run=1; shift ;;
     --install-only) install_only=1; shift ;;
-    --env-file) env_file="$2"; shift 2 ;;
-    --env-file=*) env_file="${1#--env-file=}"; shift ;;
     -h|--help) echo 'usage: schedule-coolify-backup.sh [--env-file PATH] [--dry-run] [--install-only]'; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
@@ -46,30 +43,26 @@ run() {
 }
 
 if [ "$(id -u)" -ne 0 ] && [ "$dry_run" -eq 0 ]; then
-  echo 'must run as root (installs timer + reads the root-only env file).' >&2
+  echo 'must run as root (installs timer + backup scripts).' >&2
   exit 2
 fi
 
-if [ ! -f "$env_file" ] && [ "$dry_run" -eq 0 ]; then
-  echo "R2 env file not found: ${env_file} (provision it from OpenBao secret/projects/ovhcloud/COOLIFY_R2, mode 0600)." >&2
-  exit 2
-fi
-
-# shellcheck disable=SC1090
-if [ "$dry_run" -eq 0 ]; then
-  # shellcheck source=/dev/null
-  source "$env_file"
-  for v in R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY R2_ENDPOINT R2_BUCKET; do
-    if [ -z "${!v:-}" ]; then echo "missing ${v} in ${env_file}." >&2; exit 2; fi
-  done
-  export AWS_ACCESS_KEY_ID="$R2_ACCESS_KEY_ID" AWS_SECRET_ACCESS_KEY="$R2_SECRET_ACCESS_KEY"
-  export AWS_DEFAULT_REGION="${AWS_DEFAULT_REGION:-auto}"
-fi
+# No credential file is required anymore: the timer execs through
+# fetch-r2-env.sh (memory-only OpenBao pull). The --env-file flag remains
+# only for legacy hosts during migration.
 
 if ! command -v aws >/dev/null 2>&1; then
   log 'installing awscli for the S3-compatible R2 upload'
   run apt-get update -qq
   run apt-get install -y -qq awscli
+fi
+if ! command -v bao >/dev/null 2>&1 && [ "$dry_run" -eq 0 ]; then
+  log 'installing bao CLI (OpenBao memory-only credential delivery)'
+  bao_deb="$(curl -fsSL https://api.github.com/repos/openbao/openbao/releases/latest | python3 -c 'import json,sys; print([a["browser_download_url"] for a in json.load(sys.stdin)["assets"] if a["name"].startswith("openbao_") and a["name"].endswith("linux_amd64.deb") and "-hsm" not in a["name"]][0])')"
+  run curl -fsSL -o /tmp/openbao.deb "$bao_deb"
+  run dpkg -i /tmp/openbao.deb
+  run rm -f /tmp/openbao.deb
+  bao version >/dev/null || { echo 'bao install verification failed.' >&2; exit 2; }
 fi
 if ! command -v docker >/dev/null 2>&1 && [ "$dry_run" -eq 0 ]; then
   echo 'docker not found on this host; cannot dump coolify-db.' >&2
@@ -108,12 +101,15 @@ fi
 
 cat >"$backup_script" <<'BACKUP_EOF'
 #!/usr/bin/env bash
-# Nightly Coolify instance DB backup. Sources its credential env file so it
-# works both under systemd (EnvironmentFile) and when run by hand.
+# Nightly Coolify instance DB backup. Credentials arrive via environment from
+# fetch-r2-env.sh (memory-only OpenBao pull); a legacy root-only env file is
+# honored only as a fallback and must not exist on new installs.
 set -euo pipefail
-# shellcheck source=/dev/null
-source "@@ENV_FILE@@"
-: "${R2_ENDPOINT:?}"; : "${R2_BUCKET:?}"
+if [ -z "${R2_ACCESS_KEY_ID:-}" ] && [ -n "${R2_ENV_FILE:-}" ] && [ -f "$R2_ENV_FILE" ]; then
+  # shellcheck source=/dev/null
+  source "$R2_ENV_FILE"
+fi
+: "${R2_ENDPOINT:?R2 credentials required via environment (fetch-r2-env.sh)}"; : "${R2_BUCKET:?}"
 export AWS_ACCESS_KEY_ID="${R2_ACCESS_KEY_ID:?}" AWS_SECRET_ACCESS_KEY="${R2_SECRET_ACCESS_KEY:?}"
 export AWS_DEFAULT_REGION="${AWS_DEFAULT_REGION:-auto}"
 stamp="$(date -u +%Y%m%dT%H%M%SZ)"
@@ -136,8 +132,20 @@ trap - EXIT
 rm -f "$tmp"
 echo "backup ok: ${key}"
 BACKUP_EOF
-run sed -i "s|@@ENV_FILE@@|${env_file}|" "$backup_script"
 run chmod 700 "$backup_script"
+
+# The OpenBao fetch wrapper must live beside the backup scripts; the unit
+# execs through it so R2 keys stay memory-only. Same fail-closed companion
+# pattern as backup-app-workloads.sh.
+fetch_src="$(cd "$(dirname "$0")" && pwd)/fetch-r2-env.sh"
+if [ -f "$fetch_src" ]; then
+  run cp "$fetch_src" "${backup_dir}/fetch-r2-env.sh"
+  run chmod 700 "${backup_dir}/fetch-r2-env.sh"
+  log 'installed OpenBao fetch wrapper.'
+elif [ ! -f "${backup_dir}/fetch-r2-env.sh" ] && [ "$dry_run" -eq 0 ]; then
+  echo 'fetch-r2-env.sh found neither beside this script nor installed; refusing to schedule fileless backup.' >&2
+  exit 2
+fi
 
 # The application-workload script must sit beside the instance script (the
 # runner/live operator scp's it there); the unit runs both sequentially and
@@ -150,9 +158,8 @@ After=network-online.target docker.service
 
 [Service]
 Type=oneshot
-EnvironmentFile=${env_file}
-ExecStart=${backup_script}
-ExecStart=${app_installed}
+ExecStart=${backup_dir}/fetch-r2-env.sh -- ${backup_script}
+ExecStart=${backup_dir}/fetch-r2-env.sh -- ${app_installed}
 SERVICE_EOF
 
 cat >"${systemd_dir}/coolify-backup.timer" <<'TIMER_EOF'
@@ -187,10 +194,7 @@ if [ "$install_only" -eq 1 ]; then
   exit 0
 fi
 
-# First backup now (proves the schedule works end to end).
-# shellcheck source=/dev/null
-source "$env_file"
-export AWS_ACCESS_KEY_ID="$R2_ACCESS_KEY_ID" AWS_SECRET_ACCESS_KEY="$R2_SECRET_ACCESS_KEY"
-export AWS_DEFAULT_REGION="${AWS_DEFAULT_REGION:-auto}"
-bash "$backup_script"
+# First backup now through the fetch wrapper (proves the memory-only path
+# end to end; the accessor token file must already be provisioned).
+bash "${backup_dir}/fetch-r2-env.sh" -- bash "$backup_script"
 log 'schedule live: first backup completed and verified in R2; retention 14 days.'

@@ -82,9 +82,20 @@ Why dashboard: R2 token routes return 404 under the deployment token.
    access_key_id=<id> secret_access_key=<secret> bucket=ovh-coolify-backups`
 3. Rewire downstream and verify:
    - Coolify destination: update `s3_storages` row id 1 (`key`, `secret`).
-   - Host env: rewrite `/root/coolify-backup/r2.env` (0600) from OpenBao.
+   - Host: nothing to rewrite — the timer pulls memory-only via
+     `fetch-r2-env.sh` on every run, so new keys take effect automatically.
    - `R2_ENDPOINT=... R2_BUCKET=ovh-coolify-backups bash scripts/backup-r2-probe.sh`
      must print `probe ok`.
+
+### OpenBao R2-reader accessor (host-side secret at rest)
+
+The single file on the host is `/root/coolify-backup/openbao-token` (0600,
+policy `coolify-r2-reader`: read-only on the R2 entry). To rotate:
+1. `bao token create -policy=coolify-r2-reader -period=720h -orphan` (operator).
+2. Pipe the new `client_token` to the host file (stdin pipe, 0600).
+3. `sudo systemctl start coolify-backup.service` must complete both backups.
+4. Revoke the old accessor: `bao token revoke -accessor <old>`. Unrenewed
+   periodic tokens also self-expire after their period.
 
 ### Cloudflare Tunnel secret (deliberately unchanged)
 

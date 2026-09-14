@@ -66,9 +66,9 @@ fi
 ssh_user="${PROVISION_SSH_USER:-ubuntu}"
 ssh_key="${PROVISION_SSH_KEY:-}"
 cf_account="${CLOUDFLARE_ACCOUNT_ID:-5eb3ea3a84b37564cfd8739f32ffb559}"
+cf_zone="${CLOUDFLARE_ZONE_ID:-0fcca39cc6516b8e23971bd717c0e9ca}"
 coolify_version="${COOLIFY_VERSION:-4.3.19}"
 bao_addr="${BAO_ADDR:-https://secrets.pkubelka.cz}"
-r2_endpoint="${R2_ENDPOINT:-https://5eb3ea3a84b37564cfd8739f32ffb559.r2.cloudflarestorage.com}"
 if [ -z "$host" ] || [ -z "$zone" ] || [ -z "$dashboard_host" ]; then
   echo 'PROVISION_HOST and PROVISION_ZONE (or PROVISION_DASHBOARD_HOST) must be set.' >&2
   exit 2
@@ -231,7 +231,7 @@ if [ "$dry_run" -eq 1 ]; then
   want_stage bootstrap && log 'DRY-RUN: remote sudo BOOTSTRAP_TARGET_HOST/BOOTSTRAP_SSH_PUBLIC_KEY bash bootstrap-vps.sh + verify docker hello-world'
   want_stage coolify && log "DRY-RUN: remote sudo COOLIFY_TARGET_HOST/COOLIFY_DOMAIN/COOLIFY_VERSION/ROOT_* bash provision-coolify.sh (FQDN + firewall + origin smoke) + verify origin login + fetch APP_KEY over SSH and escrow operator-side (fail closed)"
   want_stage edge && log 'DRY-RUN: remote sudo TUNNEL_TARGET_HOST/TUNNEL_DOMAIN/CLOUDFLARED_TUNNEL_TOKEN/CF_ACCESS_* bash configure-tunnel-access.sh + verify domain login HTTP 200 locally'
-  want_stage backup && log 'DRY-RUN: provision remote r2.env (0600) from OpenBao via stdin pipe + remote sudo bash schedule-coolify-backup.sh + verify timer + R2 object'
+  want_stage backup && log 'DRY-RUN: mint R2 reader token + place accessor (0600) via stdin pipe + remote sudo bash schedule-coolify-backup.sh (fetch-r2-env memory-only) + verify timer + R2 object'
   log 'DRY-RUN: remove remote stage scripts on every exit path; report per-stage pass/fail (fail closed)'
   exit 0
 fi
@@ -280,10 +280,9 @@ ssh_pub="$(bao_get COOLIFY_SSH_PUBLIC_KEY value)"
 tunnel_token="$(bao_get COOLIFY_TUNNEL_TOKEN tunnel_token)"
 svc_id="$(bao_get COOLIFY_ACCESS_SERVICE_TOKEN client_id)"
 svc_secret="$(bao_get COOLIFY_ACCESS_SERVICE_TOKEN client_secret)"
-r2_ak="$(bao_get COOLIFY_R2 access_key_id)"
-r2_sk="$(bao_get COOLIFY_R2 secret_access_key)"
-r2_bucket="$(bao_get COOLIFY_R2 bucket)"
-for v in ssh_pub tunnel_token svc_id svc_secret r2_ak r2_sk r2_bucket; do
+# R2 keys are deliberately NOT retrieved: the target pulls them memory-only
+# via fetch-r2-env.sh, so operator-side handling cannot leak them.
+for v in ssh_pub tunnel_token svc_id svc_secret; do
   if [ -z "${!v}" ]; then echo "OpenBao escrow missing for ${v}; refusing to continue." >&2; exit 2; fi
 done
 log 'OpenBao retrieval ok (all required fields present).'
@@ -291,13 +290,13 @@ log 'OpenBao retrieval ok (all required fields present).'
 # NOTE: the single EXIT trap installed near the top covers generated keys +
 # remote material on every path; do NOT install another here.
 #
-# Memory-only credential transport: stage values are shell-quoted (%q),
-# packed into one base64 blob, and evaluated inside each remote SSH command.
-# Nothing credential-bearing touches disk on either end (an earlier stage.env
-# file proved that any on-disk copy leaks through tooling). The blob itself
-# is base64 (never plaintext) and lives only in transient process arguments
-# inside the encrypted SSH channel; the remote shell exports it into process
-# environment for `sudo -E`, which dies with the session.
+# Memory-only credential transport: stage values are shell-quoted, packed
+# into one base64 blob, piped on stdin (never argv: invisible to ps), and
+# evaluated inside each remote SSH command. Nothing credential-bearing touches
+# disk on either end (an earlier stage.env file proved that any on-disk copy
+# leaks through tooling). The remote shell exports the blob into process
+# environment for `sudo -E`, which dies with the session. R2 keys are not in
+# the blob at all: the target pulls them per-run via fetch-r2-env.sh.
 qline() { printf 'export %s=%s\n' "$1" "$(printf '%s' "$2" | sed 's/[^A-Za-z0-9_.\/+=@:-]/\\&/g')"; }
 remote_env_blob="$( { qline BOOTSTRAP_TARGET_HOST "$host"
   qline BOOTSTRAP_SSH_PUBLIC_KEY "$ssh_pub"
@@ -313,12 +312,7 @@ remote_env_blob="$( { qline BOOTSTRAP_TARGET_HOST "$host"
   qline CF_ACCESS_CLIENT_ID "$svc_id"
   qline CF_ACCESS_CLIENT_SECRET "$svc_secret"
   qline COOLIFY_SERVICE_TOKEN_CLIENT_ID "$svc_id"
-  qline COOLIFY_SERVICE_TOKEN_CLIENT_SECRET "$svc_secret"
-  qline R2_ACCESS_KEY_ID "$r2_ak"
-  qline R2_SECRET_ACCESS_KEY "$r2_sk"
-  qline R2_ENDPOINT "$r2_endpoint"
-  qline R2_BUCKET "$r2_bucket"
-  qline AWS_DEFAULT_REGION auto; } | base64 )"
+  qline COOLIFY_SERVICE_TOKEN_CLIENT_SECRET "$svc_secret"; } | base64 )"
 
 log 'copying stage scripts to the target (no credential files)...'
 run ssh "${ssh_opts[@]}" "${ssh_user}@${host}" "mkdir -p ${remote_dir}/lib && chmod 700 ${remote_dir} ${remote_dir}/lib"
@@ -327,7 +321,7 @@ remote_touched=1
 # on a clean host when its application-workload companion is absent.
 run scp -p "${ssh_opts[@]}" "$repo_root/scripts/bootstrap-vps.sh" "$repo_root/scripts/provision-coolify.sh" \
   "$repo_root/scripts/configure-tunnel-access.sh" "$repo_root/scripts/schedule-coolify-backup.sh" \
-  "$repo_root/scripts/backup-app-workloads.sh" \
+  "$repo_root/scripts/backup-app-workloads.sh" "$repo_root/scripts/fetch-r2-env.sh" \
   "${ssh_user}@${host}:${remote_dir}/"
 run scp -p "${ssh_opts[@]}" "$repo_root/scripts/lib/preserved-guard.sh" \
   "${ssh_user}@${host}:${remote_dir}/lib/"
@@ -335,9 +329,10 @@ run scp -p "${ssh_opts[@]}" "$repo_root/scripts/lib/preserved-guard.sh" \
 remote_stage() {
   local name="$1" script="$2"
   log "== remote stage: ${name} =="
-  # shellcheck disable=SC2029
-  run ssh "${ssh_opts[@]}" "${ssh_user}@${host}" \
-    "eval \"\$(echo '${remote_env_blob}' | base64 -d)\"; sudo -E bash ${remote_dir}/${script}"
+  # The credential blob travels on stdin (never in argv: invisible to ps on
+  # both ends); the remote shell decodes it into session environment only.
+  printf '%s' "$remote_env_blob" | run ssh "${ssh_opts[@]}" "${ssh_user}@${host}" \
+    'eval "$(base64 -d)"; sudo -E bash '"${remote_dir}/${script}"
   log "remote stage ${name} exited 0."
 }
 
@@ -372,6 +367,21 @@ if want_stage coolify; then
 fi
 
 if want_stage edge; then
+  # Fresh-edge wiring (operator side): bind the escrowed tunnel identity to
+  # the dashboard hostname (ingress + DNS, idempotent) BEFORE the connector
+  # runs, then gate on HTTP 200. Without this a fresh tunnel has no route.
+  # Tunnel identity: dedicated field when present (fresh ensure path), else
+  # the "t" claim inside the JSON connector token (legacy escrow layout).
+  tunnel_id="$(bao kv get -field=tunnel_id secret/projects/ovhcloud/COOLIFY_TUNNEL_TOKEN 2>/dev/null || true)"
+  if [ -z "$tunnel_id" ]; then
+    tunnel_id="$(printf '%s' "$tunnel_token" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("t",""))' 2>/dev/null || true)"
+  fi
+  if [ -z "$tunnel_id" ]; then echo 'tunnel identity unresolvable in OpenBao (ensure-tunnel must run first).' >&2; exit 2; fi
+  log '== fresh-edge wiring (operator side) =='
+  run env BAO_ADDR="$bao_addr" CLOUDFLARE_ACCOUNT_ID="$cf_account" \
+    CLOUDFLARE_ZONE_ID="$cf_zone" TUNNEL_ID="$tunnel_id" \
+    EDGE_HOSTNAME="$dashboard_host" \
+    bash "$repo_root/scripts/wire-fresh-edge.sh"
   # Complete service-token lifecycle first (operator side, OpenBao-complete):
   # ensures the token exists, escrows the pair, and proves HTTP 200.
   log '== service-token lifecycle (operator side) =='
@@ -391,15 +401,17 @@ if want_stage edge; then
 fi
 
 if want_stage backup; then
-  log 'provisioning remote R2 env from OpenBao values via stdin pipe...'
-  {
-    printf 'R2_ACCESS_KEY_ID=%s\n' "$r2_ak"
-    printf 'R2_SECRET_ACCESS_KEY=%s\n' "$r2_sk"
-    printf 'R2_ENDPOINT=%s\n' "$r2_endpoint"
-    printf 'R2_BUCKET=%s\n' "$r2_bucket"
-    printf 'AWS_DEFAULT_REGION=auto\n'
-  } | run ssh "${ssh_opts[@]}" "${ssh_user}@${host}" \
-    'sudo mkdir -p /root/coolify-backup && sudo tee /root/coolify-backup/r2.env >/dev/null && sudo chmod 600 /root/coolify-backup/r2.env'
+  # Memory-only R2 delivery: the target never holds R2 keys. It holds one
+  # least-privilege OpenBao accessor (0600, read-only on the R2 entry) and
+  # pulls keys into process memory per run via fetch-r2-env.sh. Minted fresh
+  # operator-side each run (self-cleaning: periodic TTL, documented rotation).
+  log 'minting least-privilege R2 reader token (operator side)...'
+  r2_reader_token="$(BAO_ADDR="$bao_addr" bao token create -policy=coolify-r2-reader -period=720h -orphan -format=json 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin).get("auth",{}).get("client_token",""))')"
+  if [ -z "$r2_reader_token" ]; then echo 'R2 reader token minting failed (fail closed).' >&2; exit 2; fi
+  printf '%s' "$r2_reader_token" | run ssh "${ssh_opts[@]}" "${ssh_user}@${host}" \
+    'sudo mkdir -p /root/coolify-backup && sudo tee /root/coolify-backup/openbao-token >/dev/null && sudo chmod 600 /root/coolify-backup/openbao-token'
+  r2_reader_token=''
+  log 'R2 accessor placed (0600); R2 keys stay memory-only via fetch-r2-env.sh.'
   run ssh "${ssh_opts[@]}" "${ssh_user}@${host}" "sudo bash ${remote_dir}/schedule-coolify-backup.sh"
   run ssh "${ssh_opts[@]}" "${ssh_user}@${host}" 'sudo systemctl is-enabled coolify-backup.timer | grep -q enabled'
   log 'backup verified: coolify-backup.timer enabled on the target (first backup runs during install).'
@@ -407,4 +419,4 @@ fi
 
 trap - EXIT
 cleanup_remote
-log 'remote provisioning complete: all requested stages passed with verification; no credential file was written on either end.'
+log 'remote provisioning complete: all requested stages passed with verification; R2 keys never touched disk (memory-only OpenBao pull; sole file: least-privilege accessor token 0600).'
