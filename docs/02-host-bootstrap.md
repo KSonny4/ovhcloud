@@ -33,7 +33,16 @@ bash scripts/healthcheck.sh
 Notes that remain true and are enforced by the automation:
 
 - Ubuntu UFW alone does not constrain Docker-published ports (Docker inserts
-  NAT rules ahead of UFW). Avoid publishing app/database ports to the host;
+  NAT rules ahead of UFW) — proven live 2026-09-14 when external probes
+  reached :80/:443/:8000/:6001/:6002 despite UFW DENY. The compensation is
+  `scripts/ensure-docker-firewall.sh`: scoped DROP of new external ingress
+  in Docker's DOCKER-USER hook chain (established traffic RETURNed first;
+  loopback for cloudflared and inter-container traffic unaffected; host SSH
+  untouched), persisted by a `docker-firewall.service` unit (After=docker).
+  Verify with `--check-only` plus the DROP packet counter (background
+  internet scanning keeps it incrementing — self-proving), and with
+  `scripts/verify-coolify-live.sh` (edge 101, proxy version, workloads,
+  timer — fail-closed). Avoid publishing app/database ports to the host;
   route web apps through the Coolify proxy; audit listeners with `ss` and
   `docker ps`.
 - Keep a second SSH session open while changing access (the automation does;
