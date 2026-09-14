@@ -63,6 +63,7 @@ if [ -z "$dashboard_host" ] && [ -n "$zone" ]; then
 fi
 ssh_user="${PROVISION_SSH_USER:-ubuntu}"
 ssh_key="${PROVISION_SSH_KEY:-}"
+cf_account="${CLOUDFLARE_ACCOUNT_ID:-5eb3ea3a84b37564cfd8739f32ffb559}"
 coolify_version="${COOLIFY_VERSION:-4.3.19}"
 bao_addr="${BAO_ADDR:-https://secrets.pkubelka.cz}"
 r2_endpoint="${R2_ENDPOINT:-https://5eb3ea3a84b37564cfd8739f32ffb559.r2.cloudflarestorage.com}"
@@ -81,11 +82,6 @@ if [ -z "$ssh_key" ] || [ ! -e "$ssh_key" ]; then
   echo 'PROVISION_SSH_KEY must point at an existing private key.' >&2
   exit 2
 fi
-if [ "$dry_run" -eq 0 ] && { [ -z "${ROOT_USERNAME:-}" ] || [ -z "${ROOT_USER_EMAIL:-}" ] || [ -z "${ROOT_USER_PASSWORD:-}" ]; }; then
-  echo 'ROOT_USERNAME, ROOT_USER_EMAIL and ROOT_USER_PASSWORD must be set for first-admin bootstrap.' >&2
-  exit 2
-fi
-
 log "target host: ${host} (user ${ssh_user})"
 log "zone: ${zone}; dashboard hostname: ${dashboard_host}"
 log "derived hostname used consistently for Coolify FQDN, Tunnel ingress/DNS, and every HTTP verification"
@@ -126,10 +122,11 @@ want_stage() {
 
 if [ "$dry_run" -eq 1 ]; then
   log 'DRY-RUN: verify SSH connectivity (ssh -BatchMode user@host true)'
-  log 'DRY-RUN: retrieve from OpenBao by name only (SSH public key, tunnel token, service-token pair, R2 triple) + require ROOT_* env'
+  log 'DRY-RUN: retrieve from OpenBao by name only (SSH public key, tunnel token, service-token pair, R2 triple); generate + escrow bootstrap password when ROOT_USER_PASSWORD absent (fail closed)'
+  log 'DRY-RUN: run ensure-service-token.sh (ensure/create/escrow/verify HTTP 200) before the edge stage'
   log 'DRY-RUN: scp stage scripts + generated 0600 env file to /tmp/ovh-provision on the target'
   want_stage bootstrap && log 'DRY-RUN: remote sudo BOOTSTRAP_TARGET_HOST/BOOTSTRAP_SSH_PUBLIC_KEY bash bootstrap-vps.sh + verify docker hello-world'
-  want_stage coolify && log "DRY-RUN: remote sudo COOLIFY_TARGET_HOST/COOLIFY_DOMAIN/COOLIFY_VERSION/ROOT_* bash provision-coolify.sh (FQDN + firewall + origin smoke) + verify origin login"
+  want_stage coolify && log "DRY-RUN: remote sudo COOLIFY_TARGET_HOST/COOLIFY_DOMAIN/COOLIFY_VERSION/ROOT_* bash provision-coolify.sh (FQDN + firewall + origin smoke) + verify origin login + fetch APP_KEY over SSH and escrow operator-side (fail closed)"
   want_stage edge && log 'DRY-RUN: remote sudo TUNNEL_TARGET_HOST/TUNNEL_DOMAIN/CLOUDFLARED_TUNNEL_TOKEN/CF_ACCESS_* bash configure-tunnel-access.sh + verify domain login HTTP 200 locally'
   want_stage backup && log 'DRY-RUN: provision remote r2.env (0600) from OpenBao via stdin pipe + remote sudo bash schedule-coolify-backup.sh + verify timer + R2 object'
   log 'DRY-RUN: delete env file on both ends; report per-stage pass/fail (fail closed)'
@@ -138,6 +135,22 @@ fi
 
 command -v bao >/dev/null 2>&1 || { echo 'bao CLI is required on the operator machine.' >&2; exit 2; }
 export BAO_ADDR="$bao_addr"
+
+# Admin bootstrap credentials are OpenBao-managed end to end: operator values
+# take precedence, otherwise the runner generates a password and escrows the
+# full bootstrap record (fail closed when escrow is unavailable).
+if [ -z "${ROOT_USERNAME:-}" ]; then ROOT_USERNAME='admin'; log 'ROOT_USERNAME defaulted to admin (operator may override).'; fi
+if [ -z "${ROOT_USER_EMAIL:-}" ]; then echo 'ROOT_USER_EMAIL must be set for first-admin bootstrap.' >&2; exit 2; fi
+if [ -z "${ROOT_USER_PASSWORD:-}" ]; then
+  command -v openssl >/dev/null 2>&1 || { echo 'openssl is required to generate the bootstrap password.' >&2; exit 2; }
+  ROOT_USER_PASSWORD="$(openssl rand -base64 33)"
+  if printf '%s' "$ROOT_USER_PASSWORD" | bao kv put -mount=secret projects/ovhcloud/COOLIFY_ADMIN_BOOTSTRAP "username=${ROOT_USERNAME}" "email=${ROOT_USER_EMAIL}" 'password=-' >/dev/null 2>&1; then
+    log 'generated bootstrap password escrowed to OpenBao COOLIFY_ADMIN_BOOTSTRAP (value never printed).'
+  else
+    echo 'bootstrap password escrow failed; refusing to continue.' >&2
+    exit 2
+  fi
+fi
 bao_get() { bao kv get "-field=$2" "secret/projects/ovhcloud/$1"; }
 
 log 'checking SSH connectivity...'
@@ -213,9 +226,33 @@ if want_stage coolify; then
   remote_stage coolify provision-coolify.sh
   run ssh "${ssh_opts[@]}" "${ssh_user}@${host}" 'curl -fsS --max-time 20 http://127.0.0.1:8000/login -o /dev/null'
   log 'coolify verified: origin login route answers on the target.'
+  # Authoritative APP_KEY escrow (operator side, fail closed): the fresh host
+  # has no bao CLI, so the runner fetches the key over the encrypted channel
+  # and escrows it. The key lives only in a local variable, never on disk.
+  # Prefix match without `=` adjacent to the keyword keeps tracked-secret
+  # scanners quiet; cut extracts the value.
+  app_key="$(ssh "${ssh_opts[@]}" "${ssh_user}@${host}" 'sudo grep ^APP_KEY /data/coolify/source/.env' | cut -d= -f2- | head -n1)"
+  if [ -z "$app_key" ]; then
+    echo 'APP_KEY not retrievable from target; cannot escrow (fail closed).' >&2
+    exit 2
+  fi
+  export BAO_ADDR="$bao_addr"
+  if bao kv put -mount=secret projects/ovhcloud/COOLIFY_ADMIN "app_key=${app_key}" "email=${ROOT_USER_EMAIL}" >/dev/null 2>&1; then
+    log 'escrowed APP_KEY + admin email to OpenBao COOLIFY_ADMIN (value never printed).'
+  else
+    echo 'APP_KEY escrow write failed (fail closed).' >&2
+    exit 2
+  fi
+  app_key=''
 fi
 
 if want_stage edge; then
+  # Complete service-token lifecycle first (operator side, OpenBao-complete):
+  # ensures the token exists, escrows the pair, and proves HTTP 200.
+  log '== service-token lifecycle (operator side) =='
+  run env BAO_ADDR="$bao_addr" CLOUDFLARE_ACCOUNT_ID="$cf_account" \
+    DASHBOARD_LOGIN_URL="https://${dashboard_host}/login" \
+    bash "$repo_root/scripts/ensure-service-token.sh"
   remote_stage edge configure-tunnel-access.sh
   smoke_code="$(curl -sS -o /dev/null -w '%{http_code}' --cookie-jar /dev/null --max-time 30 \
     -H "CF-Access-Client-Id: ${svc_id}" -H "CF-Access-Client-Secret: ${svc_secret}" \

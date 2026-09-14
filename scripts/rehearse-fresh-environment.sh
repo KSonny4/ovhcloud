@@ -113,7 +113,15 @@ for pass in 1 2; do
     bash scripts/configure-tunnel-access.sh --dry-run >/tmp/rehearsal-tunnel-"$pass".log 2>&1
 done
 cmp -s /tmp/rehearsal-tunnel-1.log /tmp/rehearsal-tunnel-2.log || { echo 'tunnel dry-run is not idempotent.' >&2; exit 1; }
-log 'tunnel/access dry-run idempotent across two passes; machine verification shape checked.'
+if ! grep -q 'exactly HTTP 200' /tmp/rehearsal-tunnel-1.log && ! grep -q 'HTTP 200' scripts/configure-tunnel-access.sh; then
+  echo 'tunnel verification is not 200-only.' >&2; exit 1
+fi
+if grep -q '302)' scripts/configure-tunnel-access.sh || grep -q '|| true' scripts/configure-tunnel-access.sh; then
+  echo 'tunnel script still tolerates redirects or suppresses health failure.' >&2; exit 1
+fi
+DASHBOARD_LOGIN_URL='https://coolify.rehearsal.invalid/login' \
+  bash scripts/ensure-service-token.sh --dry-run >/tmp/rehearsal-lifecycle.log 2>&1
+log 'tunnel/access dry-run idempotent across two passes; 200-only verification enforced; lifecycle dry-run clean.'
 phase_ok edge_ready | tee -a "$artifact_dir/phases.log"
 
 log '== runner_channel (dry-run twice) =='
