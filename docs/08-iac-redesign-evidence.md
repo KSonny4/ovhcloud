@@ -412,3 +412,18 @@
   coolify-<host-slug>). Service-token lifecycle already operator-side via
   ensure-service-token.sh; R2 keys remain the single dashboard-gated item
   (API issuance 403/404 verified).
+
+## 2026-09-14 — dashboard rotations completed (operator wizard path)
+
+- Operator minted via guided wizard (/tmp/cf-rotation-wizard.sh, 3 stages):
+  new admin Custom Token (Tunnel/Access/DNS/R2 Edit + User API Tokens Write)
+  and new R2 Object Read & Write keypair scoped to ovh-coolify-backups.
+- Verified before depending on anything: new token valid/active, tunnels 200;
+  token-minting proven by throwaway create (200) + delete (200) after fixing
+  the payload (initial 9109 confirmed the missing row; post-edit 400s were
+  test-payload shape only). R2 keypair proven by live list+write+read+delete.
+- Escrowed: ADMIN_CLOUDFLARE (new value) + COOLIFY_R2 v2 (new ak/sk); host
+  r2.env rewired (live backup coolify-db-20260914T100004Z.dump.gz with new
+  keys); Coolify s3_storages id 1 rewired (plaintext 32/64 convention);
+  machine verification HTTP 200 throughout. Handoff file overwritten + deleted.
+- Remaining operator step: revoke the OLD dashboard tokens.
