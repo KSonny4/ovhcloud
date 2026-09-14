@@ -96,7 +96,8 @@ A human must authorize any `terraform apply`.
 
 - Nightly: Coolify instance database + application databases/volumes -> R2
   (14-day retention), timer `coolify-backup.timer` on the host. R2 keys are
-  memory-only (OpenBao pull per run); no credential file exists anywhere.
+  memory-only (OpenBao pull per run); no R2 credential file exists anywhere
+  (sole file at rest: the least-privilege OpenBao accessor token, 0600).
 - Rollback (exact noninteractive invocations, on the host as root; both
   scripts are installed at `/root/coolify-backup/` by the schedule):
   - instance probe restore (production untouched):

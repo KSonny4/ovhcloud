@@ -28,7 +28,9 @@ failure:
   secret access. On-target stages additionally refuse when the machine
   itself is the preserved VPS.
 - Retrieves from OpenBao by name only: `COOLIFY_SSH_PUBLIC_KEY.value`,
-  `COOLIFY_TUNNEL_TOKEN.{tunnel_id,tunnel_token}`,
+  per-target tunnel entry `COOLIFY_TUNNEL_<NAME>.{tunnel_id,tunnel_token}`
+  (derived from `TUNNEL_NAME`; the preserved `COOLIFY_TUNNEL_TOKEN` singleton
+  is never consumed on the fresh path, and `coolify-admin` is refused),
   `COOLIFY_ACCESS_SERVICE_TOKEN.{client_id,client_secret,token_id}`,
   `OVH_API.{application_key,application_secret,consumer_key,endpoint}`
   (R2 keys are deliberately NEVER retrieved operator-side: the target pulls
@@ -102,7 +104,7 @@ Generated values are written to OpenBao under stable paths and are referenced by
 | Logical value | OpenBao path/fields | Consumers |
 | --- | --- | --- |
 | Coolify SSH key | `secret/projects/ovhcloud/COOLIFY_SSH_PRIVATE_KEY` / `COOLIFY_SSH_PUBLIC_KEY` | guest bootstrap, Coolify machine connection |
-| Tunnel connector credential | `secret/projects/ovhcloud/COOLIFY_TUNNEL_TOKEN` / `tunnel_token` | cloudflared service installation |
+| Tunnel connector credential (per fresh target) | `secret/projects/ovhcloud/COOLIFY_TUNNEL_<NAME>` / `tunnel_id`, `tunnel_token` (preserved singleton `COOLIFY_TUNNEL_TOKEN` untouched by provisioning) | cloudflared service installation |
 | Cloudflare machine Access credential | `secret/projects/ovhcloud/COOLIFY_ACCESS_SERVICE_TOKEN` / `client_id`, `client_secret` | noninteractive verification and automation |
 | Coolify application key/admin bootstrap | `secret/projects/ovhcloud/COOLIFY_ADMIN` / `app_key`, `email`, `password` | Coolify bootstrap and recovery |
 | R2 backup credential | `secret/projects/ovhcloud/COOLIFY_R2` / `access_key_id`, `secret_access_key`, `bucket` | Coolify backup configuration and restore probe |
