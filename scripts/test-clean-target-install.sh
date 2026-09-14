@@ -68,8 +68,8 @@ check $? 'installer exits 0 non-dry-run into isolated prefix'
 [ -x "$BACKUP_DIR/fetch-r2-env.sh" ]; check $? 'fetch wrapper installed executable'
 if grep -q 'EnvironmentFile' "$SYSTEMD_DIR/coolify-backup.service" 2>/dev/null; then echo 'FAIL: unit still references EnvironmentFile' >&2; fail=1; else echo 'ok: unit carries no EnvironmentFile (memory-only)'; fi
 if grep -q 'fetch-r2-env.sh -- ' "$SYSTEMD_DIR/coolify-backup.service" 2>/dev/null; then echo 'ok: unit execs through fetch wrapper'; else echo 'FAIL: unit bypasses fetch wrapper' >&2; fail=1; fi
-grep -q "^ExecStart=${BACKUP_DIR}/backup-to-r2.sh$" "$SYSTEMD_DIR/coolify-backup.service" 2>/dev/null; check $? 'unit carries instance ExecStart'
-grep -q "^ExecStart=${BACKUP_DIR}/backup-app-workloads.sh$" "$SYSTEMD_DIR/coolify-backup.service" 2>/dev/null; check $? 'unit carries workload ExecStart'
+grep -q "fetch-r2-env.sh -- ${BACKUP_DIR}/backup-to-r2.sh" "$SYSTEMD_DIR/coolify-backup.service" 2>/dev/null; check $? 'unit carries instance ExecStart via wrapper'
+grep -q "fetch-r2-env.sh -- ${BACKUP_DIR}/backup-app-workloads.sh" "$SYSTEMD_DIR/coolify-backup.service" 2>/dev/null; check $? 'unit carries workload ExecStart via wrapper'
 [ -f "$SYSTEMD_DIR/coolify-backup.timer" ]; check $? 'timer unit installed'
 if command -v systemd-analyze >/dev/null 2>&1; then
   systemd-analyze verify "$SYSTEMD_DIR/coolify-backup.service" >/dev/null 2>&1; check $? 'systemd-analyze verify passes'

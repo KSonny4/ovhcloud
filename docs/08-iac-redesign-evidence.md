@@ -473,4 +473,4 @@
 - Gates: rehearsal fails if any script writes r2.env, if the unit references
   a credential EnvironmentFile, if the fetch wrapper is missing, or if the
   runner omits wire-fresh-edge.sh. Clean-target test asserts fetch install +
-  no-EnvironmentFile + wrapper ExecStarts (now 9 checks).
+  no-EnvironmentFile + wrapper ExecStarts (now 10 checks).
