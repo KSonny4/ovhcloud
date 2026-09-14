@@ -135,7 +135,6 @@ svc_id="$(bao kv get -field=client_id secret/projects/ovhcloud/COOLIFY_ACCESS_SE
 svc_secret="$(bao kv get -field=client_secret secret/projects/ovhcloud/COOLIFY_ACCESS_SERVICE_TOKEN 2>/dev/null || true)"
 svc_token_id="$(bao kv get -field=token_id secret/projects/ovhcloud/COOLIFY_ACCESS_SERVICE_TOKEN 2>/dev/null || true)"
 [ -n "$admin" ] && [ -n "$svc_id" ] && [ -n "$svc_secret" ] && [ -n "$svc_token_id" ] || { echo 'OpenBao escrow incomplete (admin + service-token triple required).' >&2; exit 2; }
-api() { curl -sS --max-time 30 -H "Authorization: Bearer ${admin}" "$@"; }
 # Fail-closed envelope read: transport failure, empty body, bad JSON, or
 # "success":false all exit 2 BEFORE any caller can mistake absence for
 # emptiness (a failed ingress/DNS/app/policy read must never trigger a
