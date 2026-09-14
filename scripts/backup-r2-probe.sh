@@ -36,6 +36,9 @@ run() {
 
 endpoint="${R2_ENDPOINT:-}"
 bucket="${R2_BUCKET:-ovh-coolify-backups}"
+# R2's S3 API requires a region matching the bucket jurisdiction (ours is
+# EEUR); `auto` negotiates it and works for every jurisdiction.
+export AWS_DEFAULT_REGION="${AWS_DEFAULT_REGION:-auto}"
 if [ -z "$endpoint" ] && [ "$dry_run" -eq 0 ]; then
   echo 'R2_ENDPOINT must be set (S3-compatible endpoint, value is not secret).' >&2
   exit 2
