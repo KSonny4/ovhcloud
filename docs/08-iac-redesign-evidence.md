@@ -349,3 +349,21 @@
   + blob-transport presence + no file-shipment remnants).
 - Sanctioned exception documented: exactly one at-rest credential file,
   `/root/coolify-backup/r2.env` (0600), feeding timer + rollback.
+
+## 2026-09-14 — escrow boundary cut + full convergence (audit round)
+
+- Removed `vault_kv_secret_v2.access_service_token`, the vault provider, all
+  `openbao_*` variables, and the escrow output from the Terraform module.
+  Rationale recorded in config: Terraform owns token identity + policy
+  binding only; the secret lifecycle is runner/OpenBao-owned
+  (`ensure-service-token.sh`), and a provider-managed write would clobber the
+  good escrow with unreadable state. Validator now asserts the resource is
+  ABSENT (convergence invariant) instead of requiring it.
+- `tf-env-from-openbao.sh` no longer emits `TF_VAR_openbao_*` (reads OpenBao
+  only); tfvars.example documents the boundary.
+- Live proof: outputs-only apply `0 added, 0 changed, 0 destroyed` (saved
+  pending output values the earlier targeted apply never wrote), followed by
+  a full untargeted plan printing **"No changes. Your infrastructure matches
+  the configuration."** — zero adds, zero changes, zero destroys, zero
+  replacements. The deliberately-excluded-escrow era is over: nothing is
+  excluded anymore.

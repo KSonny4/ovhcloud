@@ -10,10 +10,6 @@ terraform {
       source  = "ovh/ovh"
       version = "~> 0.42"
     }
-    vault = {
-      source  = "hashicorp/vault"
-      version = "~> 5.0"
-    }
   }
 
   # Production state uses an encrypted, locked S3-compatible backend.
@@ -29,9 +25,4 @@ provider "cloudflare" {
 
 provider "ovh" {
   endpoint = var.ovh_endpoint
-}
-
-provider "vault" {
-  address = var.openbao_address
-  token   = var.openbao_token
 }

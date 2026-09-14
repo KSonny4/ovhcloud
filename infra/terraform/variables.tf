@@ -4,35 +4,8 @@ variable "cloudflare_api_token" {
   sensitive   = true
 }
 
-variable "openbao_address" {
-  description = "Remote OpenBao address used to escrow generated deployment credentials."
-  type        = string
-  default     = "https://secrets.pkubelka.cz"
-
-  validation {
-    condition     = can(regex("^https://", var.openbao_address))
-    error_message = "openbao_address must use the remote HTTPS OpenBao endpoint."
-  }
-}
-
-variable "openbao_token" {
-  description = "OpenBao runner token supplied out-of-band; never commit or print it."
-  type        = string
-  sensitive   = true
-}
-
-variable "openbao_kv_mount" {
-  description = "OpenBao KV v2 mount containing generated deployment credentials."
-  type        = string
-  default     = "secret"
-}
-
-variable "openbao_service_token_path" {
-  description = "OpenBao KV path for the generated Cloudflare machine Access credential."
-  type        = string
-  default     = "projects/ovhcloud/COOLIFY_ACCESS_SERVICE_TOKEN"
-}
-
+# Escrow lives outside Terraform (scripts/ensure-service-token.sh + runner);
+# no OpenBao provider, variables, or resources remain in this module.
 variable "cloudflare_account_id" {
   description = "Cloudflare account ID that owns the Tunnel and R2 bucket."
   type        = string

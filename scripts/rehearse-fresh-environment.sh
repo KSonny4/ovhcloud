@@ -71,7 +71,6 @@ export TF_VAR_cloudflare_account_id=5eb3ea3a84b37564cfd8739f32ffb559
 export TF_VAR_domain=pkubelka.cz
 export TF_VAR_ovh_ipv4=192.0.2.1
 export TF_VAR_cloudflare_tunnel_secret=cmVoZWFyc2Fs
-export TF_VAR_openbao_token=rehearsal
 export 'TF_VAR_admin_emails=["intruder@example.invalid"]'
 # NOTE: plan exits nonzero on the expected validation failure; capture output
 # first because pipefail would otherwise mask grep's match.
@@ -82,7 +81,7 @@ else
   echo 'admin_emails regression gate broken: omission did not fail.' >&2
   exit 1
 fi
-unset TF_VAR_cloudflare_api_token TF_VAR_cloudflare_account_id TF_VAR_domain TF_VAR_ovh_ipv4 TF_VAR_cloudflare_tunnel_secret TF_VAR_openbao_token TF_VAR_admin_emails
+unset TF_VAR_cloudflare_api_token TF_VAR_cloudflare_account_id TF_VAR_domain TF_VAR_ovh_ipv4 TF_VAR_cloudflare_tunnel_secret TF_VAR_admin_emails
 rm -rf "$gate_dir"
 phase_ok terraform_gates | tee -a "$artifact_dir/phases.log"
 

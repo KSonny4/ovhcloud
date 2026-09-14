@@ -3,8 +3,8 @@
 cloudflare_api_token    = "REPLACE_WITH_EXTERNAL_SECRET"
 cloudflare_account_id   = "REPLACE_WITH_CLOUDFLARE_ACCOUNT_ID"
 cloudflare_tunnel_secret = "REPLACE_WITH_BASE64_TUNNEL_SECRET"
-openbao_address          = "https://secrets.pkubelka.cz"
-openbao_token            = "REPLACE_WITH_OPENBAO_RUNNER_TOKEN"
+# OpenBao escrow lives outside Terraform (ensure-service-token.sh + runner);
+# no openbao_* variables exist in this module.
 domain                  = "REPLACE_WITH_APPROVED_DOMAIN"
 ovh_ipv4                = "198.51.100.10" # TEST-NET-2 placeholder; replace from ovhcloud CLI.
 ovh_service_name        = "vps-REPLACE_WITH_SERVICE_NAME.vps.ovh.net"

@@ -13,11 +13,6 @@ output "cloudflare_access_service_token_id" {
   value       = cloudflare_zero_trust_access_service_token.machine.id
 }
 
-output "openbao_access_service_token_path" {
-  description = "OpenBao path receiving the generated machine Access credential."
-  value       = "${var.openbao_kv_mount}/${var.openbao_service_token_path}"
-}
-
 output "cloudflare_tunnel_id" {
   description = "Cloudflare admin tunnel ID; treat as infrastructure metadata, not a credential."
   value       = cloudflare_zero_trust_tunnel_cloudflared.admin.id

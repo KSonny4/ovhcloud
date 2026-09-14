@@ -41,7 +41,7 @@ required_fragments = {
     "Cloudflare Tunnel": 'resource "cloudflare_zero_trust_tunnel_cloudflared"',
     "Cloudflare Access": 'resource "cloudflare_zero_trust_access_application"',
     "Cloudflare R2": 'resource "cloudflare_r2_bucket"',
-    "OpenBao machine credential escrow": 'resource "vault_kv_secret_v2" "access_service_token"',
+    "OpenBao escrow boundary note": "the live plan converges with zero residual adds",
     "encrypted production backend": 'backend "s3" {}',
     "preserved-resource lifecycle guards": "prevent_destroy = true",
     "non-live VPS default": 'default     = false',
@@ -53,6 +53,11 @@ for label, fragment in required_fragments.items():
     haystack = variables if "secret" in label or "default" in label else main + versions
     if fragment not in haystack:
         raise SystemExit(f"{label} invariant missing: {fragment}")
+
+# Escrow-boundary convergence: no Terraform-managed secret writes may exist —
+# any vault_kv_secret would reintroduce the perpetual unmanaged-resource diff.
+if 'vault_kv_secret' in main or 'provider "vault"' in versions:
+    raise SystemExit("escrow boundary violated: Terraform must not manage secret writes")
 
 for heading in [
     "## Evidence and change register",

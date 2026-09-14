@@ -51,10 +51,9 @@ fi
 log 'retrieving provider authorization from OpenBao (names only)...'
 cf_token="$(bao kv get -field=ADMIN_CLOUDFLARE secret/projects/ovhcloud/ADMIN_CLOUDFLARE)"
 tunnel_secret="$(bao kv get -field=tunnel_secret secret/projects/ovhcloud/COOLIFY_TUNNEL_SECRET)"
-bao_token="$(cat "$bao_token_file")"
 r2_ak="$(bao kv get -field=access_key_id secret/projects/ovhcloud/COOLIFY_R2)"
 r2_sk="$(bao kv get -field=secret_access_key secret/projects/ovhcloud/COOLIFY_R2)"
-for v in cf_token tunnel_secret bao_token r2_ak r2_sk; do
+for v in cf_token tunnel_secret r2_ak r2_sk; do
   if [ -z "${!v}" ]; then echo "OpenBao escrow missing for ${v}; refusing to continue." >&2; exit 2; fi
 done
 
@@ -69,7 +68,7 @@ log "discovered service ${service_name} (${ipv4}); emitting exports only, never 
 printf 'export TF_VAR_cloudflare_api_token=%s\n' "$(printf '%s' "$cf_token" | sed "s/'/'\\\\''/g; s/^/'/; s/$/'/")"
 printf 'export TF_VAR_cloudflare_account_id=%s\n' "'5eb3ea3a84b37564cfd8739f32ffb559'"
 printf 'export TF_VAR_cloudflare_tunnel_secret=%s\n' "$(printf '%s' "$tunnel_secret" | sed "s/'/'\\\\''/g; s/^/'/; s/$/'/")"
-printf 'export TF_VAR_openbao_token=%s\n' "$(printf '%s' "$bao_token" | sed "s/'/'\\\\''/g; s/^/'/; s/$/'/")"
+# No TF_VAR_openbao_* exports: escrow lives outside Terraform by design.
 printf 'export TF_VAR_domain=%s\n' "'pkubelka.cz'"
 printf 'export TF_VAR_ovh_ipv4=%s\n' "'$ipv4'"
 printf 'export TF_VAR_ovh_service_name=%s\n' "'$service_name'"
@@ -80,7 +79,7 @@ printf 'export TF_VAR_access_service_token_name=%s\n' "'ovh-coolify-machine-veri
 printf 'export TF_VAR_access_service_token_duration=%s\n' "'8760h'"
 printf 'export TF_VAR_provision_ovh_vps=%s\n' "'false'"
 printf 'export TF_VAR_manage_existing_vps=%s\n' "'true'"
-printf 'export TF_VAR_openbao_address=%s\n' "'$bao_addr'"
+log 'OpenBao address: %s (used for reads only, never a Terraform input).' "$bao_addr"
 printf 'export AWS_ACCESS_KEY_ID=%s\n' "$(printf '%s' "$r2_ak" | sed "s/'/'\\\\''/g; s/^/'/; s/$/'/")"
 printf 'export AWS_SECRET_ACCESS_KEY=%s\n' "$(printf '%s' "$r2_sk" | sed "s/'/'\\\\''/g; s/^/'/; s/$/'/")"
 log 'exports emitted (eval this output); no credential file was written.'

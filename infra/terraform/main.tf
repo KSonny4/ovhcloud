@@ -234,17 +234,12 @@ resource "cloudflare_zero_trust_access_application" "ssh" {
   )
 }
 
-resource "vault_kv_secret_v2" "access_service_token" {
-  mount = var.openbao_kv_mount
-  name  = var.openbao_service_token_path
-
-  data_json = jsonencode({
-    client_id     = cloudflare_zero_trust_access_service_token.machine.client_id
-    client_secret = cloudflare_zero_trust_access_service_token.machine.client_secret
-    duration      = var.access_service_token_duration
-  })
-}
-
+# Escrow boundary (deliberate): Terraform owns token identity + policy
+# binding only. The secret itself is lifecycle-managed in OpenBao by
+# scripts/ensure-service-token.sh (create/rotate/escrow/verify), because
+# Cloudflare never reveals the secret back and a Terraform-managed write
+# would clobber the good escrow with unreadable state. No vault provider,
+# no vault resources: the live plan converges with zero residual adds.
 resource "cloudflare_r2_bucket" "backups" {
   account_id    = var.cloudflare_account_id
   name          = var.r2_bucket_name
