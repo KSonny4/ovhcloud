@@ -623,3 +623,20 @@
   HostConfig-vs-top-level Mounts (mounts were silently empty). Live proof:
   destroyed nginx+postgres service recreated with exact content
   (`webshop-proof-ok`, HTTP 200), env, and DB rows; full cleanup after.
+
+## 2026-09-14 — full runtime contract + live plan convergence (audit round)
+
+- Topology now captures the FULL runtime contract (cmd, entrypoint, workdir,
+  user, restart policy + retries, healthcheck) and `--recreate` restores it
+  (workdir/user/entrypoint/restart/health flags, command appended after the
+  image). Rehearsal asserts all fields on synthetic inspect JSON.
+- Live proof on destroyed `runtime-app` (python http server, custom workdir +
+  nobody user + custom cmd + unless-stopped + healthcheck + env + port +
+  label + volume): recreated with HTTP 200 + exact body, user=65534,
+  workdir, restart, cmd, env all exact; health converging (running + serving).
+  Secret env (`GPG_KEY`) correctly REDACTED with re-injection warning.
+  Full cleanup (host + R2) after.
+- Live `terraform plan` (R2 backend, env-only authorization): **No changes.
+  Your infrastructure matches the configuration.** Final convergence retained.
+- Inventory item 2 corrected to RESOLVED (rotations complete, old revoked);
+  deployment-plan verified consistent on inspection (no stale claims found).

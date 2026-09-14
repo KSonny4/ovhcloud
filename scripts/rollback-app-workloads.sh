@@ -187,6 +187,50 @@ if [ -n "$recreate" ]; then
       docker network inspect "$net" >/dev/null 2>&1 || docker network create "$net" >/dev/null 2>&1 || { echo "FAILED network ${net}." >&2; FAILED=1; continue 2; }
     done
     [ -n "$first_net" ] && run_args+=(--network "$first_net")
+    # Full runtime contract: workdir, user, entrypoint, restart policy,
+    # healthcheck, and command (appended after the image). Null entrypoint
+    # or empty cmd means image default (nothing passed).
+    rt_workdir="$(printf '%s' "$cspec" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("runtime",{}).get("workdir",""))')"
+    rt_user="$(printf '%s' "$cspec" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("runtime",{}).get("user",""))')"
+    rt_entry="$(printf '%s' "$cspec" | python3 -c 'import json,sys; e=json.load(sys.stdin).get("runtime",{}).get("entrypoint"); print(" ".join(e) if e else "")')"
+    rt_cmd="$(printf '%s' "$cspec" | python3 -c 'import json,sys; c=json.load(sys.stdin).get("runtime",{}).get("cmd"); print(" ".join(c) if c else "")')"
+    rt_restart="$(printf '%s' "$cspec" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("runtime",{}).get("restart",""))')"
+    [ -n "$rt_workdir" ] && run_args+=(-w "$rt_workdir")
+    [ -n "$rt_user" ] && run_args+=(-u "$rt_user")
+    # shellcheck disable=SC2206
+    rt_entry_arr=($rt_entry); [ "${#rt_entry_arr[@]}" -gt 0 ] && run_args+=(--entrypoint "${rt_entry_arr[0]}")
+    if [ "${#rt_entry_arr[@]}" -gt 1 ]; then
+      # shellcheck disable=SC2206
+      rt_extra=(${rt_entry_arr[@]:1}); run_args+=("${rt_extra[@]}")
+    fi
+    case "$rt_restart" in ''|no) ;; *) run_args+=(--restart "$rt_restart") ;; esac
+    hc_kind="$(printf '%s' "$cspec" | python3 -c 'import json,sys; t=(json.load(sys.stdin).get("runtime",{}).get("healthcheck",{}) or {}).get("Test",[]); print(t[0] if t else "")')"
+    if [ "$hc_kind" = 'NONE' ]; then
+      run_args+=(--no-healthcheck)
+    elif [ "$hc_kind" = 'CMD-SHELL' ]; then
+      hc_cmd="$(printf '%s' "$cspec" | python3 -c 'import json,sys; t=(json.load(sys.stdin).get("runtime",{}).get("healthcheck",{}) or {}).get("Test",[]); print(t[1] if len(t)>1 else "")')"
+      [ -n "$hc_cmd" ] && run_args+=(--health-cmd "$hc_cmd")
+    elif [ "$hc_kind" = 'CMD' ]; then
+      hc_cmd="$(printf '%s' "$cspec" | python3 -c 'import json,sys; t=(json.load(sys.stdin).get("runtime",{}).get("healthcheck",{}) or {}).get("Test",[]); print(" ".join(t[1:]))')"
+      [ -n "$hc_cmd" ] && run_args+=(--health-cmd "$hc_cmd")
+    fi
+    for hf in Interval Timeout StartPeriod; do
+      hv="$(printf '%s' "$cspec" | python3 -c 'import json,sys; print((json.load(sys.stdin).get("runtime",{}).get("healthcheck",{}) or {}).get("'"$hf"'",0))')"
+      if [ "${hv:-0}" -gt 0 ] 2>/dev/null; then
+        case "$hf" in
+          Interval) run_args+=(--health-interval "${hv}ns") ;;
+          Timeout) run_args+=(--health-timeout "${hv}ns") ;;
+          StartPeriod) run_args+=(--health-start-period "${hv}ns") ;;
+        esac
+      fi
+    done
+    hr="$(printf '%s' "$cspec" | python3 -c 'import json,sys; print((json.load(sys.stdin).get("runtime",{}).get("healthcheck",{}) or {}).get("Retries",0))')"
+    [ "${hr:-0}" -gt 0 ] 2>/dev/null && run_args+=(--health-retries "$hr")
+    cmd_args=()
+    if [ -n "$rt_cmd" ]; then
+      # shellcheck disable=SC2206
+      cmd_args=($rt_cmd)
+    fi
     while IFS= read -r mnt; do
       [ -n "$mnt" ] || continue
       mtype="${mnt%%|*}"; rest="${mnt#*|}"; msrc="${rest%%|*}"; rest2="${rest#*|}"; mdst="${rest2%%|*}"; mro="${rest2#*|}"
@@ -211,7 +255,7 @@ if [ -n "$recreate" ]; then
         run_args+=(-v "${msrc}:${mdst}")
       fi
     done <<<"$(printf '%s' "$cspec" | python3 -c 'import json,sys; [print(str(m.get("type","")) + "|" + str(m.get("source","")) + "|" + str(m.get("target","")) + "|" + str(m.get("ro",False))) for m in json.load(sys.stdin).get("mounts",[])]')"
-    if docker run -d --name "$cname" "${run_args[@]}" "$cimage" >/dev/null 2>&1; then
+    if docker run -d --name "$cname" "${run_args[@]}" "$cimage" ${cmd_args[@]+"${cmd_args[@]}"} >/dev/null 2>&1; then
       for net in $extra_nets; do
         [ -n "$net" ] && docker network connect "$net" "$cname" >/dev/null 2>&1 || true
       done

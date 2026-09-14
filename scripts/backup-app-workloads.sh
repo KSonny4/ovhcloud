@@ -62,7 +62,18 @@ for cport, bindings in (host.get("PortBindings", {}) or {}).items():
 # Runtime mounts live TOP-LEVEL (c["Mounts"]), not under HostConfig: reading
 # HostConfig.Mounts silently records nothing (always empty there).
 mounts = [{"type": m.get("Type"), "source": m.get("Source"), "target": m.get("Destination"), "ro": m.get("Mode","").find("ro") >= 0} for m in (c.get("Mounts", []) or []) if m.get("Type") in ("volume", "bind")]
-print(json.dumps({"name": c["Name"].lstrip("/"), "image": cfg.get("Image"), "env": env, "env_redacted": redacted, "ports": ports, "networks": list((net.get("Networks", {}) or {}).keys()), "labels": cfg.get("Labels", {}) or {}, "mounts": mounts}))
+# Full runtime contract: command/entrypoint (null = image default),
+# working directory, container user, restart policy, healthcheck.
+runtime = {
+    "cmd": cfg.get("Cmd"),
+    "entrypoint": cfg.get("Entrypoint"),
+    "workdir": cfg.get("WorkingDir", "") or "",
+    "user": cfg.get("User", "") or "",
+    "restart": (host.get("RestartPolicy", {}) or {}).get("Name", ""),
+    "restart_max": (host.get("RestartPolicy", {}) or {}).get("MaximumRetryCount", 0),
+    "healthcheck": cfg.get("Healthcheck", {}) or {},
+}
+print(json.dumps({"name": c["Name"].lstrip("/"), "image": cfg.get("Image"), "env": env, "env_redacted": redacted, "ports": ports, "networks": list((net.get("Networks", {}) or {}).keys()), "labels": cfg.get("Labels", {}) or {}, "mounts": mounts, "runtime": runtime}))
 TOPO_PY
 }
 if [ -n "$self_test_input" ]; then
