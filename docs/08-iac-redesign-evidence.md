@@ -906,3 +906,28 @@
 - Report attestation hardened: rehearsal records code_tree_scripts/infra
   (content hashes); HEAD trees verified MATCH, code diff empty — the
   artifact attests the audited code regardless of docs-only follow-ups.
+
+## 2026-09-14 — auditor 15:46 round (onboarding, OpenBao contracts, escrow paths)
+
+- Noninteractive onboarding: `provision-coolify.sh` reconciles a default
+  project + production environment (idempotent `INSERT ... WHERE NOT
+  EXISTS`, existing projects untouched) and its gate now requires all four
+  signals (admin, reachable localhost, project, production environment).
+  The runner executes `verify-coolify-onboarding.sh` (read-only, fail
+  closed, new `--admin-email` override matching `ROOT_USER_EMAIL`) before
+  the coolify stage can finish. `docs/03-coolify.md` no longer claims a UI
+  walkthrough. Live: verifier 6/6 ONBOARD_OK; reconciliation SQL no-op
+  (`INSERT 0 0`, counts 1|1, context-fabric preserved); wrong-email run
+  exits 2 with `ONBOARD_MISS admin-user`.
+- `docs/deployment-plan.md` reconciled to OpenBao-only: CF token,
+  OVH (`OVH_API` + `ovh_cli` channel), tunnel (per-target path), APP_KEY
+  (`COOLIFY_ADMIN` runner fetch), OmniRoute (operator-supplied convention)
+  all name exact paths + memory-only delivery; no external manager,
+  profile, or credential file remains in the lifecycle.
+- Derived-secret audit (all implemented, none docs-only): SSH keypair
+  (runner ssh-keygen + escrow), ROOT password (runner openssl + escrow),
+  APP_KEY (runner SSH fetch + escrow), tunnel id/token (ensure-tunnel API
+  create + escrow), service-token triple (ensure-service-token
+  create/rotate + escrow), R2 reader token (bao mint + stdin placement),
+  workload DB password (recreate-workload generate + escrow). R2 S3 +
+  OmniRoute app secrets are operator-supplied prerequisites by objective.
