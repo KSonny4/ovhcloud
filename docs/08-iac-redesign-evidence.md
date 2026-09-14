@@ -951,3 +951,36 @@
   `~/.cloudflared`, no ambient token-env reads (hygiene `unset` + comments
   excluded); provider blocks take explicit `api_token = var...` /
   `endpoint = var...` so ambient cannot leak even if set.
+
+## 2026-09-14 — auditor 16:28 round (OmniRoute secret lifecycle)
+
+- Implemented lifecycle (was docs-only): `ensure-omniroute-secrets.sh`
+  generates (`openssl rand -base64 48`) + escrows (`kv put` create then
+  `kv patch` merge — put replaces, patch 404s on missing; both verified
+  live — stdin delivery, never argv/disk) the three fields at
+  `secret/projects/ovhcloud/OMNIROUTE`; present values reused untouched.
+  Runner invokes it before the backup stage. Live: generated ×3, then
+  reused ×3 on re-run.
+- Relay-free delivery chain: `lib/escrowed-app-envs` allowlist (names
+  only, shipped with backup companions) → backup marks `env_escrowed`
+  {var: path+field} → `fetch-app-secrets.sh` resolves to exports/blob/exec
+  → rollback `build_run_args` re-injects delivered vars (needs_secrets
+  only for truly-missing). No new tokens/policies: operator bao + proven
+  stdin-blob transport.
+- Transport root-caused mid-proof: `sudo -E` strips non-allowlisted vars
+  (first restore came back empty); fixed sudo-first (blob decodes in the
+  root shell before fetch runs) — every present/future var survives with
+  no channel update. Re-proven end to end on disposable `secproof-*`:
+  destroyed → recreated with `re-injected ... from escrow delivery` →
+  sha256 of restored value MATCHES escrowed value → all traces purged
+  (host, 21 R2 keys, workload escrow + tombstone). OMNIROUTE entry kept
+  as the intended lifecycle product.
+- Rehearsal units (all executed hermetic): ensure generate/reuse/clean;
+  topology escrow marking; rollback with/without delivery; fetch
+  exports/blob/latest/miss-fail-closed; runner order; sudo-first shape.
+  (One real bug caught here: `kv put` clobbers siblings, `kv patch`
+  404s on missing — the script handles both; plus an `aws s3 ls`
+  fixture missing its size field, fixed.)
+- Docs: deployment-plan row (automation-derived, no human relay),
+  07-omniroute §5 (lifecycle + one-liner deploy consumption),
+  iac-interfaces OMNIROUTE row in the generated-secret table.

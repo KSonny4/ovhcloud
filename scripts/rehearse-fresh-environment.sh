@@ -580,7 +580,7 @@ cat > /tmp/rehearsal-omnibin/bao <<'STUBEOF'
 #!/usr/bin/env bash
 if [ "$1" = 'kv' ] && [ "$2" = 'get' ]; then
   if [ -n "${STUB_OMNI_PRESENT:-}" ]; then printf 'present-test-value'; else exit 1; fi
-elif [ "$1" = 'kv' ] && [ "$2" = 'patch' ]; then
+elif { [ "$1" = 'kv' ] && [ "$2" = 'patch' ]; } || { [ "$1" = 'kv' ] && [ "$2" = 'put' ]; }; then
   printf '%s\n' "$*" >> /tmp/rehearsal-omni-puts.log; exit 0
 else exit 1; fi
 STUBEOF
