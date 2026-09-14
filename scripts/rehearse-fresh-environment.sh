@@ -572,6 +572,108 @@ printf '%s' "$env_out" | grep -q 'credential source: env' || { echo 'rollback ig
 no_out="$(env -u APP_DB_PASSWORD bash scripts/rollback-app-workloads.sh --dry-run 2>&1 || true)"
 printf '%s' "$no_out" | grep -q 'credential source: absent' || { echo 'rollback misreports missing credential.' >&2; exit 1; }
 log 'rollback env credential proven: APP_DB_PASSWORD accepted, source reported.'
+# OmniRoute secret lifecycle (stubbed bao, no network): absent fields are
+# generated + escrowed (one patch per field, merge-safe), present fields
+# are reused with no write, and values never reach stdout.
+mkdir -p /tmp/rehearsal-omnibin
+cat > /tmp/rehearsal-omnibin/bao <<'STUBEOF'
+#!/usr/bin/env bash
+if [ "$1" = 'kv' ] && [ "$2" = 'get' ]; then
+  if [ -n "${STUB_OMNI_PRESENT:-}" ]; then printf 'present-test-value'; else exit 1; fi
+elif [ "$1" = 'kv' ] && [ "$2" = 'patch' ]; then
+  printf '%s\n' "$*" >> /tmp/rehearsal-omni-puts.log; exit 0
+else exit 1; fi
+STUBEOF
+chmod +x /tmp/rehearsal-omnibin/bao
+rm -f /tmp/rehearsal-omni-puts.log
+omni_out="$(PATH="/tmp/rehearsal-omnibin:$PATH" bash scripts/ensure-omniroute-secrets.sh 2>&1 || true)"
+printf '%s' "$omni_out" | grep -q 'generated+escrowed' || { echo 'omniroute generation path broken.' >&2; exit 1; }
+[ "$(wc -l < /tmp/rehearsal-omni-puts.log | tr -d ' ')" -eq 3 ] || { echo 'omniroute escrow does not patch all three fields.' >&2; exit 1; }
+grep -q 'STORAGE_ENCRYPTION_KEY=-' /tmp/rehearsal-omni-puts.log || { echo 'omniroute patch passes values via stdin (-), not argv.' >&2; exit 1; }
+[ "$(printf '%s\n' "$omni_out" | grep -c .)" -eq 1 ] || { echo 'ensure leaks extra output (possible secret).' >&2; exit 1; }
+rm -f /tmp/rehearsal-omni-puts.log
+omni_out="$(STUB_OMNI_PRESENT=1 PATH="/tmp/rehearsal-omnibin:$PATH" bash scripts/ensure-omniroute-secrets.sh 2>&1 || true)"
+printf '%s' "$omni_out" | grep -q 'reused' || { echo 'omniroute reuse path broken.' >&2; exit 1; }
+[ -f /tmp/rehearsal-omni-puts.log ] && { echo 'omniroute rewrote present fields.' >&2; exit 1; }
+rm -rf /tmp/rehearsal-omnibin /tmp/rehearsal-omni-puts.log
+log 'omniroute lifecycle proven: generate-if-absent + escrow, reuse untouched, values never on stdout.'
+# Topology escrow marking: synthetic container carrying an allowlisted
+# secret must record env_escrowed with path + field (exact live code).
+cat > /tmp/rehearsal-inspect-escrow.json <<'INSPECT_EOF'
+[{"Name": "/escrow-app", "Config": {"Image": "alpine:3", "Env": ["APP_MODE=proof", "STORAGE_ENCRYPTION_KEY=s3cret"], "Labels": {}, "Cmd": ["sleep", "3600"]}, "HostConfig": {"PortBindings": {}, "RestartPolicy": {"Name": "", "MaximumRetryCount": 0}}, "Mounts": [], "NetworkSettings": {"Networks": {}}}]
+INSPECT_EOF
+esc_out="$(bash scripts/backup-app-workloads.sh --self-test-topology /tmp/rehearsal-inspect-escrow.json 2>/dev/null || true)"
+rm -f /tmp/rehearsal-inspect-escrow.json
+printf '%s' "$esc_out" | grep -q '"STORAGE_ENCRYPTION_KEY": "REDACTED"' || { echo 'escrow fixture redaction broken.' >&2; exit 1; }
+printf '%s' "$esc_out" | grep -q '"STORAGE_ENCRYPTION_KEY": {"path": "secret/projects/ovhcloud/OMNIROUTE"' || { echo 'topology omits env_escrowed mapping.' >&2; exit 1; }
+log 'topology escrow marking proven: allowlisted secret recorded with path + field.'
+# Rollback re-injection: delivered env wins (needs empty), absent env
+# falls back to needs_secrets (exact live builder).
+esc_rb="$(bash scripts/rollback-app-workloads.sh --self-test-escrow 2>&1 || true)"
+printf '%s' "$esc_rb" | grep -q 'WITHENV.*delivered-test-value needs=\[\]' || { echo 'rollback ignores delivered escrow env.' >&2; exit 1; }
+printf '%s' "$esc_rb" | grep -q 'NOENV.*needs=\[ escrow-app:STORAGE_ENCRYPTION_KEY\]' || { echo 'rollback misreports missing escrow secret.' >&2; exit 1; }
+log 'rollback re-injection proven: env delivery wins, absence falls back.'
+# Fetch-app-secrets (stubbed bao + aws, no network): resolves the manifest
+# escrow map, fails closed on missing escrow, exposes values only on the
+# requested channel (exports/blob), never on the status stream.
+mkdir -p /tmp/rehearsal-fetchbin
+cat > /tmp/rehearsal-fetchbin/bao <<'STUBEOF'
+#!/usr/bin/env bash
+if [ "$2" = 'get' ]; then
+  case "$3" in
+    -field=access_key_id) printf 'AK'; ;;
+    -field=secret_access_key) printf 'SK'; ;;
+    -field=endpoint) printf 'https://r2.rehearsal'; ;;
+    -field=bucket) printf 'rehearsal-bucket'; ;;
+    -field=STORAGE_ENCRYPTION_KEY) if [ -z "${STUB_FETCH_MISS:-}" ]; then printf 'escrowed-test-value'; else exit 1; fi ;;
+    *) exit 1 ;;
+  esac
+else exit 1; fi
+STUBEOF
+cat > /tmp/rehearsal-fetchbin/aws <<'STUBEOF'
+#!/usr/bin/env bash
+if printf '%s\n' "$@" | grep -q 'get-object'; then
+  out=''; for a in "$@"; do out="$a"; done
+  cat > "$out" <<'MANIFEST_EOF'
+{"stamp": "20200101T000000Z", "containers": [{"name": "escrow-app", "env_escrowed": {"STORAGE_ENCRYPTION_KEY": {"path": "secret/projects/ovhcloud/OMNIROUTE", "field": "STORAGE_ENCRYPTION_KEY"}}}]}
+MANIFEST_EOF
+else
+  # Realistic `aws s3 ls` shape (date, time, size, name): the consumer
+  # takes $4, so a short fixture silently yields nothing (pipefail).
+  printf '2020-01-01 00:00:00      123 20200101T000000Z.json\n'
+fi
+STUBEOF
+chmod +x /tmp/rehearsal-fetchbin/bao /tmp/rehearsal-fetchbin/aws
+fetch_out="$(PATH="/tmp/rehearsal-fetchbin:$PATH" BAO_ADDR=https://rehearsal.invalid bash scripts/fetch-app-secrets.sh --stamp 20200101T000000Z --exports 2>/tmp/rehearsal-fetch.err || true)"
+cat /tmp/rehearsal-fetch.err
+printf '%s' "$fetch_out" | grep -q "^export STORAGE_ENCRYPTION_KEY='escrowed-test-value'$" || { echo 'fetch --exports broken.' >&2; exit 1; }
+if grep -q 'escrowed-test-value' /tmp/rehearsal-fetch.err; then echo 'fetch leaks values to status stream.' >&2; exit 1; fi
+fetch_blob="$(PATH="/tmp/rehearsal-fetchbin:$PATH" BAO_ADDR=https://rehearsal.invalid bash scripts/fetch-app-secrets.sh --stamp 20200101T000000Z --blob 2>/dev/null || true)"
+[ "$(printf '%s' "$fetch_blob" | base64 -d 2>/dev/null)" = "$fetch_out" ] || { echo 'fetch --blob mismatch.' >&2; exit 1; }
+if STUB_FETCH_MISS=1 PATH="/tmp/rehearsal-fetchbin:$PATH" BAO_ADDR=https://rehearsal.invalid bash scripts/fetch-app-secrets.sh --stamp 20200101T000000Z --exports >/dev/null 2>&1; then echo 'fetch survives missing escrow.' >&2; exit 1; fi
+fetch_latest="$(PATH="/tmp/rehearsal-fetchbin:$PATH" BAO_ADDR=https://rehearsal.invalid bash scripts/fetch-app-secrets.sh --resolve-latest-stamp 2>/dev/null || true)"
+[ "$fetch_latest" = '20200101T000000Z' ] || { echo 'fetch latest-stamp broken.' >&2; exit 1; }
+rm -rf /tmp/rehearsal-fetchbin /tmp/rehearsal-fetch.err
+log 'fetch-app-secrets proven: resolve + channels + fail-closed, values never on status.'
+# Sudo-first delivery (the durable transport fix): the recreate wrapper
+# must decode the blob in the root shell BEFORE fetch runs, because sudo -E
+# cannot carry arbitrary app-secret vars (fixed channel allowlist). The old
+# ubuntu-eval + sudo -E shape would strip every app secret at sudo.
+grep -q "sudo bash -c 'eval" scripts/recreate-workload.sh || { echo 'recreate wrapper lost sudo-first delivery.' >&2; exit 1; }
+if grep -q 'sudo -E bash /root/coolify-backup/fetch-r2-env' scripts/recreate-workload.sh; then echo 'recreate wrapper regressed to sudo -E delivery (strips app secrets).' >&2; exit 1; fi
+log 'sudo-first delivery proven present (blob survives sudo for any var).'
+# Runner integration: ensure step precedes backup work in live order and
+# appears in the dry-run plan.
+grep -q 'ensure-omniroute-secrets.sh' scripts/run-remote-provision.sh || { echo 'runner omits the app-secret ensure step.' >&2; exit 1; }
+python3 - <<'PYEOF' || exit 1
+log = open('/tmp/rehearsal-runner-1.log').read().splitlines()
+def idx(pat):
+    hits = [i for i, l in enumerate(log) if pat in l]
+    assert hits, pat
+    return hits[0]
+assert idx('ensure-omniroute-secrets') < idx('mint R2 reader token'), 'ensure must precede backup work'
+print('runner app-secret order proven.')
+PYEOF
 bash scripts/ensure-service-token.sh --dry-run
 bash scripts/ensure-service-token.sh --dry-run --ensure-only
 bash scripts/tf-env-from-openbao.sh --dry-run

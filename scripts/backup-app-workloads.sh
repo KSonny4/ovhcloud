@@ -40,17 +40,43 @@ log() { printf '%s\n' "$*"; }
 # credential checks, and the rehearsal can unit-test the exact live code.
 # Takes the docker-inspect JSON FILE as $1 (never stdin: the heredoc owns
 # python's stdin, so piping would feed the script itself to json.load).
+# Escrow allowlist (lib/escrowed-app-envs, shipped alongside this script;
+# absent file = every redaction is operator-relayed, the safe default):
+# redacted vars listed there are recorded as escrow-recoverable
+# (env_escrowed {var: {path, field}}) so restore re-injects them from
+# OpenBao with no human relay.
 topology_entry() {
-python3 - "$1" <<'TOPO_PY'
+# Resolved at call time (self-test runs repo-side, live runs installed):
+# explicit override, beside the script, lib/ beside the script (repo and
+# staged layouts), installed dir; absent everywhere = no escrow marking.
+allowlist="${ESCROW_ALLOWLIST:-}"
+if [ -z "$allowlist" ]; then
+  _tdir="$(cd "$(dirname "$0")" && pwd)"
+  for _cand in "${_tdir}/escrowed-app-envs" "${_tdir}/lib/escrowed-app-envs" '/root/coolify-backup/escrowed-app-envs'; do
+    if [ -f "$_cand" ]; then allowlist="$_cand"; break; fi
+  done
+  [ -n "$allowlist" ] || allowlist='/dev/null'
+fi
+python3 - "$1" "$allowlist" <<'TOPO_PY'
 import json,sys
 c = json.load(open(sys.argv[1]))[0]
 cfg, host, net = c["Config"], c["HostConfig"], c["NetworkSettings"]
-env, redacted = {}, []
+escrow = {}
+try:
+    for line in open(sys.argv[2]):
+        parts = line.split()
+        if len(parts) == 3 and not parts[0].startswith("#"):
+            escrow[parts[0]] = {"path": parts[1], "field": parts[2]}
+except OSError:
+    pass
+env, redacted, env_escrowed = {}, [], {}
 for e in cfg.get("Env", []) or []:
     k, _, v = e.partition("=")
     ku = k.upper()
     if any(s in ku for s in ("PASS", "SECRET", "TOKEN", "KEY", "CREDENTIAL")):
         env[k] = "REDACTED"; redacted.append(k)
+        if k in escrow:
+            env_escrowed[k] = escrow[k]
     else:
         env[k] = v
 ports = []
@@ -73,7 +99,7 @@ runtime = {
     "restart_max": (host.get("RestartPolicy", {}) or {}).get("MaximumRetryCount", 0),
     "healthcheck": cfg.get("Healthcheck", {}) or {},
 }
-print(json.dumps({"name": c["Name"].lstrip("/"), "image": cfg.get("Image"), "env": env, "env_redacted": redacted, "ports": ports, "networks": list((net.get("Networks", {}) or {}).keys()), "labels": cfg.get("Labels", {}) or {}, "mounts": mounts, "runtime": runtime}))
+print(json.dumps({"name": c["Name"].lstrip("/"), "image": cfg.get("Image"), "env": env, "env_redacted": redacted, "env_escrowed": env_escrowed, "ports": ports, "networks": list((net.get("Networks", {}) or {}).keys()), "labels": cfg.get("Labels", {}) or {}, "mounts": mounts, "runtime": runtime}))
 TOPO_PY
 }
 if [ -n "$self_test_input" ]; then

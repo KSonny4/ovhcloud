@@ -119,7 +119,14 @@ Cloudflare Access remains strongly recommended for human-only administrative hos
 
 The SQLite database can contain encrypted provider credentials. If the associated encryption key is lost, those encrypted fields cannot be recovered from the database alone.
 
-Keep critical OmniRoute secrets outside the VPS in your password/secrets manager, especially any configured:
+The three OmniRoute secrets are DERIVED (automation-generated, never
+dashboard-minted): `scripts/ensure-omniroute-secrets.sh` (invoked by the
+runner before the backup stage) reads each field from OpenBao
+`secret/projects/ovhcloud/OMNIROUTE` and generates (`openssl rand -base64
+48`) + escrows (`bao kv patch`, merge-safe, stdin delivery) whatever is
+absent; present values are reused untouched. Values are never printed and
+never touch disk. R2 S3 keys remain the single operator-supplied
+prerequisite — these three are never operator-supplied.
 
 ```text
 STORAGE_ENCRYPTION_KEY
@@ -127,7 +134,15 @@ API_KEY_SECRET
 JWT_SECRET
 ```
 
-Also keep the Coolify `APP_KEY` outside the VPS because Coolify needs it to decrypt restored Coolify-managed credentials.
+Initial deployment consumes them via `bao kv get -field=<NAME>
+secret/projects/ovhcloud/OMNIROUTE` (documented one-liner; the only human
+relay in the lifecycle). Every LATER recovery is relay-free: the nightly
+manifest marks these vars escrow-recoverable (`env_escrowed`, via the
+shipped `scripts/lib/escrowed-app-envs` allowlist) and restore re-injects
+them from OpenBao (`scripts/fetch-app-secrets.sh` piped blob into the
+recreate run) instead of asking the operator.
+
+Also keep the Coolify `APP_KEY` outside the VPS because Coolify needs it to decrypt restored Coolify-managed credentials (escrowed to `COOLIFY_ADMIN` by the runner, memory-only).
 
 Do not commit any of these values to this repository.
 

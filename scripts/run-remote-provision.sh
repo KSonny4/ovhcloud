@@ -280,6 +280,7 @@ if [ "$dry_run" -eq 1 ]; then
     log 'DRY-RUN edge 4/5: ensure-service-token full (prove escrowed pair -> HTTP 200)'
     log 'DRY-RUN edge 5/5: wire --verify-only (dashboard 200 + ssh gated status)'
   fi
+  want_stage backup && log 'DRY-RUN: ensure-omniroute-secrets.sh (generate-if-absent + escrow, reuse otherwise)'
   want_stage backup && log 'DRY-RUN: mint R2 reader token + place accessor (0600) via stdin pipe + remote sudo bash schedule-coolify-backup.sh (fetch-r2-env memory-only) + verify timer + R2 object'
   log 'DRY-RUN: remove remote stage scripts on every exit path; report per-stage pass/fail (fail closed)'
   exit 0
@@ -486,6 +487,7 @@ run scp -p "${ssh_opts[@]}" "$repo_root/scripts/bootstrap-vps.sh" "$repo_root/sc
   "${ssh_user}@${host}:${remote_dir}/"
 run scp -p "${ssh_opts[@]}" "$repo_root/scripts/lib/preserved-guard.sh" \
   "$repo_root/scripts/lib/sudoers-automation-env" \
+  "$repo_root/scripts/lib/escrowed-app-envs" \
   "${ssh_user}@${host}:${remote_dir}/lib/"
 # Step 0 — establish the sudo channel BEFORE any sudo -E stage. A fresh
 # image has NOPASSWD without SETENV, so sudo -E is ignored until this
@@ -597,6 +599,12 @@ if want_stage edge; then
 fi
 
 if want_stage backup; then
+  # Application-secret lifecycle (noninteractive recovery without human
+  # relay): ensure the OmniRoute-derived secrets exist in OpenBao BEFORE
+  # anything is backed up, so manifests can mark them escrow-recoverable
+  # and restore re-injects them from escrow automatically.
+  run env BAO_ADDR="$bao_addr" bash "$repo_root/scripts/ensure-omniroute-secrets.sh"
+  log 'application secrets ensured in OpenBao (generate-if-absent, reuse otherwise).'
   # Memory-only R2 delivery: the target never holds R2 keys. It holds one
   # least-privilege OpenBao accessor (0600, read-only on the R2 entry) and
   # pulls keys into process memory per run via fetch-r2-env.sh. Minted fresh

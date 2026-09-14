@@ -89,10 +89,22 @@ run chmod 700 "$backup_dir"
 # install it from alongside this script when present, keep the existing copy
 # when already deployed, fail closed when found nowhere.
 app_src="$(cd "$(dirname "$0")" && pwd)/backup-app-workloads.sh"
+allow_src="$(cd "$(dirname "$0")" && pwd)/lib/escrowed-app-envs"
+[ -f "$allow_src" ] || allow_src="$(cd "$(dirname "$0")" && pwd)/escrowed-app-envs"
 if [ -f "$app_src" ]; then
   run cp "$app_src" "${backup_dir}/backup-app-workloads.sh"
   run chmod 700 "${backup_dir}/backup-app-workloads.sh"
   log 'installed application-workload companion script.'
+  # Escrow allowlist (names only, non-secret) travels with the backup
+  # companion so manifests mark escrow-recoverable env for relay-free
+  # restore; absent file = all redactions operator-relayed (safe default).
+  if [ -f "$allow_src" ]; then
+    run cp "$allow_src" "${backup_dir}/escrowed-app-envs"
+    run chmod 600 "${backup_dir}/escrowed-app-envs"
+    log 'installed escrow allowlist (names only).'
+  else
+    log 'WARNING: escrow allowlist not shipped; redactions stay operator-relayed.'
+  fi
 elif [ ! -f "$app_installed" ] && [ "$dry_run" -eq 0 ]; then
   echo 'backup-app-workloads.sh found neither beside this script nor installed; refusing to schedule a partial backup.' >&2
   exit 2

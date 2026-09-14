@@ -31,19 +31,20 @@ while [ "$#" -gt 0 ]; do
     --recreate) recreate="$2"; shift 2 ;;
     --recreate=*) recreate="${1#--recreate=}"; shift ;;
     --self-test-db-flags) self_test_db=1; shift ;;
-    -h|--help) echo 'usage: rollback-app-workloads.sh [--stamp STAMP] [--dry-run] [--recreate NAME] [--db-password PW] [--self-test-db-flags] (PW may also arrive via APP_DB_PASSWORD env)'; exit 0 ;;
+    --self-test-escrow) self_test_escrow=1; shift ;;
+    -h|--help) echo 'usage: rollback-app-workloads.sh [--stamp STAMP] [--dry-run] [--recreate NAME] [--db-password PW] [--self-test-db-flags] [--self-test-escrow] (PW may also arrive via APP_DB_PASSWORD env)'; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
 
 log() { printf '%s\n' "$*"; }
 
-if [ "$(id -u)" -ne 0 ] && [ "$dry_run" -eq 0 ] && [ "${self_test_db:-0}" -eq 0 ]; then
+if [ "$(id -u)" -ne 0 ] && [ "$dry_run" -eq 0 ] && [ "${self_test_db:-0}" -eq 0 ] && [ "${self_test_escrow:-0}" -eq 0 ]; then
   echo 'must run as root.' >&2
   exit 2
 fi
 for v in R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY R2_ENDPOINT R2_BUCKET; do
-  if [ -z "${!v:-}" ] && [ "$dry_run" -eq 0 ] && [ "${self_test_db:-0}" -eq 0 ]; then echo "missing ${v}: run through fetch-r2-env.sh -- <this-script>." >&2; exit 2; fi
+  if [ -z "${!v:-}" ] && [ "$dry_run" -eq 0 ] && [ "${self_test_db:-0}" -eq 0 ] && [ "${self_test_escrow:-0}" -eq 0 ]; then echo "missing ${v}: run through fetch-r2-env.sh -- <this-script>." >&2; exit 2; fi
 done
 
 # Recreate credential precedence: explicit flag wins, then APP_DB_PASSWORD
@@ -60,15 +61,15 @@ if [ "$dry_run" -eq 1 ]; then
   exit 0
 fi
 
-if [ "${self_test_db:-0}" -eq 1 ]; then
+if [ "${self_test_db:-0}" -eq 1 ] || [ "${self_test_escrow:-0}" -eq 1 ]; then
   R2_ACCESS_KEY_ID='selftest' R2_SECRET_ACCESS_KEY='selftest' R2_ENDPOINT='selftest' R2_BUCKET='selftest'
 fi
 export AWS_ACCESS_KEY_ID="$R2_ACCESS_KEY_ID" AWS_SECRET_ACCESS_KEY="$R2_SECRET_ACCESS_KEY"
 export AWS_DEFAULT_REGION="${AWS_DEFAULT_REGION:-auto}"
-if [ "${self_test_db:-0}" -ne 1 ]; then
+if [ "${self_test_db:-0}" -ne 1 ] && [ "${self_test_escrow:-0}" -ne 1 ]; then
   command -v aws >/dev/null 2>&1 || { echo 'awscli is required.' >&2; exit 2; }
 fi
-if [ "${self_test_db:-0}" -ne 1 ]; then
+if [ "${self_test_db:-0}" -ne 1 ] && [ "${self_test_escrow:-0}" -ne 1 ]; then
   command -v docker >/dev/null 2>&1 || { echo 'docker is required.' >&2; exit 2; }
 fi
 
@@ -88,14 +89,28 @@ s3get() { aws --endpoint-url "$R2_ENDPOINT" s3api get-object --bucket "$R2_BUCKE
 # omit, e.g. dump-authoritative pgdata). Needs manifest_json/workdir/s3get
 # for snapshot restores. Outputs run_args, cmd_args, extra_nets, first_net;
 # appends redacted names to needs_secrets. Returns nonzero on failure.
+# Escrow re-injection (no human relay): a REDACTED var listed in the entry's
+# env_escrowed map AND present non-empty in process environment (delivered
+# memory-only, e.g. via fetch-app-secrets piped blob) is restored from env
+# and logged by name only; only truly-missing secrets land in needs_secrets.
 build_run_args() {
   cspec="${SPEC_CSPEC:?build_run_args needs SPEC_CSPEC}"
+  escrowed_vars="$(printf '%s' "$cspec" | python3 -c 'import json,sys; print(" ".join(json.load(sys.stdin).get("env_escrowed",{}).keys()))' || true)"
   run_args=()
   while IFS= read -r kv; do
     [ -n "$kv" ] || continue
     k="${kv%%=*}"; v="${kv#*=}"
     case " ${SPEC_SKIP_ENVS:-} " in *" $k "*) continue ;; esac
-    if [ "$v" = 'REDACTED' ]; then needs_secrets="${needs_secrets} ${SPEC_CNAME}:${k}"; continue; fi
+    if [ "$v" = 'REDACTED' ]; then
+      case " ${escrowed_vars} " in *" $k "*)
+        if [ -n "${!k:-}" ]; then
+          run_args+=(-e "${k}=${!k}")
+          log "re-injected ${SPEC_CNAME}:${k} from escrow delivery (value never printed)."
+          continue
+        fi ;;
+      esac
+      needs_secrets="${needs_secrets} ${SPEC_CNAME}:${k}"; continue
+    fi
     run_args+=(-e "${k}=${v}")
   done <<<"$(printf '%s' "$cspec" | python3 -c 'import json,sys; [print(f"{k}={v}") for k,v in json.load(sys.stdin).get("env",{}).items()]')"
   while IFS= read -r pm; do
@@ -227,6 +242,32 @@ PYEOF
   SPEC_CNAME='dbproof-db' SPEC_SKIP_ENVS='POSTGRES_USER POSTGRES_PASSWORD' SPEC_SKIP_MOUNT='/var/lib/postgresql/data'
   build_run_args || { echo 'SELFTEST build failed.' >&2; exit 2; }
   printf '%s\n' "${run_args[@]}"
+  exit 0
+fi
+
+# Escrow self-test: the EXACT build_run_args against a fixture cspec with
+# an escrowed REDACTED var — delivered via env it lands in run_args (never
+# in needs_secrets); absent from env it lands in needs_secrets. No docker,
+# no R2, no network.
+if [ "${self_test_escrow:-0}" -eq 1 ]; then
+  docker() { return 0; }
+  python3 - >"$workdir/escrow-cspec.json" <<'PYEOF'
+import json
+print(json.dumps({'name': 'escrow-app', 'image': 'alpine:3',
+ 'env': {'APP_MODE': 'proof', 'STORAGE_ENCRYPTION_KEY': 'REDACTED'},
+ 'env_escrowed': {'STORAGE_ENCRYPTION_KEY': {'path': 'secret/projects/ovhcloud/OMNIROUTE', 'field': 'STORAGE_ENCRYPTION_KEY'}},
+ 'ports': [], 'networks': [], 'labels': {}, 'mounts': [],
+ 'runtime': {'cmd': ['sleep', '3600'], 'entrypoint': None, 'workdir': '', 'user': '', 'restart': '', 'restart_max': 0, 'healthcheck': {}}}))
+PYEOF
+  needs_secrets=''
+  SPEC_CSPEC="$(cat "$workdir/escrow-cspec.json")"
+  SPEC_CNAME='escrow-app' SPEC_SKIP_ENVS='' SPEC_SKIP_MOUNT=''
+  STORAGE_ENCRYPTION_KEY='delivered-test-value' build_run_args || { echo 'SELFTEST escrow build failed.' >&2; exit 2; }
+  printf 'WITHENV run_args=%s needs=[%s]\n' "$(printf '%s' "${run_args[@]}" | tr '\n' ' ')" "$needs_secrets"
+  needs_secrets=''
+  unset STORAGE_ENCRYPTION_KEY
+  build_run_args || { echo 'SELFTEST escrow build failed.' >&2; exit 2; }
+  printf 'NOENV run_args=%s needs=[%s]\n' "$(printf '%s' "${run_args[@]}" | tr '\n' ' ')" "$needs_secrets"
   exit 0
 fi
 

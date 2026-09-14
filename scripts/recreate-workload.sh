@@ -74,13 +74,28 @@ if [ -n "$stamp" ]; then
   case "$stamp" in [0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]T[0-9][0-9][0-9][0-9][0-9][0-9]Z) stamp_part="--stamp $stamp" ;;
     *) echo 'stamp must look like 20260914T120000Z.' >&2; exit 2 ;; esac
 fi
-# Password travels on stdin into remote env (never argv: invisible to ps on
-# both ends); sudo -E carries it into the fetch wrapper's process only.
-# NAME is charset-restricted above and stamp format-validated: safe inline.
-printf '%s' "$db_password" | ssh -i "$ssh_key" -o BatchMode=yes -o ConnectTimeout=20 "$host" \
-  "read -rs APP_DB_PASSWORD; export APP_DB_PASSWORD; sudo -E bash /root/coolify-backup/fetch-r2-env.sh -- bash /tmp/rollback-app-workloads.sh ${stamp_part} --recreate $name"
+# Secrets travel on stdin as one base64 blob into remote env (never argv:
+# invisible to ps on both ends): the DB password plus every escrowed app
+# secret for the stamp (resolved operator-side from OpenBao, so restore
+# needs no human relay). sudo runs FIRST and the blob decodes in the root
+# shell before fetch executes: sudo -E cannot carry arbitrary app-secret
+# vars (the sudoers channel is a fixed allowlist; sudo-rs ignores -E
+# otherwise), but stdin flows through NOPASSWD sudo untouched, so every
+# blob var — present and future — survives with no channel update. NAME is
+# charset-restricted above and stamp format-validated: safe inline.
+if [ -z "$stamp" ]; then
+  stamp="$(BAO_ADDR="$bao_addr" bash "$repo_root/fetch-app-secrets.sh" --resolve-latest-stamp 2>/dev/null || true)"
+  [ -n "$stamp" ] || { echo 'no app manifest stamp found (fail closed).' >&2; exit 2; }
+  stamp_part="--stamp $stamp"
+fi
+# Same shell-quoting discipline as the runner blob (qline): values travel
+# base64-encoded on stdin, never argv.
+qline() { printf 'export %s=%s\n' "$1" "$(printf '%s' "$2" | sed 's/[^A-Za-z0-9_.\/=+@:-]/\\&/g')"; }
+secrets_blob="$({ BAO_ADDR="$bao_addr" bash "$repo_root/fetch-app-secrets.sh" --stamp "$stamp" --exports; qline APP_DB_PASSWORD "$db_password"; } | base64)"
+printf '%s' "$secrets_blob" | ssh -i "$ssh_key" -o BatchMode=yes -o ConnectTimeout=20 "$host" \
+  "sudo bash -c 'eval \"\$(base64 -d)\"; exec /root/coolify-backup/fetch-r2-env.sh -- bash /tmp/rollback-app-workloads.sh ${stamp_part} --recreate $name'"
 rc=$?
-db_password=''; unset APP_DB_PASSWORD 2>/dev/null || true
+db_password=''; secrets_blob=''; unset APP_DB_PASSWORD 2>/dev/null || true
 ssh -i "$ssh_key" -o BatchMode=yes -o ConnectTimeout=20 "$host" 'rm -f /tmp/rollback-app-workloads.sh /tmp/fetch-r2-env.sh' >/dev/null 2>&1 || true
 if [ "$rc" -ne 0 ]; then echo 'remote recreate failed (fail closed; partial state left for inspection).' >&2; exit 2; fi
 log "workload ${name} recreated; credential lives at ${esc_path} for consumer re-pointing."

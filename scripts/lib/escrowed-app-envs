@@ -1,0 +1,10 @@
+# Escrowed application environment allowlist (NO VALUES — names only).
+#
+# Format per line: ENV_VAR_NAME OpenBao-entry-path OpenBao-field
+# Backup marks matching redacted container env as escrow-recoverable
+# (manifest env_escrowed) instead of operator-relayed; restore re-injects
+# them from OpenBao without human relay. This file ships with the backup
+# companions (non-secret) and is resolved relative to backup-app-workloads.sh.
+STORAGE_ENCRYPTION_KEY secret/projects/ovhcloud/OMNIROUTE STORAGE_ENCRYPTION_KEY
+API_KEY_SECRET secret/projects/ovhcloud/OMNIROUTE API_KEY_SECRET
+JWT_SECRET secret/projects/ovhcloud/OMNIROUTE JWT_SECRET
