@@ -8,8 +8,9 @@
 # - Never reinstalls, reboots without BOOTSTRAP_ALLOW_REBOOT=1, or touches a
 #   preserved production host unless BOOTSTRAP_TARGET_HOST is explicit.
 # - Version-aware: refuses unsupported Ubuntu releases before changing anything.
-# - Verifies Docker itself (engine version + hello-world), because the
-#   official Coolify installer assumes it can install/configure Docker.
+# - Installs Docker Engine from the official apt repository when absent,
+#   then verifies it (engine version + hello-world), because the official
+#   Coolify installer assumes a working Docker.
 #
 # Usage:
 #   BOOTSTRAP_TARGET_HOST=fresh-host.example \
@@ -159,10 +160,18 @@ run systemctl enable --now unattended-upgrades || true
 
 if ! command -v docker >/dev/null 2>&1; then
   if [ "$dry_run" -eq 1 ]; then
-    log 'DRY-RUN: verify Docker engine (docker version + hello-world)'
+    log 'DRY-RUN: install Docker Engine from the official apt repository when absent, then verify'
   else
-    echo 'Docker engine not found after bootstrap; refusing to continue (Coolify requires Docker).' >&2
-    exit 2
+    log 'Docker absent; installing Docker Engine from the official repository.'
+    run apt-get install -y --no-install-recommends gnupg lsb-release
+    run mkdir -p --mode=0755 /etc/apt/keyrings
+    run bash -c 'curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg'
+    run chmod a+r /etc/apt/keyrings/docker.gpg
+    run bash -c 'echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list >/dev/null'
+    run apt-get update -qq
+    run apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+    command -v docker >/dev/null 2>&1 || { echo 'Docker engine not installable on this release (Coolify requires Docker).' >&2; exit 2; }
+    log 'Docker Engine installed from the official repository.'
   fi
 else
   run docker version --format '{{.Server.Version}}'

@@ -37,7 +37,8 @@ terraform.tfvars
 backend.hcl
 imports.tf
 .fresh-handoff-*.json
-.fresh-handoff-*.imports.tf.txt
+infra/terraform-fresh/main.tf
+infra/terraform-fresh/imports.tf
 *.tfvars
 !*.tfvars.example
 !backend.hcl.example

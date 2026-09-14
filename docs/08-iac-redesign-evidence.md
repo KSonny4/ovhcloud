@@ -518,3 +518,22 @@
 - IaC handoff: `--handoff-file` JSON + `scripts/emit-fresh-imports.sh`
   emitting exact v5.25 import blocks (verified on synthetic handoff), so the
   API-created edge is adopted into state instead of diverging.
+
+## 2026-09-14 — generated fresh IaC + Docker install (audit round)
+
+- `bootstrap-vps.sh` now INSTALLS Docker Engine from the official apt
+  repository when absent (keyring + codename repo + `docker-ce` set), then
+  verifies version + hello-world; still fails closed when uninstallable.
+  (Not live-proven: no clean host exists; install path is code + dry-run +
+  gate covered.)
+- Fresh edge is IaC-complete with zero hand authoring: `emit-fresh-imports.sh`
+  GENERATES `infra/terraform-fresh/main.tf` (tunnel + config + 2 DNS + 2 apps
+  with nested `non_identity` policies, preserved conventions) + `imports.tf`
+  (6 adoption blocks, verified v5.25 IDs) from the handoff JSON.
+  `scripts/adopt-fresh-edge.sh` wraps generate -> init -> plan (-> --apply,
+  ending converged). Generated config from a synthetic handoff passes
+  `terraform validate`; rehearsal regenerates + validates every run.
+- `wire-fresh-edge.sh` service-token policy now uses `non_identity`,
+  identical to Terraform; dashboard service aligned to `http://localhost:8000`.
+- Runner no longer references the removed `.imports.tf.txt` flow; `.gitignore`
+  covers generated fresh files + handoff JSON.

@@ -5,7 +5,7 @@
 # routes: given a tunnel ID, the dashboard hostname (required) and the SSH
 # hostname (optional but wired by the runner for every fresh zone), this
 # script (all via the Cloudflare API with the OpenBao-escrowed ADMIN token):
-#  1. sets tunnel ingress: dashboard -> http://127.0.0.1:8000,
+#  1. sets tunnel ingress: dashboard -> http://localhost:8000,
 #     ssh -> ssh://localhost:22, catch-all -> http_status:404
 #     (idempotent: fetched first, PUT only on drift, existing rules kept);
 #  2. creates the DNS CNAMEs <host> -> <tunnel>.cfargotunnel.com, proxied,
@@ -54,7 +54,7 @@ fi
 hostnames="$EDGE_HOSTNAME"
 [ -n "${SSH_HOSTNAME:-}" ] && hostnames="$hostnames $SSH_HOSTNAME"
 service_for() {
-  if [ "$1" = "$EDGE_HOSTNAME" ]; then printf 'http://127.0.0.1:8000'; else printf 'ssh://localhost:22'; fi
+  if [ "$1" = "$EDGE_HOSTNAME" ]; then printf 'http://localhost:8000'; else printf 'ssh://localhost:22'; fi
 }
 
 if [ "$dry_run" -eq 1 ]; then
@@ -144,11 +144,12 @@ for host in $hostnames; do
     pid="$(api "https://api.cloudflare.com/client/v4/accounts/${acct}/access/apps/${app_id}/policies" | python3 -c 'import json,sys; print(next((p["id"] for p in json.load(sys.stdin).get("result",[]) if p.get("name")=="'"${pname}"'"),""))')"
     if [ -z "$pid" ]; then
       if [ "$pname" = 'Allow machine service token' ]; then
-        include='[{"service_token":{"token_id":"'"${svc_token_id}"'"}}]'; prec=1
+        # non_identity mirrors the Terraform convention (see infra/terraform/main.tf).
+        include='[{"service_token":{"token_id":"'"${svc_token_id}"'"}}]'; prec=1; decision='non_identity'
       else
-        include='[{"email":{"email":"ksonny4@gmail.com"}}]'; prec=2
+        include='[{"email":{"email":"ksonny4@gmail.com"}}]'; prec=2; decision='allow'
       fi
-      pid="$(apost -d '{"name":"'"${pname}"'","decision":"allow","precedence":'"${prec}"',"include":'"${include}"'}' "https://api.cloudflare.com/client/v4/accounts/${acct}/access/apps/${app_id}/policies" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("result",{}).get("id",""))')"
+      pid="$(apost -d '{"name":"'"${pname}"'","decision":"'"${decision}"'","precedence":'"${prec}"',"include":'"${include}"'}' "https://api.cloudflare.com/client/v4/accounts/${acct}/access/apps/${app_id}/policies" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("result",{}).get("id",""))')"
       [ -n "$pid" ] || { echo "Access policy ${pname} creation failed for ${host} (fail closed)." >&2; exit 2; }
       log "Access policy ${pname} created for ${host}."
     fi
@@ -186,7 +187,9 @@ if [ -n "${SSH_HOSTNAME:-}" ]; then
 fi
 
 if [ -n "$handoff_file" ]; then
-  printf '{"tunnel_id":"%s","routes":%s}\n' "$tid" "$handoff_routes" >"$handoff_file"
+  tunnel_name="${TUNNEL_NAME:-$(api "https://api.cloudflare.com/client/v4/accounts/${acct}/cfd_tunnel/${tid}" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("result",{}).get("name",""))')}"
+  [ -n "$tunnel_name" ] || { echo 'tunnel name unresolvable for handoff (fail closed).' >&2; exit 2; }
+  python3 -c 'import json; print(json.dumps({"tunnel_id": sys.argv[1], "tunnel_name": sys.argv[2], "routes": json.loads(sys.argv[3])}))' "$tid" "$tunnel_name" "$handoff_routes" >"$handoff_file"
   log "handoff written to ${handoff_file} (feed to scripts/emit-fresh-imports.sh)."
 fi
 log 'wire complete: ingress + DNS + Access + verification for all hostnames.'

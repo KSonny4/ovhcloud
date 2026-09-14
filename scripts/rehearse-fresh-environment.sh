@@ -182,12 +182,20 @@ for host in coolify.rehearsal.invalid ssh.rehearsal.invalid; do
 done
 grep -q 'ssh://localhost:22' /tmp/rehearsal-edge.log || { echo 'wire dry-run omits the ssh ingress route.' >&2; exit 1; }
 rm -f /tmp/rehearsal-handoff.json
-printf '{"tunnel_id":"t","routes":[{"hostname":"h","service":"s","dns_record_id":"d","access_app_id":"a","policy_ids":["p"]}]}' > /tmp/rehearsal-handoff.json
+printf '{"tunnel_id":"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee","tunnel_name":"rehearsal","routes":[{"hostname":"coolify.rehearsal.invalid","service":"http://localhost:8000","dns_record_id":"d","access_app_id":"a","policy_ids":["p"]},{"hostname":"ssh.rehearsal.invalid","service":"ssh://localhost:22","dns_record_id":"e","access_app_id":"b","policy_ids":["q"]}]}' > /tmp/rehearsal-handoff.json
+rm -rf /tmp/rehearsal-fresh-out
 CLOUDFLARE_ACCOUNT_ID=rehearsal CLOUDFLARE_ZONE_ID=rehearsal \
-  bash scripts/emit-fresh-imports.sh --handoff /tmp/rehearsal-handoff.json > /tmp/rehearsal-imports.log 2>&1 \
-  || { echo 'emit imports failed on synthetic handoff.' >&2; exit 1; }
-grep -q 'accounts/rehearsal/a' /tmp/rehearsal-imports.log || { echo 'emit imports omits the access app block.' >&2; exit 1; }
-rm -f /tmp/rehearsal-handoff.json
+  bash scripts/emit-fresh-imports.sh --handoff /tmp/rehearsal-handoff.json --out-dir /tmp/rehearsal-fresh-out > /tmp/rehearsal-imports.log 2>&1 \
+  || { echo 'emit generated config failed on synthetic handoff.' >&2; exit 1; }
+[ -f /tmp/rehearsal-fresh-out/main.tf ] && [ -f /tmp/rehearsal-fresh-out/imports.tf ] || { echo 'emitter omits main.tf/imports.tf.' >&2; exit 1; }
+grep -q 'non_identity' /tmp/rehearsal-fresh-out/main.tf || { echo 'generated apps diverge from the nested non_identity convention.' >&2; exit 1; }
+if command -v terraform >/dev/null 2>&1; then
+  cp infra/terraform-fresh/versions.tf infra/terraform-fresh/variables.tf /tmp/rehearsal-fresh-out/
+  terraform -chdir=/tmp/rehearsal-fresh-out init -backend=false -input=false >/dev/null 2>&1
+  terraform -chdir=/tmp/rehearsal-fresh-out validate >/dev/null 2>&1 || { echo 'generated fresh config does not validate.' >&2; exit 1; }
+  log 'generated fresh config validates (terraform validate).'
+fi
+rm -rf /tmp/rehearsal-handoff.json /tmp/rehearsal-fresh-out
 log 'edge routes proven in dry-run: dashboard + ssh ingress/DNS/Access planned, handoff import blocks emit.'
 log 'runner dry-run idempotent across two passes; all four stages present; backup companion staged + scheduled; fileless R2 delivery enforced; fresh edge wired; no network touched.'
 phase_ok runner_channel | tee -a "$artifact_dir/phases.log"

@@ -453,8 +453,8 @@ if want_stage edge; then
     bash "$repo_root/scripts/wire-fresh-edge.sh" --handoff-file "$handoff_file"
   log "edge handoff recorded at ${handoff_file} (gitignored; feed to emit-fresh-imports.sh)."
   run env CLOUDFLARE_ACCOUNT_ID="$cf_account" CLOUDFLARE_ZONE_ID="$cf_zone" \
-    bash "$repo_root/scripts/emit-fresh-imports.sh" --handoff "$handoff_file" > "${handoff_file%.json}.imports.tf.txt"
-  log "import blocks written to ${handoff_file%.json}.imports.tf.txt (review, add fresh_* resources, terraform import)."
+    bash "$repo_root/scripts/emit-fresh-imports.sh" --handoff "$handoff_file"
+  log 'fresh IaC generated in infra/terraform-fresh (main.tf + imports.tf); adopt with scripts/adopt-fresh-edge.sh --handoff.'
   # Complete service-token lifecycle first (operator side, OpenBao-complete):
   # ensures the token exists, escrows the pair, and proves HTTP 200.
   log '== service-token lifecycle (operator side) =='
