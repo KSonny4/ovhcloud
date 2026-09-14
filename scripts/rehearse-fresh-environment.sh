@@ -145,8 +145,29 @@ phase_ok runner_channel | tee -a "$artifact_dir/phases.log"
 log '== backup_ready (dry-run) =='
 bash scripts/backup-r2-probe.sh --dry-run >/tmp/rehearsal-backup.log 2>&1
 bash scripts/rollback-coolify-backup.sh --dry-run >>/tmp/rehearsal-backup.log 2>&1
-bash scripts/load-tfvars-from-openbao.sh --dry-run >>/tmp/rehearsal-backup.log 2>&1
+bash scripts/tf-env-from-openbao.sh --dry-run >>/tmp/rehearsal-backup.log 2>&1
 phase_ok backup_ready | tee -a "$artifact_dir/phases.log"
+
+log '== ephemeral_cleanup (no credential files; memory-only transport) =='
+# Credential-bearing files must not exist: no tfvars (env-only Terraform),
+# no stage.env anywhere (base64-blob transport). Failure here fails closed.
+if [ -e infra/terraform/terraform.tfvars ]; then echo 'live terraform.tfvars present; shred it.' >&2; exit 1; fi
+if find . /tmp -maxdepth 2 -name 'stage.env' -not -path './.git/*' 2>/dev/null | grep -q .; then
+  echo 'stage.env artifact present; remove it.' >&2; exit 1
+fi
+if find . -maxdepth 3 -name 'terraform.tfvars' -not -path './.git/*' 2>/dev/null | grep -q .; then
+  echo 'terraform.tfvars artifact present in repo; remove it.' >&2; exit 1
+fi
+# Structural: the runner must carry credentials only in the base64 blob — no
+# credential-file shipment or remote sourcing remains outside comments.
+if grep -vE '^\s*#' scripts/run-remote-provision.sh | grep -qE 'scp[^#]*stage\.env|source [^ ]*stage\.env'; then
+  echo 'runner still ships/sources a credential file.' >&2; exit 1
+fi
+if ! grep -q 'base64 -d' scripts/run-remote-provision.sh; then
+  echo 'runner blob transport missing.' >&2; exit 1
+fi
+log 'no credential files exist; memory-only transport structurally verified.'
+phase_ok ephemeral_cleanup | tee -a "$artifact_dir/phases.log"
 
 log '== no_plaintext_secrets =='
 git diff --check

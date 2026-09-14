@@ -36,9 +36,9 @@ bash -n scripts/run-remote-provision.sh
 bash -n scripts/schedule-coolify-backup.sh
 bash -n scripts/lib/preserved-guard.sh
 bash -n scripts/ensure-service-token.sh
-bash -n scripts/load-tfvars-from-openbao.sh
+bash -n scripts/tf-env-from-openbao.sh
 bash -n scripts/rollback-coolify-backup.sh
-shellcheck scripts/bootstrap-vps.sh scripts/provision-coolify.sh scripts/configure-tunnel-access.sh scripts/backup-r2-probe.sh scripts/rehearse-fresh-environment.sh scripts/healthcheck.sh scripts/validate-repository.sh scripts/run-remote-provision.sh scripts/schedule-coolify-backup.sh scripts/lib/preserved-guard.sh
+shellcheck scripts/bootstrap-vps.sh scripts/provision-coolify.sh scripts/configure-tunnel-access.sh scripts/backup-r2-probe.sh scripts/rehearse-fresh-environment.sh scripts/healthcheck.sh scripts/validate-repository.sh scripts/run-remote-provision.sh scripts/schedule-coolify-backup.sh scripts/lib/preserved-guard.sh scripts/ensure-service-token.sh scripts/tf-env-from-openbao.sh scripts/rollback-coolify-backup.sh
 
 git diff --check
 

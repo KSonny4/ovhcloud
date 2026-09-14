@@ -192,11 +192,11 @@ log "dry run: ${dry_run}"
 ssh_opts=()
 remote_dir='/tmp/ovh-provision'
 remote_touched=0
-env_file=''
 
 cleanup_remote() {
-  # Fail-safe: remove remote stage material (including stage.env with all
-  # injected credentials) on EVERY exit path, not just success. Best-effort
+  # Fail-safe: remove remote stage material (scripts only; credentials travel
+  # memory-only inside each SSH command) on EVERY exit path, not just
+  # success. Best-effort
   # by design — must never mask the real exit code — but a failure here is
   # loud so a leftover secret file cannot go unnoticed.
   if [ "$dry_run" -eq 1 ] || [ "$remote_touched" -eq 0 ]; then
@@ -213,7 +213,7 @@ cleanup_remote() {
 }
 # Local key material (generated private key, derived pubkey, env file) is
 # shredded on every exit path; remote material via cleanup_remote above.
-trap 'cleanup_remote; rm -f "$env_file" "$derived_pub_file"; [ -n "$generated_key_dir" ] && rm -rf "$generated_key_dir"; true' EXIT
+trap 'cleanup_remote; rm -f "$derived_pub_file"; [ -n "$generated_key_dir" ] && rm -rf "$generated_key_dir"; true' EXIT
 
 want_stage() {
   case ",${stages}," in
@@ -226,7 +226,7 @@ if [ "$dry_run" -eq 1 ]; then
   log 'DRY-RUN: verify SSH connectivity (ssh -BatchMode user@host true)'
   log 'DRY-RUN: prepare credentials (generate + escrow SSH keypair when absent, register OVH account key, retrieve OpenBao fields by name); generate + escrow bootstrap password when ROOT_USER_PASSWORD absent (fail closed)'
   log 'DRY-RUN: run ensure-service-token.sh (ensure/create/escrow/verify HTTP 200) before the edge stage'
-  log 'DRY-RUN: scp stage scripts + generated 0600 env file to /tmp/ovh-provision on the target'
+  log 'DRY-RUN: scp stage scripts (only) to /tmp/ovh-provision; credentials travel as a base64 env blob inside each SSH command (memory-only both ends)'
   want_stage bootstrap && log 'DRY-RUN: remote sudo BOOTSTRAP_TARGET_HOST/BOOTSTRAP_SSH_PUBLIC_KEY bash bootstrap-vps.sh + verify docker hello-world'
   want_stage coolify && log "DRY-RUN: remote sudo COOLIFY_TARGET_HOST/COOLIFY_DOMAIN/COOLIFY_VERSION/ROOT_* bash provision-coolify.sh (FQDN + firewall + origin smoke) + verify origin login + fetch APP_KEY over SSH and escrow operator-side (fail closed)"
   want_stage edge && log 'DRY-RUN: remote sudo TUNNEL_TARGET_HOST/TUNNEL_DOMAIN/CLOUDFLARED_TUNNEL_TOKEN/CF_ACCESS_* bash configure-tunnel-access.sh + verify domain login HTTP 200 locally'
@@ -277,34 +277,39 @@ done
 log 'OpenBao retrieval ok (all required fields present).'
 
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
-env_file="$(mktemp /tmp/ovh-provision-env.XXXXXX)"
-chmod 600 "$env_file"
-# NOTE: the single EXIT trap installed near the top already covers env file +
-# generated keys + remote material on every path; do NOT install another here.
-cat >"$env_file" <<ENV_EOF
-BOOTSTRAP_TARGET_HOST=${host}
-BOOTSTRAP_SSH_PUBLIC_KEY=${ssh_pub}
-COOLIFY_TARGET_HOST=${host}
-COOLIFY_DOMAIN=${dashboard_host}
-COOLIFY_VERSION=${coolify_version}
-ROOT_USERNAME=${ROOT_USERNAME}
-ROOT_USER_EMAIL=${ROOT_USER_EMAIL}
-ROOT_USER_PASSWORD=${ROOT_USER_PASSWORD}
-TUNNEL_TARGET_HOST=${host}
-TUNNEL_DOMAIN=${zone}
-CLOUDFLARED_TUNNEL_TOKEN=${tunnel_token}
-CF_ACCESS_CLIENT_ID=${svc_id}
-CF_ACCESS_CLIENT_SECRET=${svc_secret}
-COOLIFY_SERVICE_TOKEN_CLIENT_ID=${svc_id}
-COOLIFY_SERVICE_TOKEN_CLIENT_SECRET=${svc_secret}
-R2_ACCESS_KEY_ID=${r2_ak}
-R2_SECRET_ACCESS_KEY=${r2_sk}
-R2_ENDPOINT=${r2_endpoint}
-R2_BUCKET=${r2_bucket}
-AWS_DEFAULT_REGION=auto
-ENV_EOF
+# NOTE: the single EXIT trap installed near the top covers generated keys +
+# remote material on every path; do NOT install another here.
+#
+# Memory-only credential transport: stage values are shell-quoted (%q),
+# packed into one base64 blob, and evaluated inside each remote SSH command.
+# Nothing credential-bearing touches disk on either end (an earlier stage.env
+# file proved that any on-disk copy leaks through tooling). The blob itself
+# is base64 (never plaintext) and lives only in transient process arguments
+# inside the encrypted SSH channel; the remote shell exports it into process
+# environment for `sudo -E`, which dies with the session.
+qline() { printf 'export %s=%s\n' "$1" "$(printf '%s' "$2" | sed 's/[^A-Za-z0-9_.\/+=@:-]/\\&/g')"; }
+remote_env_blob="$( { qline BOOTSTRAP_TARGET_HOST "$host"
+  qline BOOTSTRAP_SSH_PUBLIC_KEY "$ssh_pub"
+  qline COOLIFY_TARGET_HOST "$host"
+  qline COOLIFY_DOMAIN "$dashboard_host"
+  qline COOLIFY_VERSION "$coolify_version"
+  qline ROOT_USERNAME "$ROOT_USERNAME"
+  qline ROOT_USER_EMAIL "$ROOT_USER_EMAIL"
+  qline ROOT_USER_PASSWORD "$ROOT_USER_PASSWORD"
+  qline TUNNEL_TARGET_HOST "$host"
+  qline TUNNEL_DOMAIN "$zone"
+  qline CLOUDFLARED_TUNNEL_TOKEN "$tunnel_token"
+  qline CF_ACCESS_CLIENT_ID "$svc_id"
+  qline CF_ACCESS_CLIENT_SECRET "$svc_secret"
+  qline COOLIFY_SERVICE_TOKEN_CLIENT_ID "$svc_id"
+  qline COOLIFY_SERVICE_TOKEN_CLIENT_SECRET "$svc_secret"
+  qline R2_ACCESS_KEY_ID "$r2_ak"
+  qline R2_SECRET_ACCESS_KEY "$r2_sk"
+  qline R2_ENDPOINT "$r2_endpoint"
+  qline R2_BUCKET "$r2_bucket"
+  qline AWS_DEFAULT_REGION auto; } | base64 )"
 
-log 'copying stage scripts + env file to the target...'
+log 'copying stage scripts to the target (no credential files)...'
 run ssh "${ssh_opts[@]}" "${ssh_user}@${host}" "mkdir -p ${remote_dir}/lib && chmod 700 ${remote_dir} ${remote_dir}/lib"
 remote_touched=1
 run scp -p "${ssh_opts[@]}" "$repo_root/scripts/bootstrap-vps.sh" "$repo_root/scripts/provision-coolify.sh" \
@@ -312,14 +317,13 @@ run scp -p "${ssh_opts[@]}" "$repo_root/scripts/bootstrap-vps.sh" "$repo_root/sc
   "${ssh_user}@${host}:${remote_dir}/"
 run scp -p "${ssh_opts[@]}" "$repo_root/scripts/lib/preserved-guard.sh" \
   "${ssh_user}@${host}:${remote_dir}/lib/"
-run scp -p "${ssh_opts[@]}" "$env_file" "${ssh_user}@${host}:${remote_dir}/stage.env"
-run ssh "${ssh_opts[@]}" "${ssh_user}@${host}" "chmod 600 ${remote_dir}/stage.env"
 
 remote_stage() {
   local name="$1" script="$2"
   log "== remote stage: ${name} =="
+  # shellcheck disable=SC2029
   run ssh "${ssh_opts[@]}" "${ssh_user}@${host}" \
-    "set -a; source ${remote_dir}/stage.env; set +a; sudo -E bash ${remote_dir}/${script}"
+    "eval \"\$(echo '${remote_env_blob}' | base64 -d)\"; sudo -E bash ${remote_dir}/${script}"
   log "remote stage ${name} exited 0."
 }
 
@@ -389,5 +393,4 @@ fi
 
 trap - EXIT
 cleanup_remote
-rm -f "$env_file"
-log 'remote provisioning complete: all requested stages passed with verification; stage material removed from both ends.'
+log 'remote provisioning complete: all requested stages passed with verification; no credential file was written on either end.'

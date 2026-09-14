@@ -331,3 +331,21 @@
   whenever the ignored file exists — verified `LOADER_FMT_CLEAN`. Operator
   rule restated: never `fmt -diff` where ignored credential files live.
 - Live tfvars shredded again after use; credential-free gates restored.
+
+## 2026-09-14 — ephemeral credential transport (audit round)
+
+- Terraform authorization is now process-environment-only:
+  `scripts/tf-env-from-openbao.sh` emits `TF_VAR_*` + `AWS_*` exports for
+  eval (OpenBao retrieval + read-only OVH discovery, fail-closed); the old
+  file-writing loader is deleted. Live proof: full plan via eval shows
+  **1 to add, 0 to change, 0 to destroy** with no tfvars file existing
+  before, during, or after.
+- Runner stage transport is now a base64 env blob evaluated inside each SSH
+  command (shell-quoted values, memory-only both ends, process environment
+  only): no local env file, no remote stage.env. Blob verified byte-exact
+  for spaces/`$`/backticks/quotes with no shell specials outside `+/=`.
+- Cleanup verified on the live path (no tfvars/stage files after plan) and
+  structurally in rehearsal (`ephemeral_cleanup` phase: file absence by name
+  + blob-transport presence + no file-shipment remnants).
+- Sanctioned exception documented: exactly one at-rest credential file,
+  `/root/coolify-backup/r2.env` (0600), feeding timer + rollback.
