@@ -21,7 +21,7 @@
 #
 # Usage:
 #   BAO_ADDR=https://secrets.pkubelka.cz \
-#   PROVISION_HOST=fresh-host.example PROVISION_DOMAIN=coolify.example \
+#   PROVISION_HOST=fresh-host.example PROVISION_ZONE=example.com \
 #   PROVISION_SSH_USER=ubuntu PROVISION_SSH_KEY=~/.ssh/ovh_coolify_ed25519 \
 #   ROOT_USERNAME=admin ROOT_USER_EMAIL=admin@example.com ROOT_USER_PASSWORD='...' \
 #   bash scripts/run-remote-provision.sh [--dry-run] [--stages bootstrap,coolify,edge,backup]
@@ -51,20 +51,32 @@ run() {
 }
 
 host="${PROVISION_HOST:-}"
-domain="${PROVISION_DOMAIN:-}"
+# Single explicit domain contract: the operator supplies the Cloudflare ZONE
+# and the runner derives the dashboard hostname from it, so Coolify FQDN,
+# Tunnel ingress/DNS, and every HTTP verification use the same hostname.
+# (An earlier revision took a bare domain and configured https://${domain}
+# while the tunnel verified https://coolify.${domain} — now impossible.)
+zone="${PROVISION_ZONE:-}"
+dashboard_host="${PROVISION_DASHBOARD_HOST:-}"
+if [ -z "$dashboard_host" ] && [ -n "$zone" ]; then
+  dashboard_host="coolify.${zone}"
+fi
 ssh_user="${PROVISION_SSH_USER:-ubuntu}"
 ssh_key="${PROVISION_SSH_KEY:-}"
 coolify_version="${COOLIFY_VERSION:-4.3.19}"
 bao_addr="${BAO_ADDR:-https://secrets.pkubelka.cz}"
 r2_endpoint="${R2_ENDPOINT:-https://5eb3ea3a84b37564cfd8739f32ffb559.r2.cloudflarestorage.com}"
-if [ -z "$host" ] || [ -z "$domain" ]; then
-  echo 'PROVISION_HOST and PROVISION_DOMAIN must both be set.' >&2
+if [ -z "$host" ] || [ -z "$zone" ] || [ -z "$dashboard_host" ]; then
+  echo 'PROVISION_HOST and PROVISION_ZONE (or PROVISION_DASHBOARD_HOST) must be set.' >&2
   exit 2
 fi
-if [ "$host" = 'vps-1525c977.vps.ovh.net' ] || [ "$host" = '57.129.155.203' ]; then
-  echo 'Refusing to provision the preserved production VPS with the fresh-host runner.' >&2
-  exit 2
-fi
+# Operator-side identity guard: resolve the target against the preserved OVH
+# service identity (API-backed when available) before any network/secret
+# access. No self-check here by design: the runner never runs on the target.
+GUARD_SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=scripts/lib/preserved-guard.sh
+source "${GUARD_SCRIPT_DIR}/lib/preserved-guard.sh"
+refuse_preserved_host "$host" || exit 2
 if [ -z "$ssh_key" ] || [ ! -e "$ssh_key" ]; then
   echo 'PROVISION_SSH_KEY must point at an existing private key.' >&2
   exit 2
@@ -75,13 +87,35 @@ if [ "$dry_run" -eq 0 ] && { [ -z "${ROOT_USERNAME:-}" ] || [ -z "${ROOT_USER_EM
 fi
 
 log "target host: ${host} (user ${ssh_user})"
-log "domain: ${domain}"
+log "zone: ${zone}; dashboard hostname: ${dashboard_host}"
+log "derived hostname used consistently for Coolify FQDN, Tunnel ingress/DNS, and every HTTP verification"
 log "coolify version: ${coolify_version}"
 log "stages: ${stages}"
 log "dry run: ${dry_run}"
 
 ssh_opts=(-i "$ssh_key" -o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new)
 remote_dir='/tmp/ovh-provision'
+remote_touched=0
+env_file=''
+
+cleanup_remote() {
+  # Fail-safe: remove remote stage material (including stage.env with all
+  # injected credentials) on EVERY exit path, not just success. Best-effort
+  # by design — must never mask the real exit code — but a failure here is
+  # loud so a leftover secret file cannot go unnoticed.
+  if [ "$dry_run" -eq 1 ] || [ "$remote_touched" -eq 0 ]; then
+    return 0
+  fi
+  # Client-side expansion is intentional: remote_dir is a runner-local constant.
+  # shellcheck disable=SC2029
+  if ssh "${ssh_opts[@]}" "${ssh_user}@${host}" "rm -rf ${remote_dir}" 2>/dev/null; then
+    log 'remote stage material removed.'
+  else
+    echo "WARNING: could not remove remote stage material at ${host}:${remote_dir}; inspect manually." >&2
+  fi
+  return 0
+}
+trap 'cleanup_remote; rm -f "$env_file"' EXIT
 
 want_stage() {
   case ",${stages}," in
@@ -131,13 +165,13 @@ cat >"$env_file" <<ENV_EOF
 BOOTSTRAP_TARGET_HOST=${host}
 BOOTSTRAP_SSH_PUBLIC_KEY=${ssh_pub}
 COOLIFY_TARGET_HOST=${host}
-COOLIFY_DOMAIN=${domain}
+COOLIFY_DOMAIN=${dashboard_host}
 COOLIFY_VERSION=${coolify_version}
 ROOT_USERNAME=${ROOT_USERNAME}
 ROOT_USER_EMAIL=${ROOT_USER_EMAIL}
 ROOT_USER_PASSWORD=${ROOT_USER_PASSWORD}
 TUNNEL_TARGET_HOST=${host}
-TUNNEL_DOMAIN=${domain}
+TUNNEL_DOMAIN=${zone}
 CLOUDFLARED_TUNNEL_TOKEN=${tunnel_token}
 CF_ACCESS_CLIENT_ID=${svc_id}
 CF_ACCESS_CLIENT_SECRET=${svc_secret}
@@ -151,10 +185,13 @@ AWS_DEFAULT_REGION=auto
 ENV_EOF
 
 log 'copying stage scripts + env file to the target...'
-run ssh "${ssh_opts[@]}" "${ssh_user}@${host}" "mkdir -p ${remote_dir} && chmod 700 ${remote_dir}"
+run ssh "${ssh_opts[@]}" "${ssh_user}@${host}" "mkdir -p ${remote_dir}/lib && chmod 700 ${remote_dir} ${remote_dir}/lib"
+remote_touched=1
 run scp -p "${ssh_opts[@]}" "$repo_root/scripts/bootstrap-vps.sh" "$repo_root/scripts/provision-coolify.sh" \
   "$repo_root/scripts/configure-tunnel-access.sh" "$repo_root/scripts/schedule-coolify-backup.sh" \
   "${ssh_user}@${host}:${remote_dir}/"
+run scp -p "${ssh_opts[@]}" "$repo_root/scripts/lib/preserved-guard.sh" \
+  "${ssh_user}@${host}:${remote_dir}/lib/"
 run scp -p "${ssh_opts[@]}" "$env_file" "${ssh_user}@${host}:${remote_dir}/stage.env"
 run ssh "${ssh_opts[@]}" "${ssh_user}@${host}" "chmod 600 ${remote_dir}/stage.env"
 
@@ -182,9 +219,9 @@ if want_stage edge; then
   remote_stage edge configure-tunnel-access.sh
   smoke_code="$(curl -sS -o /dev/null -w '%{http_code}' --cookie-jar /dev/null --max-time 30 \
     -H "CF-Access-Client-Id: ${svc_id}" -H "CF-Access-Client-Secret: ${svc_secret}" \
-    "https://${domain}/login")"
+    "https://${dashboard_host}/login")"
   if [ "$smoke_code" = '200' ]; then
-    log "edge verified: https://${domain}/login -> HTTP 200 (service token accepted)."
+    log "edge verified: https://${dashboard_host}/login -> HTTP 200 (service token accepted)."
   else
     echo "edge verification failed: HTTP ${smoke_code} (required 200)." >&2
     exit 1
@@ -206,8 +243,7 @@ if want_stage backup; then
   log 'backup verified: coolify-backup.timer enabled on the target (first backup runs during install).'
 fi
 
-log 'cleaning stage material from the target...'
-run ssh "${ssh_opts[@]}" "${ssh_user}@${host}" "rm -rf ${remote_dir}"
 trap - EXIT
+cleanup_remote
 rm -f "$env_file"
-log 'remote provisioning complete: all requested stages passed with verification; no secrets remain on either end.'
+log 'remote provisioning complete: all requested stages passed with verification; stage material removed from both ends.'

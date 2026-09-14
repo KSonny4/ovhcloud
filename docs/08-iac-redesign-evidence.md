@@ -210,3 +210,23 @@
   command in the runner replicates the manually executed, live-proven
   sequence (same scripts, same stdin-pipe env provisioning proven by the
   backup-schedule deploy), so the channel is review-verified, not speculative.
+
+## 2026-09-14 — guard library + admin enforcement + runner contract (audit round)
+
+- `scripts/lib/preserved-guard.sh` (new, sourced by all four fresh-host entry
+  points): `refuse_preserved_host` resolves the target via getent A/AAAA and
+  intersects with the OVH service identity (service name
+  `vps-1525c977.vps.ovh.net`, live IP set from `ovhcloud vps ip list` with
+  embedded fallback, reverse-DNS match); `refuse_preserved_self` refuses when
+  the executing machine itself is the preserved VPS. Verified: service name,
+  IPv4, upper-case variant refused; fresh host allowed; empty refused.
+  Rehearsal `origin_identity` now asserts the lib is sourced everywhere and
+  that no bypassable literal OR-comparison remains.
+- Terraform: `admin_emails` validation requires `ksonny4@gmail.com`
+  (blessed example updated); rehearsal proves omission fails closed with the
+  retention error (throwaway-dir negative plan); `validate-iac.py` asserts the
+  rule and the example structurally.
+- Runner domain contract fixed: `PROVISION_ZONE` in, dashboard hostname
+  `coolify.${zone}` derived once and used for FQDN, ingress, DNS, and every
+  verification; rehearsal asserts the derived hostname and rejects doubling.
+  Runner EXIT trap removes remote stage material on every path (local env too).

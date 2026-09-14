@@ -50,10 +50,11 @@ if [ -z "$target_host" ] || [ -z "$domain" ]; then
   echo 'COOLIFY_TARGET_HOST and COOLIFY_DOMAIN must both be set.' >&2
   exit 2
 fi
-if [ "$target_host" = 'vps-1525c977.vps.ovh.net' ] || [ "$target_host" = '57.129.155.203' ]; then
-  echo 'Refusing to re-provision the preserved production VPS with the fresh-host script.' >&2
-  exit 2
-fi
+GUARD_SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=scripts/lib/preserved-guard.sh
+source "${GUARD_SCRIPT_DIR}/lib/preserved-guard.sh"
+refuse_preserved_host "$target_host" || exit 2
+refuse_preserved_self || exit 2
 if [ "$(id -u)" -ne 0 ] && [ "$dry_run" -eq 0 ]; then
   echo 'Run provision-coolify.sh as root (for example: sudo -E bash scripts/provision-coolify.sh).' >&2
   exit 2

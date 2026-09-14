@@ -28,14 +28,21 @@ log 'No live credentials are required: rehearsal uses example placeholders and d
 phase_ok provider_access | tee -a "$artifact_dir/phases.log"
 
 log '== origin_identity =='
+# The guard must be the shared service-identity library, not bypassable
+# two-literal comparisons: every fresh-host entry point sources it, and none
+# may retain the old literal IP/hostname OR-comparison.
+if [ ! -f scripts/lib/preserved-guard.sh ]; then echo 'guard library missing.' >&2; exit 1; fi
 for script in scripts/bootstrap-vps.sh scripts/provision-coolify.sh scripts/configure-tunnel-access.sh scripts/run-remote-provision.sh; do
-  if [ ! -f "$script" ]; then echo "missing script: $script." >&2; exit 1; fi
-  if ! grep -q "vps-1525c977.vps.ovh.net" "$script" || ! grep -q 'Refusing' "$script"; then
-    echo "preserved-host guard missing in ${script}." >&2
+  if ! grep -q 'lib/preserved-guard.sh' "$script"; then
+    echo "shared guard not sourced in ${script}." >&2
+    exit 1
+  fi
+  if grep -q "target.*=.*'vps-1525c977" "$script" || grep -q 'host.*=.*57\.129\.155\.203' "$script"; then
+    echo "bypassable literal guard still present in ${script}." >&2
     exit 1
   fi
 done
-log 'preserved-host guard present in all fresh-host scripts.'
+log 'shared service-identity guard sourced by all fresh-host entry points; no literal guards remain.'
 phase_ok origin_identity | tee -a "$artifact_dir/phases.log"
 
 log '== terraform_gates =='
@@ -43,6 +50,40 @@ terraform -chdir=infra/terraform fmt -check -recursive
 terraform -chdir=infra/terraform init -backend=false -input=false >/tmp/rehearsal-terraform-init.log 2>&1
 terraform -chdir=infra/terraform validate
 python3 scripts/validate-iac.py
+log '== admin policy regression gate (omission must fail) =='
+# Plan requires an initialized backend, which the credential-free rehearsal
+# deliberately lacks — so the gate runs in a throwaway copy with the partial
+# s3 backend stripped (same shape as the committed configuration otherwise).
+gate_dir="$(mktemp -d /tmp/admin-gate.XXXXXX)"
+cp infra/terraform/main.tf infra/terraform/variables.tf infra/terraform/versions.tf infra/terraform/outputs.tf "$gate_dir/"
+python3 - "$gate_dir/versions.tf" <<'PY'
+import re, sys
+p = sys.argv[1]
+t = open(p).read()
+t = re.sub(r'\n  backend "s3" \{\}', '', t)
+open(p, 'w').write(t)
+PY
+terraform -chdir="$gate_dir" init -backend=false -input=false >/tmp/rehearsal-gate-init.log 2>&1
+# NOTE: the export builtin (unlike a command env-prefix) accepts a quoted
+# NAME=value argument, which the JSON list value requires.
+export TF_VAR_cloudflare_api_token=rehearsal
+export TF_VAR_cloudflare_account_id=5eb3ea3a84b37564cfd8739f32ffb559
+export TF_VAR_domain=pkubelka.cz
+export TF_VAR_ovh_ipv4=192.0.2.1
+export TF_VAR_cloudflare_tunnel_secret=cmVoZWFyc2Fs
+export TF_VAR_openbao_token=rehearsal
+export 'TF_VAR_admin_emails=["intruder@example.invalid"]'
+# NOTE: plan exits nonzero on the expected validation failure; capture output
+# first because pipefail would otherwise mask grep's match.
+plan_out="$(terraform -chdir="$gate_dir" plan -input=false 2>&1 || true)"
+if printf '%s' "$plan_out" | grep -q 'must retain ksonny4@gmail.com'; then
+  log 'omitting ksonny4@gmail.com fails closed with the retention error.'
+else
+  echo 'admin_emails regression gate broken: omission did not fail.' >&2
+  exit 1
+fi
+unset TF_VAR_cloudflare_api_token TF_VAR_cloudflare_account_id TF_VAR_domain TF_VAR_ovh_ipv4 TF_VAR_cloudflare_tunnel_secret TF_VAR_openbao_token TF_VAR_admin_emails
+rm -rf "$gate_dir"
 phase_ok terraform_gates | tee -a "$artifact_dir/phases.log"
 
 log '== guest_ready (dry-run twice) =='
@@ -77,7 +118,7 @@ phase_ok edge_ready | tee -a "$artifact_dir/phases.log"
 
 log '== runner_channel (dry-run twice) =='
 for pass in 1 2; do
-  PROVISION_HOST=runner-rehearsal.invalid PROVISION_DOMAIN=coolify.invalid PROVISION_SSH_KEY=/dev/null \
+  PROVISION_HOST=runner-rehearsal.invalid PROVISION_ZONE=rehearsal.invalid PROVISION_SSH_KEY=/dev/null \
     bash scripts/run-remote-provision.sh --dry-run >/tmp/rehearsal-runner-"$pass".log 2>&1 \
     || { echo 'runner dry-run unexpectedly requires live access.' >&2; exit 1; }
 done
@@ -85,6 +126,11 @@ cmp -s /tmp/rehearsal-runner-1.log /tmp/rehearsal-runner-2.log || { echo 'runner
 for stage in bootstrap coolify edge backup; do
   grep -q "$stage" /tmp/rehearsal-runner-1.log || { echo "runner dry-run omits stage: ${stage}." >&2; exit 1; }
 done
+# End-to-end domain-contract test: zone rehearsal.invalid must derive the
+# dashboard hostname coolify.rehearsal.invalid everywhere (FQDN, ingress,
+# verification) — never the bare zone, never a doubled prefix.
+grep -q 'dashboard hostname: coolify.rehearsal.invalid' /tmp/rehearsal-runner-1.log || { echo 'runner domain contract broken.' >&2; exit 1; }
+if grep -q 'coolify.coolify\.' /tmp/rehearsal-runner-1.log; then echo 'doubled dashboard prefix.' >&2; exit 1; fi
 log 'runner dry-run idempotent across two passes; all four stages present; no network touched.'
 phase_ok runner_channel | tee -a "$artifact_dir/phases.log"
 

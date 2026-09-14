@@ -51,10 +51,14 @@ if [ -z "$target_host" ]; then
   echo 'BOOTSTRAP_TARGET_HOST must name the intended fresh host.' >&2
   exit 2
 fi
-if [ "$target_host" = 'vps-1525c977.vps.ovh.net' ] || [ "$target_host" = '57.129.155.203' ]; then
-  echo 'Refusing to bootstrap the preserved production VPS with the fresh-host script.' >&2
-  exit 2
-fi
+# Immutable service-identity guard (resolves the target; a literal comparison
+# is bypassed by any alternate route to the same machine) plus a self-check
+# so a lying TARGET variable cannot provision the preserved box itself.
+GUARD_SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=scripts/lib/preserved-guard.sh
+source "${GUARD_SCRIPT_DIR}/lib/preserved-guard.sh"
+refuse_preserved_host "$target_host" || exit 2
+refuse_preserved_self || exit 2
 
 supported_releases="${BOOTSTRAP_SUPPORTED_RELEASES:-24.04 26.04}"
 swap_size="${BOOTSTRAP_SWAP_SIZE:-2G}"

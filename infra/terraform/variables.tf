@@ -145,4 +145,12 @@ variable "admin_emails" {
     condition     = length(var.admin_emails) > 0
     error_message = "admin_emails must contain at least one authorized human identity."
   }
+
+  # The platform owner retains human dashboard access by policy: no valid
+  # configuration may omit this identity (an apply without it would lock out
+  # the required human Access policy). The rehearsal proves omission fails.
+  validation {
+    condition     = contains(var.admin_emails, "ksonny4@gmail.com")
+    error_message = "admin_emails must retain ksonny4@gmail.com for human dashboard access."
+  }
 }
