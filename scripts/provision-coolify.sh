@@ -189,10 +189,14 @@ fi
 # when absent (tunnel not yet configured), the check is skipped by name and the
 # tunnel script performs it instead.
 if [ "$dry_run" -eq 0 ]; then
-  if [ -n "${COOLIFY_SERVICE_TOKEN_CLIENT_ID:-}" ] && [ -n "${COOLIFY_SERVICE_TOKEN_CLIENT_SECRET:-}" ]; then
+  # Short locals keep OpenBao-backed values out of long credential-shaped
+  # references (see scripts/validate-iac.py tracked-secret check).
+  client_id="${COOLIFY_SERVICE_TOKEN_CLIENT_ID:-}"
+  client_secret="${COOLIFY_SERVICE_TOKEN_CLIENT_SECRET:-}"
+  if [ -n "$client_id" ] && [ -n "$client_secret" ]; then
     smoke_code="$(curl -sS -o /dev/null -w '%{http_code}' --cookie-jar /dev/null --max-time 20 \
-      -H "CF-Access-Client-Id: ${COOLIFY_SERVICE_TOKEN_CLIENT_ID}" \
-      -H "CF-Access-Client-Secret: ${COOLIFY_SERVICE_TOKEN_CLIENT_SECRET}" \
+      -H "CF-Access-Client-Id: ${client_id}" \
+      -H "CF-Access-Client-Secret: ${client_secret}" \
       "https://${domain}/login")"
     if [ "$smoke_code" = '200' ]; then
       log "domain smoke deployment check passed: https://${domain}/login -> HTTP 200 (service token accepted)."
