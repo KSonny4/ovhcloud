@@ -149,6 +149,16 @@ grep -q 'fetch-r2-env.sh' scripts/schedule-coolify-backup.sh || { echo 'schedule
 if grep -rnE '(tee|>)[^|]*r2\.env' scripts/*.sh | grep -v test-clean-target-install >/dev/null; then echo 'a script still writes r2.env.' >&2; exit 1; fi
 if grep -q 'EnvironmentFile=.*r2' scripts/schedule-coolify-backup.sh; then echo 'unit still consumes a credential EnvironmentFile.' >&2; exit 1; fi
 grep -q 'wire-fresh-edge.sh' scripts/run-remote-provision.sh || { echo 'runner omits fresh-edge wiring.' >&2; exit 1; }
+# First-access determinism gates: key-only minting, destructive reinstall
+# with freshness confirmation, and fail-closed SSH probe with guidance.
+for gate in --generate-key-only --reinstall-with-key --i-confirm-host-is-fresh; do
+  grep -q -- "$gate" scripts/run-remote-provision.sh || { echo "runner omits first-access mode: ${gate}." >&2; exit 1; }
+done
+grep -q 'Deterministic options' scripts/run-remote-provision.sh || { echo 'runner omits fail-closed first-access guidance.' >&2; exit 1; }
+# Memory-only enforcement gates: no backup/rollback path may accept or read
+# a credential file, ever.
+if grep -rn -- '--env-file' scripts/backup-app-workloads.sh scripts/rollback-coolify-backup.sh scripts/schedule-coolify-backup.sh scripts/fetch-r2-env.sh >/dev/null; then echo 'a backup/rollback script still accepts --env-file.' >&2; exit 1; fi
+if grep -rn "source \"\\\$env_file\"" scripts/backup-app-workloads.sh scripts/rollback-coolify-backup.sh >/dev/null; then echo 'a backup/rollback script still sources a credential file.' >&2; exit 1; fi
 log 'runner dry-run idempotent across two passes; all four stages present; backup companion staged + scheduled; fileless R2 delivery enforced; fresh edge wired; no network touched.'
 phase_ok runner_channel | tee -a "$artifact_dir/phases.log"
 

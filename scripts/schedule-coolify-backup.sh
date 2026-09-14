@@ -13,7 +13,7 @@
 #   fresh install); this host-level job protects the instance DB itself.
 #
 # Usage (on the host, as root):
-#   bash scripts/schedule-coolify-backup.sh [--env-file PATH] [--dry-run] [--install-only]
+#   bash scripts/schedule-coolify-backup.sh [--dry-run] [--install-only]
 #
 # Testability: BACKUP_DIR and SYSTEMD_DIR override the install prefixes so a
 # clean-target test can run the NON-dry-run installer into an isolated prefix
@@ -28,7 +28,7 @@ while [ "$#" -gt 0 ]; do
   case "$1" in
     --dry-run) dry_run=1; shift ;;
     --install-only) install_only=1; shift ;;
-    -h|--help) echo 'usage: schedule-coolify-backup.sh [--env-file PATH] [--dry-run] [--install-only]'; exit 0 ;;
+    -h|--help) echo 'usage: schedule-coolify-backup.sh [--dry-run] [--install-only]'; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -47,9 +47,8 @@ if [ "$(id -u)" -ne 0 ] && [ "$dry_run" -eq 0 ]; then
   exit 2
 fi
 
-# No credential file is required anymore: the timer execs through
-# fetch-r2-env.sh (memory-only OpenBao pull). The --env-file flag remains
-# only for legacy hosts during migration.
+# No credential file is used, ever: the timer execs through fetch-r2-env.sh
+# (memory-only OpenBao pull).
 
 if ! command -v aws >/dev/null 2>&1; then
   log 'installing awscli for the S3-compatible R2 upload'
@@ -101,14 +100,9 @@ fi
 
 cat >"$backup_script" <<'BACKUP_EOF'
 #!/usr/bin/env bash
-# Nightly Coolify instance DB backup. Credentials arrive via environment from
-# fetch-r2-env.sh (memory-only OpenBao pull); a legacy root-only env file is
-# honored only as a fallback and must not exist on new installs.
+# Nightly Coolify instance DB backup. Credentials arrive ONLY via environment
+# from fetch-r2-env.sh (memory-only OpenBao pull). No credential file.
 set -euo pipefail
-if [ -z "${R2_ACCESS_KEY_ID:-}" ] && [ -n "${R2_ENV_FILE:-}" ] && [ -f "$R2_ENV_FILE" ]; then
-  # shellcheck source=/dev/null
-  source "$R2_ENV_FILE"
-fi
 : "${R2_ENDPOINT:?R2 credentials required via environment (fetch-r2-env.sh)}"; : "${R2_BUCKET:?}"
 export AWS_ACCESS_KEY_ID="${R2_ACCESS_KEY_ID:?}" AWS_SECRET_ACCESS_KEY="${R2_SECRET_ACCESS_KEY:?}"
 export AWS_DEFAULT_REGION="${AWS_DEFAULT_REGION:-auto}"

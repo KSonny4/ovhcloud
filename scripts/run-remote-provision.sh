@@ -30,14 +30,20 @@
 set -euo pipefail
 
 dry_run=0
+generate_key_only=0
+reinstall_with_key=0
+confirm_fresh=0
 stages='bootstrap,coolify,edge,backup'
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --dry-run) dry_run=1; shift ;;
     --stages) stages="$2"; shift 2 ;;
     --stages=*) stages="${1#--stages=}"; shift ;;
+    --generate-key-only) generate_key_only=1; shift ;;
+    --reinstall-with-key) reinstall_with_key=1; shift ;;
+    --i-confirm-host-is-fresh) confirm_fresh=1; shift ;;
     -h|--help)
-      echo 'usage: run-remote-provision.sh [--dry-run] [--stages bootstrap,coolify,edge,backup]'
+      echo 'usage: run-remote-provision.sh [--dry-run] [--stages ...] [--generate-key-only] [--reinstall-with-key --i-confirm-host-is-fresh]'
       exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
@@ -161,7 +167,8 @@ def call(method, path, body=None):
     except urllib.error.HTTPError as e:
         sys.exit(f'OVH API {method} {path} failed: HTTP {e.code}: {e.read().decode()[:150]}')
 existing = call('GET', '/me/sshKey')
-names = [k.get('keyName') for k in existing] if isinstance(existing, list) else []
+# The API returns a list of key-name strings (or, defensively, objects).
+names = [(k.get('keyName') if isinstance(k, dict) else k) for k in existing] if isinstance(existing, list) else []
 want = os.environ['OVH_KEY_NAME']
 if want in names:
     print(f'OVH account key {want!r} already registered.')
@@ -223,6 +230,7 @@ want_stage() {
 }
 
 if [ "$dry_run" -eq 1 ]; then
+  log 'DRY-RUN: modes: --generate-key-only (mint+escrow+print pubkey, exit); --reinstall-with-key --i-confirm-host-is-fresh (OVH reinstall with key injected, DESTRUCTIVE); default probes SSH first and fails closed with deterministic guidance on miss'
   log 'DRY-RUN: verify SSH connectivity (ssh -BatchMode user@host true)'
   log 'DRY-RUN: prepare credentials (generate + escrow SSH keypair when absent, register OVH account key, retrieve OpenBao fields by name); generate + escrow bootstrap password when ROOT_USER_PASSWORD absent (fail closed)'
   log 'DRY-RUN: run ensure-tunnel.sh (existing escrow no-op, else create via API + escrow) before credential retrieval'
@@ -240,6 +248,40 @@ command -v bao >/dev/null 2>&1 || { echo 'bao CLI is required on the operator ma
 export BAO_ADDR="$bao_addr"
 prepare_operator_credentials
 ssh_opts=(-i "$ssh_key" -o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new)
+
+# Mode 1: key minting only. Prints the PUBLIC key for install-time injection
+# (order flow or manual install), then exits before any SSH attempt.
+if [ "$generate_key_only" -eq 1 ]; then
+  log 'key-only mode: public key below is escrowed; inject it at VPS order/install time, then re-run without this flag.'
+  cat "$ssh_pub_file"
+  exit 0
+fi
+
+# Mode 2: deterministic reinstall. An already-ordered (but empty) host gets a
+# real reinstall with the escrowed/generated public key injected, so the
+# first SSH afterwards is guaranteed. DESTRUCTIVE by design: requires the
+# explicit freshness confirmation and refuses the preserved host (guarded at
+# the top of this script as well as inside every stage script).
+if [ "$reinstall_with_key" -eq 1 ]; then
+  [ "$confirm_fresh" -eq 1 ] || { echo '--reinstall-with-key requires --i-confirm-host-is-fresh (reinstall DESTROYS host data).' >&2; exit 2; }
+  ovh_service="${PROVISION_OVH_SERVICE:-}"
+  [ -n "$ovh_service" ] || { echo 'PROVISION_OVH_SERVICE (OVH VPS service name) is required for reinstall mode.' >&2; exit 2; }
+  # Service-level preserved guard: a hostname can alias, a service name cannot.
+  if [ "$(printf '%s' "$ovh_service" | tr '[:upper:]' '[:lower:]')" = "$PRESERVED_SERVICE_NAME" ]; then
+    echo "Refusing: reinstall target is the preserved OVH service ${PRESERVED_SERVICE_NAME}." >&2
+    exit 2
+  fi
+  command -v ovhcloud >/dev/null 2>&1 || { echo 'ovhcloud CLI is required for reinstall mode.' >&2; exit 2; }
+  image_id="${PROVISION_IMAGE_ID:-}"
+  if [ -z "$image_id" ]; then
+    log 'resolving newest Ubuntu LTS image for the service...'
+    image_id="$(ovhcloud vps image list "$ovh_service" -o json 2>/dev/null | python3 -c 'import json,sys; imgs=[i for i in json.load(sys.stdin) if "Ubuntu" in str(i)]; print(sorted(imgs, key=lambda i: str(i.get("name",""), reverse=True))[0]["id"] if imgs else "")' || true)"
+    [ -n "$image_id" ] || { echo 'no Ubuntu image found for the service; set PROVISION_IMAGE_ID explicitly.' >&2; exit 2; }
+  fi
+  log "reinstalling ${ovh_service} with image ${image_id} + injected SSH key (DESTRUCTIVE, confirmed fresh)..."
+  run ovhcloud vps reinstall "$ovh_service" --image-id "$image_id" --public-ssh-key "$(cat "$ssh_pub_file")" --do-not-send-password --wait
+  log 'reinstall complete; connector key injected at install time.'
+fi
 
 # Admin bootstrap credentials are OpenBao-managed end to end: operator values
 # take precedence, otherwise the runner generates a password and escrows the
@@ -260,9 +302,24 @@ if [ -z "${ROOT_USER_PASSWORD:-}" ]; then
 fi
 bao_get() { bao kv get "-field=$2" "secret/projects/ovhcloud/$1"; }
 
-log 'checking SSH connectivity...'
-run ssh "${ssh_opts[@]}" "${ssh_user}@${host}" true
-log 'SSH connectivity ok.'
+log 'checking SSH connectivity (first-access probe)...'
+if ssh "${ssh_opts[@]}" "${ssh_user}@${host}" true 2>/dev/null; then
+  log 'SSH connectivity ok.'
+else
+  # Deterministic first access: an OVH account key registered AFTER a host
+  # was installed is NOT retroactively injected, so a failed probe with a
+  # fresh key is expected — never proceed hoping. Two deterministic paths:
+  if [ "$key_generated" -eq 1 ]; then
+    echo "SSH probe failed for ${ssh_user}@${host} with the freshly generated key." >&2
+    echo 'This is expected when the host was installed before the key existed.' >&2
+    echo 'Deterministic options (pick one, then re-run):' >&2
+    echo '  1. Order/install the VPS with the escrowed public key (already registered at OVH).' >&2
+    echo '  2. Re-run with --reinstall-with-key --i-confirm-host-is-fresh (+ PROVISION_OVH_SERVICE) to reinstall this EMPTY host with the key injected.' >&2
+    exit 2
+  fi
+  echo "SSH probe failed for ${ssh_user}@${host} with the supplied key (fail closed)." >&2
+  exit 2
+fi
 
 # Tunnel lifecycle first (operator side, OpenBao-complete): an existing
 # escrow is a no-op; a missing one is created via API + escrowed BEFORE any

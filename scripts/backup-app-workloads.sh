@@ -14,21 +14,19 @@
 # - coolify-redis volume: ephemeral cache, safe to lose by design.
 # Override with APP_VOLUME_EXCLUDE="vol1 vol2".
 #
-# Contract: runs as root ON the target host; R2 credentials from the root-only
-# env file (0600) provisioned from OpenBao; never prints secrets; fail closed.
+# Contract: runs as root ON the target host; R2 credentials ONLY from
+# environment via fetch-r2-env.sh (memory-only OpenBao pull); never prints
+# secrets; fail closed.
 #
 # Usage (on the host, as root):
-#   bash scripts/backup-app-workloads.sh [--env-file PATH] [--dry-run]
+#   bash scripts/backup-app-workloads.sh [--dry-run]
 set -euo pipefail
 
 dry_run=0
-env_file='/root/coolify-backup/r2.env'
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --dry-run) dry_run=1; shift ;;
-    --env-file) env_file="$2"; shift 2 ;;
-    --env-file=*) env_file="${1#--env-file=}"; shift ;;
-    -h|--help) echo 'usage: backup-app-workloads.sh [--env-file PATH] [--dry-run]'; exit 0 ;;
+    -h|--help) echo 'usage: backup-app-workloads.sh [--dry-run]'; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -50,14 +48,10 @@ if [ "$dry_run" -eq 1 ]; then
   exit 0
 fi
 
-# Credentials arrive via environment from fetch-r2-env.sh (memory-only); a
-# legacy root-only env file is honored only as a fallback.
-if [ -z "${R2_ACCESS_KEY_ID:-}" ] && [ -f "$env_file" ]; then
-  # shellcheck source=/dev/null
-  source "$env_file"
-fi
+# Credentials arrive ONLY via environment from fetch-r2-env.sh (memory-only
+# OpenBao pull). No credential file is read, ever.
 for v in R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY R2_ENDPOINT R2_BUCKET; do
-  if [ -z "${!v:-}" ]; then echo "missing ${v}: run through fetch-r2-env.sh (memory-only OpenBao pull)." >&2; exit 2; fi
+  if [ -z "${!v:-}" ]; then echo "missing ${v}: run through fetch-r2-env.sh -- <this-script>." >&2; exit 2; fi
 done
 export AWS_ACCESS_KEY_ID="$R2_ACCESS_KEY_ID" AWS_SECRET_ACCESS_KEY="$R2_SECRET_ACCESS_KEY"
 export AWS_DEFAULT_REGION="${AWS_DEFAULT_REGION:-auto}"

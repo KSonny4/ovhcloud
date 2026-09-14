@@ -13,17 +13,14 @@
 #   restore, or failed verification exits nonzero with the probe dropped.
 #
 # Usage (on the host, as root):
-#   bash scripts/rollback-coolify-backup.sh [--env-file PATH] [--dry-run]
+#   sudo bash fetch-r2-env.sh -- bash scripts/rollback-coolify-backup.sh [--dry-run]
 set -euo pipefail
 
 dry_run=0
-env_file='/root/coolify-backup/r2.env'
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --dry-run) dry_run=1; shift ;;
-    --env-file) env_file="$2"; shift 2 ;;
-    --env-file=*) env_file="${1#--env-file=}"; shift ;;
-    -h|--help) echo 'usage: rollback-coolify-backup.sh [--env-file PATH] [--dry-run]'; exit 0 ;;
+    -h|--help) echo 'usage: rollback-coolify-backup.sh [--dry-run]'; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -42,15 +39,10 @@ if [ "$dry_run" -eq 1 ]; then
   exit 0
 fi
 
-# Credentials arrive via environment from fetch-r2-env.sh (memory-only); a
-# legacy root-only env file is honored only as a fallback. Run by hand as:
-#   sudo bash fetch-r2-env.sh -- bash rollback-coolify-backup.sh
-if [ -z "${R2_ACCESS_KEY_ID:-}" ] && [ -f "$env_file" ]; then
-  # shellcheck source=/dev/null
-  source "$env_file"
-fi
+# Credentials arrive ONLY via environment from fetch-r2-env.sh (memory-only
+# OpenBao pull). No credential file is read, ever.
 for v in R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY R2_ENDPOINT R2_BUCKET; do
-  if [ -z "${!v:-}" ]; then echo "missing ${v}: run through fetch-r2-env.sh (memory-only OpenBao pull)." >&2; exit 2; fi
+  if [ -z "${!v:-}" ]; then echo "missing ${v}: run through fetch-r2-env.sh -- <this-script>." >&2; exit 2; fi
 done
 export AWS_ACCESS_KEY_ID="$R2_ACCESS_KEY_ID" AWS_SECRET_ACCESS_KEY="$R2_SECRET_ACCESS_KEY"
 export AWS_DEFAULT_REGION="${AWS_DEFAULT_REGION:-auto}"

@@ -474,3 +474,25 @@
   a credential EnvironmentFile, if the fetch wrapper is missing, or if the
   runner omits wire-fresh-edge.sh. Clean-target test asserts fetch install +
   no-EnvironmentFile + wrapper ExecStarts (now 10 checks).
+
+## 2026-09-14 — first-access determinism + fileless enforcement (audit round)
+
+- R2 fileless enforcement completed: `--env-file` flags and all file-sourcing
+  fallbacks REMOVED from `backup-app-workloads.sh`,
+  `rollback-coolify-backup.sh`, and the generated `backup-to-r2.sh` (the
+  reviewer-noted `R2_ENV_FILE` residual is gone). Every backup/rollback
+  execution now fails closed without environment credentials, which only
+  `fetch-r2-env.sh` provides. Rehearsal gates forbid `--env-file` and
+  file-sourcing in all four scripts.
+- Deterministic first access (the no-preexisting-key gap): OVH account keys
+  apply at install time only, so the runner no longer hopes. Three modes:
+  (1) `--generate-key-only` mints + escrows + prints the public key for
+  order-time injection, then exits; (2) `--reinstall-with-key
+  --i-confirm-host-is-fresh` (+ `PROVISION_OVH_SERVICE`, optional
+  `PROVISION_IMAGE_ID` with Ubuntu auto-resolve) reinstalls an EMPTY host
+  with the key injected via `ovhcloud vps reinstall --public-ssh-key --wait`;
+  (3) default probes SSH first and fails closed with both options on miss.
+  Reinstall refuses the preserved service by name (proven live: exit 2, no
+  API call) on top of the existing hostname guard.
+- Drive-by fix: `/me/sshKey` returns name strings, not objects — the
+  registration dedup crashed on non-empty accounts; now handles both shapes.
