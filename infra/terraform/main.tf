@@ -108,6 +108,18 @@ resource "cloudflare_dns_record" "ssh" {
   comment = "Cloudflare Tunnel hostname for Access-protected SSH."
 }
 
+resource "cloudflare_dns_record" "fabric" {
+  # Operator-added application hostname (adopted 2026-09-14 alongside the
+  # tunnel route above; live record had no comment).
+  zone_id = data.cloudflare_zone.canonical.id
+  name    = "fabric.${var.domain}"
+  type    = "CNAME"
+  content = "${cloudflare_zero_trust_tunnel_cloudflared.admin.id}.cfargotunnel.com"
+  ttl     = 1
+  proxied = true
+  comment = "fabric rollout 20260914"
+}
+
 resource "cloudflare_zero_trust_access_identity_provider" "one_time_pin" {
   account_id = var.cloudflare_account_id
   name       = "One-time PIN"
@@ -154,6 +166,12 @@ resource "cloudflare_zero_trust_tunnel_cloudflared_config" "admin" {
       {
         hostname = "ssh.${var.domain}"
         service  = "ssh://localhost:22"
+      },
+      {
+        # Operator-added application route (adopted 2026-09-14 after live
+        # drift; serves the user app through the origin proxy on :80).
+        hostname = "fabric.${var.domain}"
+        service  = "http://localhost:80"
       },
       {
         service = "http_status:404"

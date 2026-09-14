@@ -1,0 +1,23 @@
+{
+  "generated_utc": "2026-09-14T14:14:44Z",
+  "backend": "s3 (R2, encrypted at rest, locked)",
+  "plan": "empty (detailed-exitcode 0, default refresh)",
+  "preserved_vps_managed": true,
+  "prevent_destroy": true,
+  "resource_count": 13,
+  "state_addresses": [
+    "cloudflare_dns_record.coolify",
+    "cloudflare_dns_record.fabric",
+    "cloudflare_dns_record.ssh",
+    "cloudflare_r2_bucket.backups",
+    "cloudflare_zero_trust_access_application.coolify",
+    "cloudflare_zero_trust_access_application.ssh",
+    "cloudflare_zero_trust_access_identity_provider.one_time_pin",
+    "cloudflare_zero_trust_access_service_token.machine",
+    "cloudflare_zero_trust_tunnel_cloudflared.admin",
+    "cloudflare_zero_trust_tunnel_cloudflared_config.admin",
+    "data.cloudflare_zone.canonical",
+    "data.ovh_vps.existing[0]",
+    "ovh_vps.preserved[0]"
+  ]
+}

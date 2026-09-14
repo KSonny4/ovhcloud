@@ -792,3 +792,16 @@
   virtio port present. Notifications explicitly out of automation scope
   (needs an operator credential; exact dashboard path documented).
   Deployment-plan restore gate marked DONE with evidence links.
+
+## 2026-09-14 — operator tunnel drift adopted (per operator decision)
+
+- Live tunnel ingress gained `fabric.pkubelka.cz -> http://localhost:80` at
+  13:56 UTC (operator app route) outside Terraform; plan showed 1 change.
+  Operator chose adoption over revert.
+- Adopted exactly: ingress rule + `cloudflare_dns_record.fabric` (CNAME to
+  tunnel, proxied, live comment `fabric rollout 20260914` preserved) in
+  `infra/terraform/main.tf`; DNS record imported
+  (`ZONE/bee366f0...`, state write only, no infra mutation).
+- `verify-live-reconciliation.sh` green again: 13 resources in state
+  (fabric address present), default-refresh plan exit 0; evidence AND the
+  prior `collect-live-evidence.sh` output retained in docs/.
