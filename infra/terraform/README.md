@@ -16,7 +16,7 @@ The application deployment remains in Coolify. Terraform does not create applica
 
 1. Install Terraform >= 1.6 and the pinned providers.
 2. Provider authorization comes only from the environment via `scripts/tf-env-from-openbao.sh` (OpenBao + read-only OVH discovery, eval its output). No `terraform.tfvars` file is ever written — an earlier file-writing loader proved any on-disk copy leaks through tooling.
-3. Obtain the approved Cloudflare domain/account ID and least-privilege API token from the external secret manager.
+3. Provider authorization is OpenBao-only: the loader in step 2 pulls the Cloudflare account/zone IDs (constants defaulted, overridable) and the least-privilege API token from the existing OpenBao instance — no external secret manager, profile, or credential file participates.
 4. `terraform.tfvars.example` documents the variable set for reference only; live values always arrive as `TF_VAR_*` env from the loader script above.
 5. Run `terraform fmt -check main.tf versions.tf variables.tf outputs.tf`, `terraform init -backend=false`, and `terraform validate` (scope fmt to tracked files; `-recursive`/`-diff` would print secrets from ignored credential files).
 6. For an authorized production plan, copy `backend.hcl.example` to ignored `backend.hcl` and run `terraform init -backend-config=backend.hcl`; copy confirmed `imports.tf.example` blocks to ignored `imports.tf` before the first import plan, then delete `imports.tf` after the imports are recorded. Local state is allowed only for a disposable rehearsal directory.

@@ -50,6 +50,16 @@ TF_VAR_cloudflare_zone_id="$CLOUDFLARE_ZONE_ID"
 TF_VAR_service_token_id="$(bao kv get -field=token_id secret/projects/ovhcloud/COOLIFY_ACCESS_SERVICE_TOKEN)"
 export TF_VAR_cloudflare_api_token TF_VAR_cloudflare_account_id TF_VAR_cloudflare_zone_id TF_VAR_service_token_id
 export TF_VAR_admin_emails='["ksonny4@gmail.com"]'
+# S3-backend (R2 state) auth is memory-only env, never backend.hcl: the
+# generated backend file carries names/URLs only by construction.
+AWS_ACCESS_KEY_ID="$(bao kv get -field=access_key_id secret/projects/ovhcloud/COOLIFY_R2 2>/dev/null || true)"
+AWS_SECRET_ACCESS_KEY="$(bao kv get -field=secret_access_key secret/projects/ovhcloud/COOLIFY_R2 2>/dev/null || true)"
+export AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
+AWS_DEFAULT_REGION="${AWS_DEFAULT_REGION:-auto}"
+export AWS_DEFAULT_REGION
+for v in AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY; do
+  [ -n "${!v}" ] || { echo "OpenBao COOLIFY_R2 escrow missing for ${v} (fail closed)." >&2; exit 2; }
+done
 for v in TF_VAR_cloudflare_api_token TF_VAR_service_token_id; do
   [ -n "${!v}" ] || { echo "OpenBao escrow missing for ${v} (fail closed)."; exit 2; }
 done

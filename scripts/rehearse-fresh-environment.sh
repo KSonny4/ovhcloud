@@ -303,6 +303,43 @@ for f in scripts/run-remote-provision.sh scripts/bootstrap-vps.sh; do grep -q 'l
 grep -q '^Defaults env_keep' scripts/lib/sudoers-automation-env || { echo 'channel content is not an env_keep drop-in.' >&2; exit 1; }
 for v in BOOTSTRAP_TARGET_HOST BOOTSTRAP_SSH_PUBLIC_KEY APP_DB_PASSWORD CLOUDFLARED_TUNNEL_TOKEN; do grep -q "$v" scripts/lib/sudoers-automation-env || { echo "channel drops ${v}." >&2; exit 1; }; done
 log 'step-0 channel proven: ordered before stages, single-sourced, complete.'
+# First-access determinism: --generate-key-only must succeed with NO host
+# or zone (mint first, order the VPS, then re-run with a host). Executed
+# as --dry-run (zero mutations: dry-run exits before any mint/escrow).
+if ! env -u PROVISION_HOST -u PROVISION_ZONE bash scripts/run-remote-provision.sh --generate-key-only --dry-run >/dev/null 2>&1; then echo 'key-only mode still requires a host/zone.' >&2; exit 1; fi
+log 'key-only bypass proven: no host/zone required.'
+# Fresh-backend generation (stubbed bao, temp dir, no network): names/URLs
+# only (no secret strings in the file), idempotent rerun, preserved-key
+# and unknown-key refusals, missing-escrow fail-closed.
+mkdir -p /tmp/rehearsal-bkbin /tmp/rehearsal-fresh
+cp infra/terraform-fresh/backend.hcl.example /tmp/rehearsal-fresh/
+cat > /tmp/rehearsal-bkbin/bao <<'STUBEOF'
+#!/usr/bin/env bash
+if [ "$3" = '-field=bucket' ]; then printf 'rehearsal-bucket'; elif [ "$3" = '-field=endpoint' ]; then printf 'https://rehearsal.r2.example'; else printf 'dummy'; fi
+STUBEOF
+chmod +x /tmp/rehearsal-bkbin/bao
+TERRAFORM_FRESH_DIR=/tmp/rehearsal-fresh PATH="/tmp/rehearsal-bkbin:$PATH" bash scripts/ensure-fresh-backend.sh >/dev/null 2>&1 || { echo 'backend generation failed.' >&2; exit 1; }
+grep -qF 'ovhcloud-coolify-fresh/terraform.tfstate' /tmp/rehearsal-fresh/backend.hcl || { echo 'generated backend lost the fresh key.' >&2; exit 1; }
+if grep -qiE 'access_key|secret_key|AKIA|password|token' /tmp/rehearsal-fresh/backend.hcl; then echo 'generated backend contains secret-like strings.' >&2; exit 1; fi
+TERRAFORM_FRESH_DIR=/tmp/rehearsal-fresh PATH="/tmp/rehearsal-bkbin:$PATH" bash scripts/ensure-fresh-backend.sh >/dev/null 2>&1 || { echo 'backend rerun not idempotent.' >&2; exit 1; }
+mkdir -p /tmp/rehearsal-freshbad && printf 'key = "terraform/ovhcloud-coolify/terraform.tfstate"\n' > /tmp/rehearsal-freshbad/backend.hcl
+if TERRAFORM_FRESH_DIR=/tmp/rehearsal-freshbad PATH="/tmp/rehearsal-bkbin:$PATH" bash scripts/ensure-fresh-backend.sh >/dev/null 2>&1; then echo 'backend accepted the preserved key.' >&2; exit 1; fi
+mkdir -p /tmp/rehearsal-freshunk && printf 'key = "something/else.tfstate"\n' > /tmp/rehearsal-freshunk/backend.hcl
+if TERRAFORM_FRESH_DIR=/tmp/rehearsal-freshunk PATH="/tmp/rehearsal-bkbin:$PATH" bash scripts/ensure-fresh-backend.sh >/dev/null 2>&1; then echo 'backend clobbered an unknown key.' >&2; exit 1; fi
+rm -rf /tmp/rehearsal-bkbin /tmp/rehearsal-fresh /tmp/rehearsal-freshbad /tmp/rehearsal-freshunk
+log 'fresh backend proven: generated secret-free, idempotent, preserved/unknown keys refused.'
+# Runner ordering: backend generation must precede the first Cloudflare
+# mutation (wire --skip-verify) so a clean checkout can never leave
+# partially managed edge resources.
+python3 - <<'PYEOF' || exit 1
+src = open('scripts/run-remote-provision.sh').read().splitlines()
+def idx(pat):
+    hits = [i for i, l in enumerate(src) if pat in l]
+    assert hits, pat
+    return hits[0]
+assert idx('scripts/ensure-fresh-backend.sh"') < idx('wire-fresh-edge.sh" --skip-verify')
+print('backend-before-wire order proven.')
+PYEOF
 # Executed Cloudflare read-failure proof (stubbed bao + curl, no network):
 # transport failure, success=false, and garbage bodies must each exit
 # nonzero with NO create/update call attempted.
@@ -540,13 +577,19 @@ fi
 phase_ok context_graph | tee -a "$artifact_dir/phases.log"
 
 git_head="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
+# Content attestation: the tree hashes of the code dirs let anyone verify
+# the report covers a given HEAD regardless of follow-up docs-only commits
+# (git diff <git_head>..HEAD -- scripts/ infra/ must be empty, and
+# HEAD:scripts / HEAD:infra must equal these hashes).
+code_tree_scripts="$(git rev-parse "HEAD:scripts" 2>/dev/null || echo unknown)"
+code_tree_infra="$(git rev-parse "HEAD:infra" 2>/dev/null || echo unknown)"
 started_utc="$(head -n1 "$artifact_dir/phases.log" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("utc",""))')"
 finished_utc="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-python3 - "$artifact_dir/phases.log" "$artifact_dir/evidence.lines" "$report" "$git_head" "$started_utc" "$finished_utc" <<'PY'
+python3 - "$artifact_dir/phases.log" "$artifact_dir/evidence.lines" "$report" "$git_head" "$started_utc" "$finished_utc" "$code_tree_scripts" "$code_tree_infra" <<'PY'
 import json
 import sys
 
-phases_path, evidence_path, report_path, git_head, started_utc, finished_utc = sys.argv[1:7]
+phases_path, evidence_path, report_path, git_head, started_utc, finished_utc, code_tree_scripts, code_tree_infra = sys.argv[1:9]
 evidence = {}
 try:
     with open(evidence_path) as handle:
@@ -568,7 +611,7 @@ with open(phases_path) as handle:
             phases.append(entry)
 with open(report_path, 'w') as handle:
     json.dump({'rehearsal': 'ovh-coolify-fresh-environment', 'dry_run': True,
-               'git_head': git_head, "started_utc": started_utc, "finished_utc": finished_utc, 'phases': phases}, handle, indent=2)
+               'git_head': git_head, 'code_tree_scripts': code_tree_scripts, 'code_tree_infra': code_tree_infra, "started_utc": started_utc, "finished_utc": finished_utc, 'phases': phases}, handle, indent=2)
 PY
 
 log "rehearsal_ready: report written to ${report}"

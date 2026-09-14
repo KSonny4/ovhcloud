@@ -1,0 +1,53 @@
+{
+  "collected_utc": "2026-09-14T15:27:11Z",
+  "stages": [
+    {
+      "stage": "preserved-safety",
+      "utc": "2026-09-14T15:26:06Z",
+      "ok": true,
+      "detail": "service-name refused; ipv4 refused"
+    },
+    {
+      "stage": "bootstrap",
+      "utc": "2026-09-14T15:26:06Z",
+      "ok": true,
+      "detail": "Docker version 29.8.0, build 88096ef; ufw Status: active;80/tcp                     DENY        Anywhere                  ;8080/tcp                   DENY        Anywhere                  ;80/tcp (v6)                DENY        Anywhere (v6)             ;8080/tcp (v6)              DENY        Anywhere (v6)             ;; hello-world runs"
+    },
+    {
+      "stage": "coolify",
+      "utc": "2026-09-14T15:26:10Z",
+      "ok": true,
+      "detail": "healthy_containers=9; origin_login=200"
+    },
+    {
+      "stage": "tunnel-access",
+      "utc": "2026-09-14T15:26:14Z",
+      "ok": true,
+      "detail": "dashboard_login=200; ssh_route_gated=302"
+    },
+    {
+      "stage": "r2-backup",
+      "utc": "2026-09-14T15:26:17Z",
+      "ok": true,
+      "detail": "instance_dump=coolify-db-20260914T145142Z.dump.gz; app_manifest=20260914T145149Z.json"
+    },
+    {
+      "stage": "restore",
+      "utc": "2026-09-14T15:26:20Z",
+      "ok": true,
+      "detail": "RESTORE_OK: scheduled R2 backup restores to usable state; probe database dropped."
+    },
+    {
+      "stage": "rollback",
+      "utc": "2026-09-14T15:26:28Z",
+      "ok": true,
+      "detail": "restore_ok_lines=16; stamp=20260914T145149Z"
+    },
+    {
+      "stage": "api-roundtrip",
+      "utc": "2026-09-14T15:27:09Z",
+      "ok": true,
+      "detail": "txt create+verify+delete ok (record removed)"
+    }
+  ]
+}

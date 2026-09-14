@@ -77,9 +77,9 @@ The authorized operator must provide a Cloudflare-managed zone and decide whethe
 | Cloudflare API token/account ID | platform operator | external secret manager / environment | least-privilege token; revoke and replace after suspected exposure |
 | OVH application credentials | platform operator / `ovhcloud` profile | OVH CLI secure config or secret manager | revoke profile/API keys; never export into Git |
 | Cloudflare Tunnel secret | platform operator | secret manager and encrypted Terraform state | rotate tunnel and Access policy after exposure |
-| R2 access key/secret | backup owner | Coolify secret storage + external escrow | scoped to private backup bucket; test a restore after rotation |
+| R2 access key/secret | backup owner | host-timer memory-only pull from OpenBao (no credential file, no Coolify in-app destination) | scoped to private backup bucket; test a restore after rotation |
 | Coolify `APP_KEY` | Coolify owner | external escrow | restore test must decrypt a known backup |
-| OmniRoute `STORAGE_ENCRYPTION_KEY`, `API_KEY_SECRET`, `JWT_SECRET` | application owner | external escrow / Coolify secret storage | restore test must load known configuration |
+| OmniRoute `STORAGE_ENCRYPTION_KEY`, `API_KEY_SECRET`, `JWT_SECRET` | application owner | external escrow, re-injected post-restore per the manifest re-injection list | restore test must load known configuration |
 | Cloudflare machine service token | Terraform-generated, escrowed in OpenBao | `secret/projects/ovhcloud/COOLIFY_ACCESS_SERVICE_TOKEN` (`client_id`, `client_secret`) | noninteractive verification must pass without browser login |
 | Terraform state | platform owner | encrypted remote backend with locking (`backend.hcl`, ignored; `backend.hcl.example` committed) | never use an unencrypted local state for production apply; rehearsal uses disposable local state only |
 

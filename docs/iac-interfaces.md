@@ -108,7 +108,7 @@ Generated values are written to OpenBao under stable paths and are referenced by
 | Tunnel connector credential (per fresh target) | `secret/projects/ovhcloud/COOLIFY_TUNNEL_<NAME>` / `tunnel_id`, `tunnel_token` (preserved singleton `COOLIFY_TUNNEL_TOKEN` untouched by provisioning) | cloudflared service installation |
 | Cloudflare machine Access credential | `secret/projects/ovhcloud/COOLIFY_ACCESS_SERVICE_TOKEN` / `client_id`, `client_secret` | noninteractive verification and automation |
 | Coolify application key/admin bootstrap | `secret/projects/ovhcloud/COOLIFY_ADMIN` / `app_key`, `email`, `password` | Coolify bootstrap and recovery |
-| R2 backup credential | `secret/projects/ovhcloud/COOLIFY_R2` / `access_key_id`, `secret_access_key`, `bucket` | Coolify backup configuration and restore probe |
+| R2 backup credential | `secret/projects/ovhcloud/COOLIFY_R2` / `access_key_id`, `secret_access_key`, `bucket`, `endpoint` (four fields; every consumer fails closed on any missing field) | host-timer backup plane + restore probe (the Coolify in-app S3 destination was deleted; no credentials in Coolify) |
 
 Values must be sensitive in Terraform schemas and redacted from command output. If the selected provider cannot safely write a generated value to OpenBao, the apply must fail rather than silently leave it in an untracked local file.
 

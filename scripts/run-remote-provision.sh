@@ -96,8 +96,10 @@ cf_account="${CLOUDFLARE_ACCOUNT_ID:-5eb3ea3a84b37564cfd8739f32ffb559}"
 cf_zone="${CLOUDFLARE_ZONE_ID:-0fcca39cc6516b8e23971bd717c0e9ca}"
 coolify_version="${COOLIFY_VERSION:-4.3.19}"
 bao_addr="${BAO_ADDR:-https://secrets.pkubelka.cz}"
-if [ -z "$host" ] || [ -z "$zone" ] || [ -z "$dashboard_host" ]; then
-  echo 'PROVISION_HOST and PROVISION_ZONE must be set.' >&2
+# Key-only minting precedes host selection by design (mint first, order the
+# VPS with the printed key, then re-run with a host): it needs no target.
+if [ "$generate_key_only" -eq 0 ] && { [ -z "$host" ] || [ -z "$zone" ] || [ -z "$dashboard_host" ]; }; then
+  echo 'PROVISION_HOST and PROVISION_ZONE must be set (not required for --generate-key-only).' >&2
   exit 2
 fi
 # Operator-side identity guard: resolve the target against the preserved OVH
@@ -114,7 +116,9 @@ if [ "$dry_run" -eq 0 ]; then
   export BAO_ADDR="$bao_addr"
   load_ovh_credentials
 fi
-refuse_preserved_host "$host" || exit 2
+# No guard without a target: key-only minting names no host (nothing to
+# refuse); every host-bearing path still refuses the preserved identity.
+if [ -n "$host" ]; then refuse_preserved_host "$host" || exit 2; fi
 # SSH credentials are OpenBao-managed: a supplied key is used as-is, otherwise
 # the runner generates an ed25519 pair and escrows both halves (fail closed).
 # The public half is then registered at the OVH account via signed API call so
@@ -269,6 +273,7 @@ if [ "$dry_run" -eq 1 ]; then
   want_stage coolify && log "DRY-RUN: remote sudo COOLIFY_TARGET_HOST/COOLIFY_DOMAIN/COOLIFY_VERSION/ROOT_* bash provision-coolify.sh (FQDN + firewall + origin smoke) + verify origin login + fetch APP_KEY over SSH and escrow operator-side (fail closed)"
   if want_stage edge; then
     log 'DRY-RUN edge sequence (two-phase; readiness gates only after the connector runs):'
+    log 'DRY-RUN edge 0/5: ensure-fresh-backend (generate backend.hcl: names/URLs only, refuse preserved key, AWS_* via memory-only env)'
     log 'DRY-RUN edge 1/5: wire --skip-verify (API wiring: ingress + DNS + Access, handoff; NO readiness gate)'
     log 'DRY-RUN edge 2/5: emit (generate fresh IaC) + adopt --apply (imports + zero-change plan assert)'
     log 'DRY-RUN edge 3/5: remote sudo TUNNEL_TARGET_HOST/TUNNEL_DOMAIN/CLOUDFLARED_TUNNEL_TOKEN/CF_ACCESS_* bash configure-tunnel-access.sh (connector install + start)'
@@ -550,6 +555,11 @@ if want_stage edge; then
   # connector is installed and started. Verifying before install fails on
   # every genuinely fresh host.
   log '== fresh-edge wiring (operator side, API only) =='
+  # Backend BEFORE the first Cloudflare mutation: a clean checkout must
+  # never wire edge resources it cannot adopt (partial-state failure).
+  # backend.hcl carries no credentials (names/URLs only; S3 auth via
+  # memory-only AWS_* env in adopt), so generating it is secrecy-safe.
+  run env BAO_ADDR="$bao_addr" bash "$repo_root/scripts/ensure-fresh-backend.sh"
   handoff_file="${repo_root}/.fresh-handoff-${tunnel_slug}.json"
   run env BAO_ADDR="$bao_addr" CLOUDFLARE_ACCOUNT_ID="$cf_account" \
     CLOUDFLARE_ZONE_ID="$cf_zone" TUNNEL_ID="$tunnel_id" \
