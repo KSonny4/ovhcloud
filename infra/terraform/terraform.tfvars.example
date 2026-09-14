@@ -12,7 +12,7 @@ admin_emails            = ["ksonny4@gmail.com"]
 r2_bucket_name          = "ovh-coolify-backups"
 manage_application_wildcard = false
 access_service_token_name = "ovh-coolify-machine-verification"
-access_service_token_duration = "1y"
+access_service_token_duration = "8760h"
 provision_ovh_vps       = false
 # Import-only protection for the preserved production VPS (no ordering).
 manage_existing_vps     = false

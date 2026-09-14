@@ -131,9 +131,11 @@ variable "access_service_token_name" {
 }
 
 variable "access_service_token_duration" {
+  # Canonical live value is 8760h: the provider reports duration verbatim, so
+  # a "1y" default would plan a perpetual token update on every future run.
   description = "Lifetime of the generated Cloudflare Access service token."
   type        = string
-  default     = "1y"
+  default     = "8760h"
 }
 
 variable "manage_application_wildcard" {
