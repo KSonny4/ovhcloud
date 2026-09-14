@@ -72,8 +72,16 @@ if "graft check" not in plan or "graft build" not in plan:
 if "ovhcloud vps list --output json" not in plan:
     raise SystemExit("deployment plan does not document OVH CLI discovery")
 
+# The human dashboard identity must be enforced in configuration and present
+# in the blessed example: no valid apply may omit ksonny4@gmail.com.
+variables = (TF / "variables.tf").read_text()
+if 'contains(var.admin_emails, "ksonny4@gmail.com")' not in variables:
+    raise SystemExit("admin_emails retention validation missing from variables.tf")
+
 # The canonical domain must remain an operator input, never a committed value.
 example = (TF / "terraform.tfvars.example").read_text()
+if '"ksonny4@gmail.com"' not in example:
+    raise SystemExit("blessed example must retain ksonny4@gmail.com in admin_emails")
 for placeholder in [
     "REPLACE_WITH_APPROVED_DOMAIN",
     "REPLACE_WITH_CLOUDFLARE_ACCOUNT_ID",

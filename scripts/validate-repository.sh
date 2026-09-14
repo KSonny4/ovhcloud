@@ -32,7 +32,10 @@ bash -n scripts/configure-tunnel-access.sh
 bash -n scripts/backup-r2-probe.sh
 bash -n scripts/rehearse-fresh-environment.sh
 bash -n scripts/healthcheck.sh
-shellcheck scripts/bootstrap-vps.sh scripts/provision-coolify.sh scripts/configure-tunnel-access.sh scripts/backup-r2-probe.sh scripts/rehearse-fresh-environment.sh scripts/healthcheck.sh scripts/validate-repository.sh
+bash -n scripts/run-remote-provision.sh
+bash -n scripts/schedule-coolify-backup.sh
+bash -n scripts/lib/preserved-guard.sh
+shellcheck scripts/bootstrap-vps.sh scripts/provision-coolify.sh scripts/configure-tunnel-access.sh scripts/backup-r2-probe.sh scripts/rehearse-fresh-environment.sh scripts/healthcheck.sh scripts/validate-repository.sh scripts/run-remote-provision.sh scripts/schedule-coolify-backup.sh scripts/lib/preserved-guard.sh
 
 git diff --check
 

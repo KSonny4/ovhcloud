@@ -44,10 +44,11 @@ if [ -z "$target_host" ] || [ -z "$domain" ]; then
   echo 'TUNNEL_TARGET_HOST and TUNNEL_DOMAIN must both be set.' >&2
   exit 2
 fi
-if [ "$target_host" = 'vps-1525c977.vps.ovh.net' ] || [ "$target_host" = '57.129.155.203' ]; then
-  echo 'Refusing to rewire the preserved production VPS with the fresh-host script.' >&2
-  exit 2
-fi
+GUARD_SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=scripts/lib/preserved-guard.sh
+source "${GUARD_SCRIPT_DIR}/lib/preserved-guard.sh"
+refuse_preserved_host "$target_host" || exit 2
+refuse_preserved_self || exit 2
 if [ "$(id -u)" -ne 0 ] && [ "$dry_run" -eq 0 ]; then
   echo 'Run configure-tunnel-access.sh as root.' >&2
   exit 2
