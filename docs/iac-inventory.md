@@ -44,9 +44,13 @@
 ## Current gaps against the redesign (updated 2026-09-14)
 
 1. RESOLVED 2026-09-14: production state import + authorized live apply done —
-   8 imports in R2-backed encrypted state, `Apply complete! 0 added, 2 changed,
-   0 destroyed`, full plan converged (only the deliberately excluded vault
-   escrow record remains). Provider authorization is emitted by
+   R2-backed encrypted state, `Apply complete`, plan `empty` (verified
+   continuously by `scripts/verify-live-reconciliation.sh`; latest: 12–13
+   resources including the adopted fabric DNS route). Historical note: an
+   earlier revision described a remaining Terraform vault-escrow addition;
+   that plan was superseded — escrow is owned by `ensure-service-token.sh`
+   + the runner lifecycle, and no `vault` provider/resources exist by
+   design. Provider authorization is emitted by
    `scripts/tf-env-from-openbao.sh` (env-only, never a file), never hand-populated.
 2. RESOLVED 2026-09-14: Cloudflare admin token replaced (with API-Tokens
    Write; mint-grant proven) and R2 keys rotated, both escrowed

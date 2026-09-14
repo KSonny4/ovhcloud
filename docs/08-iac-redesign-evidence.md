@@ -859,3 +859,24 @@
   extended (UFW tunnel-only posture, image pins, reseed stamps, dump GET +
   `gzip -t` round-trip `gzip-ok`); `live-reconciliation.json` refreshed
   (12 resources, plan empty). No unresolved reseed remains.
+
+## 2026-09-14 — auditor 15:05 round (first-stage sudo, stale docs)
+
+- First-stage sudo chicken-and-egg fixed at the root: the runner installs
+  the sudo automation channel as step 0 (static `env_keep` content, no
+  secrets, `visudo -cf` checked) BEFORE any `sudo -E` stage, from the
+  single-source `scripts/lib/sudoers-automation-env`; bootstrap re-applies
+  the same file as convergence. Without step 0, bootstrap loses
+  `BOOTSTRAP_TARGET_HOST` before it could install the policy itself.
+- Mechanism surprise documented: the preserved/fresh-26.04 sudo is sudo-rs
+  0.2.13 (ignores `-E` without SETENV); classic sudo on 24.04 honors `-E`.
+  Hence the regression test pins `ubuntu:26.04`.
+- Executed clean-host regression (`scripts/test-sudo-channel.sh`, exit 0):
+  disposable 26.04 container, bug reproduced without policy
+  (`stripped=GONE`), `CHANNEL_OK` with the step-0 install
+  (`stripped=freshhost` for the actual `BOOTSTRAP_TARGET_HOST` variable).
+  Container destroyed via trap; debug orphans removed.
+- Stale docs reconciled: `iac-interfaces.md` now consumes
+  `ADMIN_CLOUDFLARE` (`CF_DEPLOY_TOKEN` marked historical/superseded);
+  `iac-inventory.md` plan state is `empty` (vault-escrow paragraph marked
+  historical/superseded, escrow owned by ensure-service-token + runner).

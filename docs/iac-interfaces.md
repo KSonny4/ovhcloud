@@ -65,7 +65,7 @@ The adapter must support read-only discovery and plan-time verification separate
 
 ### Cloudflare provider adapter
 
-The adapter supplies one scoped Cloudflare API token, the account ID, and the approved zone. The token scope must cover only the declared zone DNS operations and the selected account's Tunnel, Access application/policy/service-token, identity-provider, and R2 operations. The adapter normalizes existing OpenBao field names, including the currently escrowed `CF_DEPLOY_TOKEN` field, without copying or printing the token.
+The adapter supplies one scoped Cloudflare API token, the account ID, and the approved zone. The token scope must cover only the declared zone DNS operations and the selected account's Tunnel, Access application/policy/service-token, identity-provider, and R2 operations. The adapter consumes the `ADMIN_CLOUDFLARE` OpenBao entry (a scoped Cloudflare API token with Zone-DNS + Account Tunnel/Access/R2 + IdP grants). Historical note: an earlier `CF_DEPLOY_TOKEN` field existed during rotation and was superseded the same day; no script reads it (the runner, wire, and loader all use `ADMIN_CLOUDFLARE`). Field values are never copied or printed.
 
 ### OpenBao adapter
 

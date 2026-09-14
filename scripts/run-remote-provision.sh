@@ -263,6 +263,7 @@ if [ "$dry_run" -eq 1 ]; then
   log 'DRY-RUN: prepare credentials (generate + escrow SSH keypair when absent, register OVH account key, retrieve OpenBao fields by name); generate + escrow bootstrap password when ROOT_USER_PASSWORD absent (fail closed)'
   log 'DRY-RUN: run ensure-tunnel.sh on the per-target secret path (existing escrow no-op, else create dedicated tunnel via API + escrow; preserved tunnel never touched) before credential retrieval'
   log 'DRY-RUN: run ensure-service-token.sh --ensure-only (create/escrow, verify deferred until post-wiring) before retrieval; full lifecycle with HTTP 200 verify after wiring'
+  log 'DRY-RUN: install sudo automation channel (step 0, before any sudo -E stage: static env_keep content, no secrets)'
   log 'DRY-RUN: scp stage scripts (only) to /tmp/ovh-provision; credentials travel as a base64 env blob inside each SSH command (memory-only both ends)'
   want_stage bootstrap && log 'DRY-RUN: remote sudo BOOTSTRAP_TARGET_HOST/BOOTSTRAP_SSH_PUBLIC_KEY bash bootstrap-vps.sh + verify docker hello-world'
   want_stage coolify && log "DRY-RUN: remote sudo COOLIFY_TARGET_HOST/COOLIFY_DOMAIN/COOLIFY_VERSION/ROOT_* bash provision-coolify.sh (FQDN + firewall + origin smoke) + verify origin login + fetch APP_KEY over SSH and escrow operator-side (fail closed)"
@@ -479,7 +480,19 @@ run scp -p "${ssh_opts[@]}" "$repo_root/scripts/bootstrap-vps.sh" "$repo_root/sc
   "$repo_root/scripts/rollback-coolify-backup.sh" "$repo_root/scripts/rollback-app-workloads.sh" \
   "${ssh_user}@${host}:${remote_dir}/"
 run scp -p "${ssh_opts[@]}" "$repo_root/scripts/lib/preserved-guard.sh" \
+  "$repo_root/scripts/lib/sudoers-automation-env" \
   "${ssh_user}@${host}:${remote_dir}/lib/"
+# Step 0 — establish the sudo channel BEFORE any sudo -E stage. A fresh
+# image has NOPASSWD without SETENV, so sudo -E is ignored until this
+# policy lands; without it the first stage loses BOOTSTRAP_TARGET_HOST +
+# BOOTSTRAP_SSH_PUBLIC_KEY (chicken-and-egg: bootstrap cannot install the
+# policy it needs to receive its own variables). The content carries NO
+# secrets (variable names only) and travels as the shipped static file on
+# stdin; bootstrap re-applies the same file as convergence afterwards.
+log 'establish sudo automation channel (step 0, before any sudo -E stage)'
+run ssh "${ssh_opts[@]}" "${ssh_user}@${host}" \
+  'sudo tee /etc/sudoers.d/99-automation-env >/dev/null && sudo chmod 440 /etc/sudoers.d/99-automation-env && sudo visudo -cf /etc/sudoers.d/99-automation-env' \
+  <"$repo_root/scripts/lib/sudoers-automation-env"
 
 remote_stage() {
   local name="$1" script="$2"

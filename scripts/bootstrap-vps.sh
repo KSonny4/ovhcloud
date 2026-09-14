@@ -146,14 +146,16 @@ run systemctl restart ssh
 # provisioning/rollback automation ships via stdin-piped env (never argv)
 # must survive sudo (this image has NOPASSWD without SETENV, so -E is
 # ignored). Additive env_keep only; validated before use.
-run install -m 440 /dev/null /etc/sudoers.d/99-automation-env
+# Single source of truth: scripts/lib/sudoers-automation-env (shipped to
+# remote_dir/lib by the runner; also installed as step 0 before any sudo -E
+# stage, so this block is convergence for hosts provisioned by other paths).
+channel_src="$(cd "$(dirname "$0")" && pwd)/lib/sudoers-automation-env"
 if [ "$dry_run" -eq 1 ]; then
-  log 'DRY-RUN: write sudoers automation-channel drop-in + visudo check'
+  log 'DRY-RUN: install sudoers automation-channel drop-in from shipped content + visudo check'
 else
-  cat >/etc/sudoers.d/99-automation-env <<'EOF'
-# Automation secret channel (stdin-piped env, never argv/disk).
-Defaults env_keep += "APP_DB_PASSWORD BOOTSTRAP_TARGET_HOST BOOTSTRAP_SSH_PUBLIC_KEY COOLIFY_TARGET_HOST COOLIFY_DOMAIN COOLIFY_VERSION ROOT_USERNAME ROOT_USER_EMAIL ROOT_USER_PASSWORD TUNNEL_TARGET_HOST TUNNEL_DOMAIN CLOUDFLARED_TUNNEL_TOKEN CF_ACCESS_CLIENT_ID CF_ACCESS_CLIENT_SECRET COOLIFY_SERVICE_TOKEN_CLIENT_ID COOLIFY_SERVICE_TOKEN_CLIENT_SECRET"
-EOF
+  [ -f "$channel_src" ] || { echo 'sudoers channel content missing from shipped lib (fail closed).' >&2; exit 2; }
+  run install -m 440 /dev/null /etc/sudoers.d/99-automation-env
+  cat "$channel_src" >/etc/sudoers.d/99-automation-env
   chmod 440 /etc/sudoers.d/99-automation-env
   visudo -cf /etc/sudoers.d/99-automation-env || { echo 'sudoers drop-in failed validation (fail closed).' >&2; exit 2; }
 fi

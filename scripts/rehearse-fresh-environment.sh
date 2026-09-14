@@ -285,6 +285,24 @@ guard_at = idx('refuse_preserved_host "$host"')
 assert load_at < guard_at, 'OVH load must precede guard'
 print('runner OVH order proven: load precedes guard.')
 PYEOF
+# First-stage sudo boundary: step-0 channel install must precede every
+# remote stage in the runner's own dry-run (executed order, not prose),
+# and both the runner and bootstrap must consume the single-source
+# content file (no inline duplicate that can drift).
+python3 - <<'PYEOF' || exit 1
+log = open('/tmp/rehearsal-runner-1.log').read().splitlines()
+chan = [i for i, l in enumerate(log) if 'sudo automation channel (step 0' in l]
+stages = [i for i, l in enumerate(log) if 'DRY-RUN: remote sudo' in l]
+assert chan, 'step-0 channel install missing from runner dry-run'
+assert stages, 'no remote stages in runner dry-run'
+assert chan[0] < stages[0], 'channel must precede first stage'
+print(f'step-0 order proven: channel@{chan[0]} first-stage@{stages[0]}.')
+PYEOF
+for f in scripts/run-remote-provision.sh scripts/bootstrap-vps.sh; do grep -q 'lib/sudoers-automation-env' "$f" || { echo "$f omits the single-source channel content." >&2; exit 1; }; done
+[ -f scripts/lib/sudoers-automation-env ] || { echo 'channel content file missing.' >&2; exit 1; }
+grep -q '^Defaults env_keep' scripts/lib/sudoers-automation-env || { echo 'channel content is not an env_keep drop-in.' >&2; exit 1; }
+for v in BOOTSTRAP_TARGET_HOST BOOTSTRAP_SSH_PUBLIC_KEY APP_DB_PASSWORD CLOUDFLARED_TUNNEL_TOKEN; do grep -q "$v" scripts/lib/sudoers-automation-env || { echo "channel drops ${v}." >&2; exit 1; }; done
+log 'step-0 channel proven: ordered before stages, single-sourced, complete.'
 # Executed Cloudflare read-failure proof (stubbed bao + curl, no network):
 # transport failure, success=false, and garbage bodies must each exit
 # nonzero with NO create/update call attempted.
