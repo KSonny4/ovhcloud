@@ -929,8 +929,10 @@
   APP_KEY (runner SSH fetch + escrow), tunnel id/token (ensure-tunnel API
   create + escrow), service-token triple (ensure-service-token
   create/rotate + escrow), R2 reader token (bao mint + stdin placement),
-  workload DB password (recreate-workload generate + escrow). R2 S3 +
-  OmniRoute app secrets are operator-supplied prerequisites by objective.
+  workload DB password (recreate-workload generate + escrow). R2 S3 keys
+  are the operator-supplied prerequisite by objective. [SUPERSEDED 16:28
+  round below: OmniRoute secrets are automation-DERIVED (generate-if-absent
+  + escrow); only R2 S3 remains operator-supplied.]
 
 ## 2026-09-14 — auditor 16:08 round (tunnel contract, out-of-band step, ambient gates)
 
