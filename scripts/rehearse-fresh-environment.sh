@@ -231,6 +231,8 @@ if [ "$ensure_line" -ge "$retrieval_line" ] || [ "$retrieval_line" -ge "$wire_li
 fi
 log 'service-token flow ordered: ensure-only, retrieval, wire, verify.'
 log '== edge_routes (dry-run, zero network) =='
+bash scripts/wire-fresh-edge.sh --self-test-merge >/dev/null 2>&1 || { echo 'ingress merge self-test failed (routes would be discarded).' >&2; exit 1; }
+log 'ingress merge self-test passed on live code (no-drift, drift, preservation).'
 CLOUDFLARE_ACCOUNT_ID=rehearsal CLOUDFLARE_ZONE_ID=rehearsal TUNNEL_ID=rehearsal-tunnel \
   EDGE_HOSTNAME=coolify.rehearsal.invalid SSH_HOSTNAME=ssh.rehearsal.invalid \
   bash scripts/wire-fresh-edge.sh --dry-run --handoff-file /tmp/rehearsal-handoff.json > /tmp/rehearsal-edge.log 2>&1 \
