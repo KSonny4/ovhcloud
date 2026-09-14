@@ -773,3 +773,22 @@
 - `docs/iac-inventory.md` reconciled: R2 rotation + timer entries now state
   the `s3_storages` deletion and the no-at-rest reality, with the `r2.env`
   and destination-row states retained only as dated transitional notes.
+
+## 2026-09-14 — auditor 13:44 round (hostname contract, adopt backend, docs)
+
+- Single-domain contract enforced: `PROVISION_DASHBOARD_HOST` removed from
+  the runner (fail-closed refusal when set); dashboard is always
+  `coolify.${PROVISION_ZONE}`, matching Terraform and every verification URL
+  (`TUNNEL_DOMAIN` zone + `coolify.` prefix in the connector script were
+  already consistent). Rehearsal executes the refusal (exit + message).
+- `adopt-fresh-edge.sh --apply` fails closed without an encrypted remote
+  backend (early guard before emit/OpenBao reads + late guard before apply;
+  `TERRAFORM_FRESH_DIR` override for hermetic testing). Rehearsal executes
+  the failure mode in a backend-less sandbox: refusal message verified, zero
+  files written. Backendless mode remains validation/plan only.
+- Live host gates resolved read-only 2026-09-14: OVH Automated Backup
+  `state: enabled` (schedule 14:59 UTC, rotation 1) via
+  `vps automated-backup get-config`; `qemu-guest-agent` `active` with the
+  virtio port present. Notifications explicitly out of automation scope
+  (needs an operator credential; exact dashboard path documented).
+  Deployment-plan restore gate marked DONE with evidence links.

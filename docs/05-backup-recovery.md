@@ -193,8 +193,7 @@ record.
 | Coolify instance DB | R2 (host timer) | daily | yes (`RESTORE_OK` 2026-09-14) |
 | Application DBs | R2 `app-databases/` | daily | yes (3 live recreates) |
 | Persistent mounts | R2 `app-volumes/`/`app-binds/` | daily | yes (byte-identical) |
-| Whole VPS | OVH Automated Backup | daily | operator to verify in panel |
-| Pre-change rollback | OVH snapshot | before risky changes | when used |
+| Whole VPS | OVH Automated Backup | daily | yes (API-verified 2026-09-14: `state: enabled`, schedule `14:59:00` UTC, rotation 1; no restore points listed yet) |
 
 ## 10. Backup failure is an alert
 
@@ -207,8 +206,15 @@ Configure Coolify notifications for at least:
 - server/container health where useful.
 
 If email/notification delivery itself lives on this VPS, use an external
-notification path for infrastructure failures where practical. (No
-notification channel is configured yet — dashboard nags about it.)
+notification path for infrastructure failures where practical.
+
+Explicitly out of automation scope (operator decision pending): no
+notification channel is configured, because delivery needs an operator-
+supplied credential the repository must never hold (SMTP password or
+Discord/Slack webhook). To finish: dashboard → Notifications → add an
+email or webhook channel, then enable backup/deployment/health alerts.
+Until then, backup health is checked by reading the timer status
+(`systemctl status coolify-backup.timer`) and the nightly R2 keys.
 
 ## Done when
 
@@ -216,8 +222,13 @@ notification channel is configured yet — dashboard nags about it.)
 - [x] Coolify instance DB is backed up to R2 (nightly timer; `RESTORE_OK`)
 - [x] every important database has its own R2 backup (per-DB dumps + manifest)
 - [x] every irreplaceable volume/directory is identified and backed up (coverage gate enforces)
-- [ ] OVH daily Automated Backup is verified (operator: check the panel)
-- [ ] `qemu-guest-agent` is active if supported (operator: check on host)
+- [x] OVH daily Automated Backup is verified (read-only API 2026-09-14:
+  `automated-backup get-config` → `state: enabled`, schedule 14:59 UTC;
+  re-verify with `ovhcloud vps automated-backup get-config
+  vps-1525c977.vps.ovh.net` using the OpenBao `OVH_API` escrow)
+- [x] `qemu-guest-agent` is active (live 2026-09-14: `systemctl
+  is-active` → `active`, `/dev/virtio-ports/org.qemu.guest_agent.0`
+  present)
 - [x] one Coolify restore has been tested (probe restore 2026-09-14)
 - [x] one real application-data restore has been tested (three, 2026-09-14)
 

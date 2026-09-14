@@ -169,6 +169,22 @@ done
 # verification) — never the bare zone, never a doubled prefix.
 grep -q 'dashboard hostname: coolify.rehearsal.invalid' /tmp/rehearsal-runner-1.log || { echo 'runner domain contract broken.' >&2; exit 1; }
 if grep -q 'coolify.coolify\.' /tmp/rehearsal-runner-1.log; then echo 'doubled dashboard prefix.' >&2; exit 1; fi
+# Removed hostname override fails closed (single-domain contract). Capture
+# once (pipefail would mask the expected nonzero exit in a pipeline).
+PROVISION_HOST=runner-rehearsal.invalid PROVISION_ZONE=rehearsal.invalid PROVISION_DASHBOARD_HOST=other.example.com bash scripts/run-remote-provision.sh --dry-run >/tmp/rehearsal-override.log 2>&1 || rc=$?
+[ "${rc:-0}" -ne 0 ] || { echo 'removed dashboard-host override accepted.' >&2; exit 1; }
+grep -q 'was removed' /tmp/rehearsal-override.log || { echo 'override refusal message missing.' >&2; exit 1; }
+rm -f /tmp/rehearsal-override.log
+log 'dashboard-host override refused fail-closed (single domain contract).'
+# Adoption failure mode, executed: --apply without an encrypted remote
+# backend must fail closed before any mutation (sandbox work dir, no network).
+rm -rf /tmp/rehearsal-adopt && mkdir -p /tmp/rehearsal-adopt
+printf '{"tunnel_id":"t","tunnel_name":"n","routes":[]}' > /tmp/rehearsal-adopt-handoff.json
+if BAO_ADDR=https://secrets.pkubelka.cz TERRAFORM_FRESH_DIR=/tmp/rehearsal-adopt bash scripts/adopt-fresh-edge.sh --handoff /tmp/rehearsal-adopt-handoff.json --apply >/tmp/rehearsal-adopt.log 2>&1; then echo 'backendless --apply accepted.' >&2; exit 1; fi
+grep -q 'without an encrypted remote backend' /tmp/rehearsal-adopt.log || { echo 'backendless refusal message missing.' >&2; exit 1; }
+[ -f /tmp/rehearsal-adopt/main.tf ] && { echo 'backendless --apply mutated before refusing.' >&2; exit 1; } || true
+rm -rf /tmp/rehearsal-adopt /tmp/rehearsal-adopt-handoff.json /tmp/rehearsal-adopt.log
+log 'backendless --apply refused fail-closed (validation/plan only without backend.hcl).'
 # Regression gate for the fresh-host partial-backup failure: the runner must
 # stage the workload companion alongside the schedule script, and the
 # schedule script must install both timer commands.

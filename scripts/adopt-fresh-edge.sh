@@ -3,7 +3,9 @@
 #
 # Pipeline: handoff JSON -> emit-fresh-imports.sh (generates main.tf +
 # imports.tf, no hand authoring) -> terraform init (fresh backend key) ->
-# plan (default; shows adoption) -> apply only with --apply.
+# plan (default; shows adoption) -> apply only with --apply AND an encrypted
+# remote backend (backend.hcl). Backendless mode is validation/plan only;
+# --apply without backend.hcl fails closed before any mutation.
 # The run ends converged: a second plan shows no changes.
 #
 # Usage:
@@ -29,8 +31,17 @@ command -v bao >/dev/null 2>&1 || { echo 'bao CLI is required.' >&2; exit 2; }
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 export CLOUDFLARE_ACCOUNT_ID="${CLOUDFLARE_ACCOUNT_ID:-5eb3ea3a84b37564cfd8739f32ffb559}"
 export CLOUDFLARE_ZONE_ID="${CLOUDFLARE_ZONE_ID:-0fcca39cc6516b8e23971bd717c0e9ca}"
+# Work dir is overridable for hermetic testing; production default is the repo path.
+fresh_dir="${TERRAFORM_FRESH_DIR:-$repo_root/infra/terraform-fresh}"
+# Backendless mode is validation/plan ONLY: --apply without an encrypted
+# remote backend would adopt provider state into a local file, contradicting
+# the encrypted-state requirement. Fail closed before any mutation.
+if [ "$apply" -eq 1 ] && [ ! -f "$fresh_dir/backend.hcl" ]; then
+  echo "refusing --apply without an encrypted remote backend ($fresh_dir/backend.hcl missing); backendless mode is validation/plan only." >&2
+  exit 2
+fi
 bash "$repo_root/scripts/emit-fresh-imports.sh" --handoff "$handoff" \
-  --out-dir "$repo_root/infra/terraform-fresh"
+  --out-dir "$fresh_dir"
 
 # Provider authorization from OpenBao (env-only, never files).
 TF_VAR_cloudflare_api_token="$(bao kv get -field=ADMIN_CLOUDFLARE secret/projects/ovhcloud/ADMIN_CLOUDFLARE)"
@@ -43,12 +54,16 @@ for v in TF_VAR_cloudflare_api_token TF_VAR_service_token_id; do
   [ -n "${!v}" ] || { echo "OpenBao escrow missing for ${v} (fail closed)."; exit 2; }
 done
 
-cd "$repo_root/infra/terraform-fresh"
+cd "$fresh_dir"
 if [ -f backend.hcl ]; then
   terraform init -backend-config=backend.hcl -input=false
 else
   echo 'backend.hcl missing (copy backend.hcl.example); running backend-less validation only.' >&2
   terraform init -backend=false -input=false
+fi
+if [ "$apply" -eq 1 ] && [ ! -f backend.hcl ]; then
+  echo 'refusing --apply without an encrypted remote backend (backendless mode is validation/plan only).' >&2
+  exit 2
 fi
 if [ "$apply" -eq 1 ]; then
   terraform apply -input=false -auto-approve

@@ -65,8 +65,15 @@ host="${PROVISION_HOST:-}"
 # (An earlier revision took a bare domain and configured https://${domain}
 # while the tunnel verified https://coolify.${domain} — now impossible.)
 zone="${PROVISION_ZONE:-}"
-dashboard_host="${PROVISION_DASHBOARD_HOST:-}"
-if [ -z "$dashboard_host" ] && [ -n "$zone" ]; then
+# Single-domain contract (no override): the dashboard is always
+# coolify.${PROVISION_ZONE}, matching the Terraform config and every
+# verification URL. A removed PROVISION_DASHBOARD_HOST fails closed.
+if [ -n "${PROVISION_DASHBOARD_HOST:-}" ]; then
+  echo 'PROVISION_DASHBOARD_HOST was removed: the dashboard hostname is always coolify.<PROVISION_ZONE> (single-domain contract with Terraform).' >&2
+  exit 2
+fi
+dashboard_host=""
+if [ -n "$zone" ]; then
   dashboard_host="coolify.${zone}"
 fi
 ssh_user="${PROVISION_SSH_USER:-ubuntu}"
@@ -76,7 +83,7 @@ cf_zone="${CLOUDFLARE_ZONE_ID:-0fcca39cc6516b8e23971bd717c0e9ca}"
 coolify_version="${COOLIFY_VERSION:-4.3.19}"
 bao_addr="${BAO_ADDR:-https://secrets.pkubelka.cz}"
 if [ -z "$host" ] || [ -z "$zone" ] || [ -z "$dashboard_host" ]; then
-  echo 'PROVISION_HOST and PROVISION_ZONE (or PROVISION_DASHBOARD_HOST) must be set.' >&2
+  echo 'PROVISION_HOST and PROVISION_ZONE must be set.' >&2
   exit 2
 fi
 # Operator-side identity guard: resolve the target against the preserved OVH

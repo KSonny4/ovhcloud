@@ -15,12 +15,13 @@ schedule over SSH with per-stage verification, failing closed at the first
 failure:
 
 - Inputs: `PROVISION_HOST`, `PROVISION_ZONE` (Cloudflare zone),
-  `PROVISION_DASHBOARD_HOST` (optional override, defaults to
-  `coolify.${PROVISION_ZONE}`), `PROVISION_SSH_USER` (default `ubuntu`),
-  `PROVISION_SSH_KEY`, plus `ROOT_USERNAME/ROOT_USER_EMAIL/ROOT_USER_PASSWORD`
-  for first-admin bootstrap and `R2_ENDPOINT` (defaults to the account endpoint).
-  The derived dashboard hostname is used consistently for Coolify FQDN,
-  Tunnel ingress/DNS, and every HTTP verification (single domain contract).
+  `PROVISION_SSH_USER` (default `ubuntu`), `PROVISION_SSH_KEY`, plus
+  `ROOT_USERNAME/ROOT_USER_EMAIL/ROOT_USER_PASSWORD` for first-admin
+  bootstrap and `R2_ENDPOINT` (defaults to the account endpoint).
+  The dashboard hostname is always `coolify.${PROVISION_ZONE}` (single
+  domain contract with Terraform; a `PROVISION_DASHBOARD_HOST` override
+  no longer exists and is refused fail-closed). It is used consistently
+  for Coolify FQDN, Tunnel ingress/DNS, and every HTTP verification.
 - Refuses the preserved VPS via the shared service-identity guard
   (`scripts/lib/preserved-guard.sh`): resolves the target to all its A/AAAA
   addresses and intersects with the OVH service identity (live IP set from
