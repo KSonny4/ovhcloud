@@ -8,7 +8,7 @@
 # per-stage verification. All secrets come from OpenBao (via `bao` on this
 # machine) or from explicitly supplied env; values are never printed, never
 # committed, and travel to the target only through the encrypted SSH channel
-# (600-permission env file, deleted afterwards on both ends).
+# (base64 env blob evaluated inside each SSH command; memory-only both ends).
 #
 # Prerequisites (operator side):
 # - `bao` authenticated against BAO_ADDR (default https://secrets.pkubelka.cz)
@@ -231,7 +231,7 @@ if [ "$dry_run" -eq 1 ]; then
   want_stage coolify && log "DRY-RUN: remote sudo COOLIFY_TARGET_HOST/COOLIFY_DOMAIN/COOLIFY_VERSION/ROOT_* bash provision-coolify.sh (FQDN + firewall + origin smoke) + verify origin login + fetch APP_KEY over SSH and escrow operator-side (fail closed)"
   want_stage edge && log 'DRY-RUN: remote sudo TUNNEL_TARGET_HOST/TUNNEL_DOMAIN/CLOUDFLARED_TUNNEL_TOKEN/CF_ACCESS_* bash configure-tunnel-access.sh + verify domain login HTTP 200 locally'
   want_stage backup && log 'DRY-RUN: provision remote r2.env (0600) from OpenBao via stdin pipe + remote sudo bash schedule-coolify-backup.sh + verify timer + R2 object'
-  log 'DRY-RUN: delete env file on both ends; report per-stage pass/fail (fail closed)'
+  log 'DRY-RUN: remove remote stage scripts on every exit path; report per-stage pass/fail (fail closed)'
   exit 0
 fi
 
