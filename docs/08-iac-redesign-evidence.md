@@ -665,3 +665,20 @@
   ports, DB rows), the full runtime contract restores faithfully.
 - `docs/deployment-plan.md` reconciled (status complete, env-only auth, no
   tfvars, operator-scoped apply rule); live plan converges with no changes.
+
+## 2026-09-14 — Coolify onboarding completed (operator request)
+
+- Admin password was unrecoverable: live install predates bootstrap escrow,
+  `COOLIFY_ADMIN_BOOTSTRAP` never written. Reset via bcrypt UPDATE on the
+  single installer-created user, escrowed to `COOLIFY_ADMIN_BOOTSTRAP`
+  (username=admin, email=ksonny4@gmail.com). Password handed to operator.
+- Logged in through Cloudflare Access service-token headers; completed the
+  onboarding wizard genuinely: localhost server, existing `context-fabric`
+  project (Production env), setup complete, dashboard verified.
+- Fixed `Proxy Exited`: started Traefik via Actions, `Running`, saved/running
+  configs synchronized. Remaining badge is only the Traefik v3.7 minor-update
+  notice (left for operator decision per changelog warning).
+- Follow-ups for operator: real-time websocket warning (expected behind the
+  Tunnel-only edge; UI works via polling), no SMTP configured (password reset
+  via UI unavailable — DB reset path documented here), no notification channel
+  set, sponsorship/nag banners dismissible.
