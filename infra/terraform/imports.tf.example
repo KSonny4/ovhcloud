@@ -12,6 +12,14 @@
 #   rm imports.tf tfplan
 #
 # import {
+#   # Preserved production VPS as an import-only protected record.
+#   # Import ID is the OVH service name; the resource ignores all changes
+#   # and forbids destruction.
+#   to = ovh_vps.preserved[0]
+#   id = "REPLACE_WITH_OVH_SERVICE_NAME"
+# }
+
+# import {
 #   # Live Tunnel: coolify-admin. Retrieve the canonical ID from Cloudflare
 #   # before use; do not hardcode it. Verified import format (provider v5.25):
 #   # "ACCOUNT_ID/TUNNEL_ID" (no accounts/ prefix).

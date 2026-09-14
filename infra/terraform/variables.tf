@@ -112,6 +112,12 @@ variable "provision_ovh_vps" {
   default     = false
 }
 
+variable "manage_existing_vps" {
+  description = "Record the preserved production VPS as an import-only protected state entry (ovh_vps.preserved). Never true together with provision_ovh_vps."
+  type        = bool
+  default     = false
+}
+
 variable "r2_bucket_name" {
   description = "Private Cloudflare R2 bucket name for Coolify and application backups."
   type        = string
