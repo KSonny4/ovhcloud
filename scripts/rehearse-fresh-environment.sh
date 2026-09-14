@@ -242,6 +242,7 @@ grep -q 'TUNNEL_SECRET_PATH' scripts/ensure-tunnel.sh || { echo 'ensure-tunnel o
 # file (~/.ovh.conf or an unredirected $HOME read); the only permitted
 # .ovh.conf is the throwaway explicit config inside ovh_cli. OVH_* come
 # from the OpenBao OVH_API escrow.
+# shellcheck disable=SC2088,SC2016 # patterns are intentional literals: match a literal ~/ and literal $HOME in other scripts' source.
 if grep -rnE '~/\.ovh\.conf|\$HOME/\.ovh\.conf|\${HOME}/\.ovh\.conf' scripts/*.sh scripts/lib/*.sh 2>/dev/null | grep -v 'rehearse-fresh-environment.sh' | grep -vE ':[0-9]+:#' | grep -q .; then echo 'a script still depends on the ambient OVH credential file.' >&2; exit 1; fi
 grep -q 'tmp_home}/\.ovh\.conf' scripts/lib/preserved-guard.sh || { echo 'ovh_cli lost its explicit config path.' >&2; exit 1; }
 grep -q 'OVH_API' scripts/tf-env-from-openbao.sh || { echo 'loader omits the OVH_API escrow.' >&2; exit 1; }
