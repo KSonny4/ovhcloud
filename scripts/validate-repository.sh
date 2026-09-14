@@ -52,8 +52,16 @@ git diff --check
 
 if command -v terraform >/dev/null 2>&1; then
   terraform -chdir=infra/terraform fmt -check -recursive
-  run_bounded 120 terraform -chdir=infra/terraform init -backend=false -input=false
-  run_bounded 120 terraform -chdir=infra/terraform validate
+  # Hermetic init/validate in a disposable copy: initializing the live dir
+  # would bind it to a backend (or poison it against ambient ~/.aws keys),
+  # breaking every later credential-free gate run.
+  gate_dir="$(mktemp -d)"
+  trap 'rm -rf "$gate_dir"' EXIT
+  cp infra/terraform/*.tf "$gate_dir/"
+  run_bounded 120 terraform -chdir="$gate_dir" init -backend=false -input=false
+  run_bounded 120 terraform -chdir="$gate_dir" validate
+  rm -rf "$gate_dir"
+  trap - EXIT
 else
   echo 'terraform not installed; structural IaC validation was run instead'
 fi

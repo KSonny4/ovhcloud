@@ -115,12 +115,13 @@ for r in h['routes']:
     main.append('  content = "${cloudflare_zero_trust_tunnel_cloudflared.fresh.id}.cfargotunnel.com"')
     main.append('  ttl     = 1')
     main.append('  proxied = true')
-    main.append(f'  comment = "Fresh {r["hostname"]} through the Cloudflare Tunnel; managed by Terraform."')
+    # No comment attribute: wire creates DNS records without one, so declaring
+    # none keeps the post-adoption plan empty.
     main.append('}')
     main.append('')
     main.append(f'resource "cloudflare_zero_trust_access_application" "fresh_{s}" {{')
     main.append('  account_id                = var.cloudflare_account_id')
-    main.append(f'  name                      = "Fresh {title}"')
+    main.append(f'  name                      = "{title}"')
     main.append(f'  domain                    = "{r["hostname"]}"')
     main.append('  type                      = "self_hosted"')
     main.append('  allowed_idps              = []')

@@ -1,116 +1,120 @@
 # 05. Backups and recovery
 
-Use multiple independent backup layers. The goal is to survive both:
+Backups on this platform are **automated and proven**, not aspirational.
+Two executable procedures own all R2 backup/restore traffic; the Coolify
+dashboard has **no S3 destination configured by design** (the `s3_storages`
+row was deleted 2026-09-14 after proving zero references — single backup
+plane, no persisted R2 copy anywhere; R2 credentials travel memory-only
+from OpenBao on every run). Do NOT re-create a Coolify S3 destination:
+it would reintroduce an at-rest credential copy for zero coverage gain.
+
+Survival goals:
 
 - a broken deployment/application;
 - loss/corruption of the entire VPS.
 
-A Coolify instance backup alone is **not enough**. It restores Coolify projects/settings/credentials/deployment history, but not application databases, services or persistent volumes.
-
-## Backup layers
+## Backup layers (implemented)
 
 ```text
 Layer 0  secrets needed for recovery
-         APP_KEY + Coolify SSH keys
+         OpenBao escrow (COOLIFY_R2 four-field, COOLIFY_ADMIN_BOOTSTRAP,
+         COOLIFY_SSH_*, service token) + APP_KEY
 
 Layer 1  Coolify control-plane database
-         -> Cloudflare R2
+         -> host timer pg_dump -Fc -> Cloudflare R2 (daily, 14-day retention)
 
 Layer 2  application databases
-         -> logical database backups -> Cloudflare R2
+         -> host timer pg_dump -Fc per DB -> R2 app-databases/ (+ manifest
+            with tables/rows counts)
 
 Layer 3  persistent volumes/directories
-         -> storage backups -> Cloudflare R2
+         -> host timer tar snapshots -> R2 app-volumes/ + app-binds/
+            (+ manifest with file counts and full container topology)
 
 Layer 4  whole-VPS safety net
          -> OVH automated backup / optional snapshot
 ```
 
+The timer is `coolify-backup.timer` (daily 02:00 UTC, Persistent=true) driving
+`coolify-backup.service`, whose two `ExecStart` lines run the instance backup
+(`/root/coolify-backup/backup-to-r2.sh`) and the workload backup
+(`scripts/backup-app-workloads.sh`) through the memory-only wrapper
+(`scripts/fetch-r2-env.sh -- <script>`). The only secret file on the host is
+the least-privilege OpenBao accessor token (`openbao-token`, 0600,
+`coolify-r2-reader` policy). R2 contract (all four escrowed at
+`secret/projects/ovhcloud/COOLIFY_R2`): `access_key_id`,
+`secret_access_key`, `bucket`, `endpoint` — preflight and fetch fail closed
+when any field is absent; see `docs/secret-rotation.md`.
+
 ## 1. Recovery secrets
 
-Store these outside the VPS and outside Git:
+Stored outside the VPS and outside Git (OpenBao):
 
-- `APP_KEY` from `/data/coolify/source/.env`
-- an encrypted copy of the relevant Coolify environment/secrets if desired
-- backup of `/data/coolify/ssh/keys/` when you care about replacing the server without regenerating every managed-server key
-- your human SSH private key
-- Cloudflare/R2 recovery credentials
+- `APP_KEY` + admin email (`COOLIFY_ADMIN`), admin password
+  (`COOLIFY_ADMIN_BOOTSTRAP`)
+- Coolify SSH keys (`COOLIFY_SSH_PRIVATE_KEY` / `COOLIFY_SSH_PUBLIC_KEY`)
+- R2 credential (`COOLIFY_R2`, four fields)
+- Cloudflare machine service token (`COOLIFY_ACCESS_SERVICE_TOKEN`)
+- operator SSH private key (`~/.ssh/ovh_coolify_ed25519`, operator disk)
 
-Coolify's current restore guide explicitly requires the original `APP_KEY` to decrypt restored credentials/private keys.
+Coolify's restore requires the original `APP_KEY` to decrypt restored
+credentials/private keys.
 
-## 2. Coolify instance backup
+## 2. Coolify instance backup (automated)
 
-In Coolify, configure recurring self-hosted instance backups to the validated Cloudflare R2 storage.
+`scripts/schedule-coolify-backup.sh` installs the timer; every run pg_dumps
+`coolify-db` (`-Fc`, gzip) to a dated R2 key, verifies via head-object, and
+prunes keys older than 14 days. Proof: `scripts/rollback-coolify-backup.sh`
+restores the latest dump into a disposable probe database, verifies known
+data (users count + admin email), drops the probe, reports `RESTORE_OK`
+(fail closed). Live proof 2026-09-14.
 
-Suggested baseline:
+Manual dashboard instance backups are unnecessary; the destination row does
+not exist and must not be recreated.
 
-```text
-frequency: daily
-remote storage: Cloudflare R2
-retention: enough to cover accidental changes for at least 1-2 weeks
-```
+## 3. Database backups (automated)
 
-After the first run, verify the backup exists remotely and is non-zero-sized.
+`scripts/backup-app-workloads.sh` discovers every PostgreSQL database in
+non-infrastructure containers, dumps each (`-Fc`), records tables/rows per
+dump in `app-manifests/<stamp>.json`, retains 14 days. Non-Postgres images
+fail the run with an explicit coverage gap (only Postgres has a native
+dumper here).
 
-Also record the Coolify version associated with restore tests. The restore flow can require reinstalling the matching version before migrations are applied.
+Restore: `scripts/rollback-app-workloads.sh` (probe mode restores each dump
+into a disposable container with createdb-first `pg_restore`, verifies
+tables-exact + rows->=, reports `RESTORE_OK`); `--recreate NAME --db-password`
+brings a destroyed workload back into service from the recorded topology
+(networks, ports, restart+max, healthcheck with healthy-convergence wait,
+env, labels — pgdata recreated empty, dump restore authoritative, fresh
+superuser credential) with tables/rows parity per database.
 
-## 3. Database backups
+Live proofs 2026-09-14: seeded shop DB (4 rows + sku files), runtime stack,
+and `dbproof-*` (custom network, port mapping, `on-failure:3`, healthcheck,
+3 rows) — all destroyed then restored byte-exact with `CONNECT_OK`
+app→DB verification.
 
-For every stateful database managed by Coolify, configure its own scheduled backup.
+## 4. Persistent application storage (automated)
 
-Examples:
-
-- PostgreSQL
-- MySQL/MariaDB
-- MongoDB
-- ClickHouse where supported by Coolify
-
-Use Cloudflare R2 as the remote S3 destination.
-
-Suggested baseline for important databases:
-
-```text
-frequency: daily, or more often if the data-loss window requires it
-retention: 14-30 days
-remote copy: required
-```
-
-For important/high-write databases, choose the schedule based on the acceptable recovery-point objective rather than copying the example blindly.
-
-After configuring each database, trigger one manual backup and verify it in R2.
-
-## 4. Persistent application storage
-
-Applications often store state outside a database, for example:
-
-- uploaded files
-- SQLite files
-- generated assets
-- service configuration
-- application-specific data directories
-
-Coolify can schedule backups for supported volume/directory mounts to S3-compatible storage.
-
-This platform additionally runs an executable host-level procedure
-(`scripts/backup-app-workloads.sh`, nightly via `coolify-backup.timer`)
-that dumps every application PostgreSQL database and snapshots every
-non-infrastructure Docker volume to R2 (`app-databases/`, `app-volumes/`,
-`app-manifests/`, 14-day retention) — proven live 2026-09-14 against a
-disposable seeded workload (3 known rows + 2 known files destroyed, then
-restored byte-identical from R2; see the evidence register). Instance scope
-is covered by `scripts/schedule-coolify-backup.sh` + `scripts/rollback-coolify-backup.sh` (RESTORE_OK).
+Same procedure: every non-infrastructure named volume is tar-snapshotted
+(`app-volumes/`), declared bind paths are snapshotted (`app-binds/`), and
+the manifest records per-volume file counts plus the full container topology
+(image, env with secrets `REDACTED`, ports, networks, labels, mounts,
+cmd/entrypoint/workdir/user/restart/healthcheck) for faithful recreation.
+Coverage gate fails closed on undeclared binds or non-Postgres stateful
+images; platform containers (`coolify*` names, `coollabsio/*` images) are
+excluded by design.
 
 For every deployed app, explicitly answer:
 
 > If this container and VPS disappear right now, where does its irreplaceable state live and how is that state restored?
 
-If the answer includes a mount, back it up.
-
-Important: Coolify's current storage-backup UI creates/downloads archives, but restore may still be a manual process. Test it on a separate path/environment before trusting it.
+If the answer includes a mount, it is already covered when it is a named
+volume (nightly) — or declare the bind path via `APP_BIND_PATHS`.
 
 ## 5. OVH Automated Backup
 
-Current OVH VPS documentation states that newly ordered VPS services include **one daily Automated backup as a free service option**.
+Current OVH VPS documentation states that newly ordered VPS services include
+**one daily Automated backup as a free service option**.
 
 In OVH Control Panel:
 
@@ -118,9 +122,7 @@ In OVH Control Panel:
 
 Verify it is enabled and choose a sensible UTC backup time.
 
-This is a useful entire-server safety net and allows either restoration or mounting the backup to retrieve files.
-
-However:
+This is a useful entire-server safety net. However:
 
 - do not make it the only backup;
 - automated backups do not include additional disks;
@@ -128,7 +130,8 @@ However:
 
 ### QEMU guest agent
 
-OVH recommends ensuring `qemu-guest-agent` is available so snapshots can prepare the filesystem more cleanly.
+OVH recommends ensuring `qemu-guest-agent` is available so snapshots can
+prepare the filesystem more cleanly.
 
 Check:
 
@@ -159,62 +162,38 @@ OVH VPS snapshots are useful before things such as:
 - major Coolify change
 - risky infrastructure experiment
 
-They are **not** the long-term backup strategy. OVH explicitly describes snapshots as a convenience before risky changes rather than a complete backup solution.
+They are **not** the long-term backup strategy. Only one active snapshot at
+a time is permitted, so treat it as a temporary rollback point.
 
-Current OVH VPS snapshot behaviour also permits only one active snapshot at a time, so treat it as a temporary rollback point.
+## 7. Restore drill: Coolify control plane — DONE 2026-09-14
 
-## 7. Restore drill: Coolify control plane
-
-Do this at least once before the host becomes important.
-
-Current Coolify restore requirements include:
-
-- a `.dmp` Coolify database backup;
-- the original `APP_KEY`;
-- SSH access;
-- ideally the Coolify version associated with the backup;
-- Coolify SSH key material when replacing the host.
-
-High-level restore sequence:
-
-1. Prepare the same or replacement server.
-2. Install Coolify so `coolify-db` exists/runs.
-3. Copy the `.dmp` backup locally.
-4. Stop `coolify`, `coolify-redis` and `coolify-realtime`, leaving `coolify-db` running.
-5. Put the **saved original `APP_KEY`** into `/data/coolify/source/.env`. On a replacement install, replace only `APP_KEY`; keep newly generated DB settings that match the new containers.
-6. Restore the PostgreSQL dump with `pg_restore` according to the official Coolify restore guide.
-7. Restore Coolify SSH keys if replacing the machine.
-8. Re-run the Coolify installer, using the matching version if required.
-9. Verify dashboard, projects, localhost validation and credentials.
-10. Restore each application's database and persistent storage separately.
-
-Follow the official commands during an actual recovery because exact version-specific details may change:
+Proven via `rollback-coolify-backup.sh` (disposable probe restore +
+known-data verification + `RESTORE_OK`), not via dashboard clicks. The
+full bare-metal sequence (reinstall matching Coolify version, restore
+`APP_KEY`, `pg_restore`, SSH keys) follows the official guide during an
+actual recovery:
 
 https://coolify.io/docs/core/backup-and-recovery/instance-restore
 
-## 8. Restore drill: one real application
+## 8. Restore drill: real applications — DONE 2026-09-14
 
-Pick a non-critical app with a database or volume and prove the full path:
+Three destroyed-and-restored proofs (shop, runtime, dbproof) with known
+rows/files verified byte-identical post-restore plus `CONNECT_OK`
+service-connectivity checks. The procedure is
+`rollback-app-workloads.sh --recreate NAME --db-password`, fully
+noninteractive. See `docs/08-iac-redesign-evidence.md` for the per-proof
+record.
 
-1. create known test data;
-2. run database/volume backup;
-3. deploy a second disposable copy;
-4. restore the data into the disposable copy;
-5. confirm the known test data is present;
-6. write down any application-specific restore steps.
-
-This is much more valuable than simply seeing green backup jobs.
-
-## 9. Recommended backup matrix
+## 9. Backup matrix (live)
 
 | Data | Destination | Frequency | Restore tested? |
 |---|---|---:|---:|
-| Coolify `APP_KEY` | password/secrets manager | after install/change | yes |
-| Coolify SSH keys | encrypted off-host backup | after key changes | yes |
-| Coolify instance DB | R2 | daily | yes |
-| Application DBs | R2 | daily or better | yes |
-| Persistent mounts | R2 | daily/weekly based on change rate | yes |
-| Whole VPS | OVH Automated Backup | daily | yes |
+| Coolify `APP_KEY` | OpenBao `COOLIFY_ADMIN` | after install/change | yes |
+| Coolify SSH keys | OpenBao | after key changes | yes |
+| Coolify instance DB | R2 (host timer) | daily | yes (`RESTORE_OK` 2026-09-14) |
+| Application DBs | R2 `app-databases/` | daily | yes (3 live recreates) |
+| Persistent mounts | R2 `app-volumes/`/`app-binds/` | daily | yes (byte-identical) |
+| Whole VPS | OVH Automated Backup | daily | operator to verify in panel |
 | Pre-change rollback | OVH snapshot | before risky changes | when used |
 
 ## 10. Backup failure is an alert
@@ -227,25 +206,27 @@ Configure Coolify notifications for at least:
 - deployment failures;
 - server/container health where useful.
 
-If email/notification delivery itself lives on this VPS, use an external notification path for infrastructure failures where practical.
+If email/notification delivery itself lives on this VPS, use an external
+notification path for infrastructure failures where practical. (No
+notification channel is configured yet — dashboard nags about it.)
 
 ## Done when
 
-- [ ] `APP_KEY` exists outside the VPS
-- [ ] Coolify instance DB is backed up to R2
-- [ ] every important database has its own R2 backup
-- [ ] every irreplaceable volume/directory is identified and backed up
-- [ ] OVH daily Automated Backup is verified
-- [ ] `qemu-guest-agent` is active if supported
-- [ ] one Coolify restore has been tested
-- [ ] one real application-data restore has been tested
+- [x] `APP_KEY` exists outside the VPS (OpenBao `COOLIFY_ADMIN`)
+- [x] Coolify instance DB is backed up to R2 (nightly timer; `RESTORE_OK`)
+- [x] every important database has its own R2 backup (per-DB dumps + manifest)
+- [x] every irreplaceable volume/directory is identified and backed up (coverage gate enforces)
+- [ ] OVH daily Automated Backup is verified (operator: check the panel)
+- [ ] `qemu-guest-agent` is active if supported (operator: check on host)
+- [x] one Coolify restore has been tested (probe restore 2026-09-14)
+- [x] one real application-data restore has been tested (three, 2026-09-14)
 
 Next: [06. Operations and upgrades](06-operations.md)
 
 ## References
 
 - Coolify restore: https://coolify.io/docs/core/backup-and-recovery/instance-restore
-- Coolify R2: https://coolify.io/docs/core/s3-storage/r2
-- Coolify storage backups: https://coolify.io/docs/core/persistent-storage/storage-mounts/backups
 - OVH automated VPS backup: https://docs.ovhcloud.com/en/guides/bare-metal-cloud/virtual-private-servers/using-automated-backups-on-a-vps
 - OVH VPS snapshots: https://docs.ovhcloud.com/en/guides/bare-metal-cloud/virtual-private-servers/using-snapshots-on-a-vps
+- Evidence register: `docs/08-iac-redesign-evidence.md`
+- Rotation: `docs/secret-rotation.md` (four-field R2 contract)

@@ -51,11 +51,10 @@ never retroactively): pick one before provisioning —
 1. order/install the VPS with an existing key and pass `PROVISION_SSH_KEY`; or
 2. mint one first (`bash scripts/run-remote-provision.sh --generate-key-only`
    prints the escrowed public key) and inject it at order time; or
-3. for an already-ordered EMPTY host, reinstall with the key injected:
-   `PROVISION_OVH_SERVICE=<service> bash scripts/run-remote-provision.sh`
-   `--reinstall-with-key --i-confirm-host-is-fresh` (DESTRUCTIVE, refuses the
-   preserved service). Without a working key the runner fails closed with
-   this guidance instead of proceeding hopefully.
+3. for an already-ordered EMPTY host, reinstall with the key injected (one command):
+   `PROVISION_OVH_SERVICE=<service> bash scripts/run-remote-provision.sh --reinstall-with-key --i-confirm-host-is-fresh`
+   (DESTRUCTIVE, refuses the preserved service). Without a working key the
+   runner fails closed with this guidance instead of proceeding hopefully.
 First use without `ROOT_USER_PASSWORD` generates and escrows it.
 
 Dry-run first if you like: append `--dry-run` (no network touched), or limit

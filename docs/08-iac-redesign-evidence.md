@@ -727,3 +727,29 @@
 - Incidental finds fixed: backup `s3 put-object` typo on gaps path (now
   `aws s3api put-object`); `coollabsio/*` platform containers excluded from
   coverage + recording by image (hash-named helper no longer trips the gate).
+
+## 2026-09-14 — auditor full-report round (R2 row, adoption, docs, gate)
+
+- Coolify-side R2 copy removed: `s3_storages` id 1 deleted after proving zero
+  references (both schedule tables empty; avatar/icon FKs all NULL). Purged
+  all R2 `coolify-db-*.dump.gz` keys that contained the old row (6/6);
+  tonight's timer reseeds a clean dump. Host holds scripts + accessor token
+  only; OpenBao remains the sole escrow. Do NOT re-create the destination.
+- Fresh path converged by construction: wire creates Access apps with
+  `allowed_idps=[]` (human OTP enforced by the prec-2 email policy, mirroring
+  converged Terraform); emit generates exact live app names (no `Fresh `
+  prefix) and no DNS comment (wire creates none). Runner now calls
+  `adopt-fresh-edge.sh --handoff --apply` (imports + requires zero-change
+  second plan) instead of logging a manual step. Rehearsal asserts all five
+  exactness properties on synthetic output.
+- `docs/05-backup-recovery.md` rewritten to the automated reality (timer
+  planes primary, drills marked DONE with dates, checklist checked except
+  operator-side OVH panel items); rotation doc forbids destination re-create;
+  quickstart reinstall is one copy-pasteable command.
+- Gate durability: `validate-repository.sh` inits/validates in a disposable
+  copy (live `infra/terraform/.terraform` removed) after diagnosing that a
+  backend-bound local init breaks credential-free gates against ambient
+  `~/.aws` keys. Live convergence re-proven from a disposable backend copy:
+  `No changes. Your infrastructure matches the configuration.`
+- Host timer companions refreshed to current scripts (pre-coollabsio
+  exclusion would have failed tonight's run on the helper container).

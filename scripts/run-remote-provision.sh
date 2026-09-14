@@ -511,7 +511,12 @@ if want_stage edge; then
   log "edge handoff recorded at ${handoff_file} (gitignored; feed to emit-fresh-imports.sh)."
   run env CLOUDFLARE_ACCOUNT_ID="$cf_account" CLOUDFLARE_ZONE_ID="$cf_zone" \
     bash "$repo_root/scripts/emit-fresh-imports.sh" --handoff "$handoff_file"
-  log 'fresh IaC generated in infra/terraform-fresh (main.tf + imports.tf); adopt with scripts/adopt-fresh-edge.sh --handoff.'
+  log 'fresh IaC generated in infra/terraform-fresh (main.tf + imports.tf).'
+  # Adopt into state NOW (not a later manual step): imports the API-created
+  # resources and requires a zero-change second plan (fail closed on drift).
+  run env BAO_ADDR="$bao_addr" CLOUDFLARE_ACCOUNT_ID="$cf_account" \
+    CLOUDFLARE_ZONE_ID="$cf_zone" \
+    bash "$repo_root/scripts/adopt-fresh-edge.sh" --handoff "$handoff_file" --apply
   # Complete service-token lifecycle AFTER wiring (operator side): the token
   # was created/escrowed before retrieval (ensure-only); now that the Access
   # application and DNS route exist, the full run proves HTTP 200.

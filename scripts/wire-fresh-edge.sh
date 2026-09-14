@@ -125,8 +125,9 @@ acct="$CLOUDFLARE_ACCOUNT_ID"; zone="$CLOUDFLARE_ZONE_ID"; tid="$TUNNEL_ID"
 target="${tid}.cfargotunnel.com"
 handoff_routes='[]'
 
-otp_uid="$(api "https://api.cloudflare.com/client/v4/accounts/${acct}/access/identity_providers" | python3 -c 'import json,sys; print(next((i["id"] for i in json.load(sys.stdin).get("result",[]) if i.get("type")=="onetimepin"),""))')"
-[ -n "$otp_uid" ] || { echo 'OTP identity provider not found in account (fail closed).' >&2; exit 2; }
+# Human access is enforced by the 'Allow ksonny4@gmail.com' email policy
+# (precedence 2), mirroring the converged Terraform: app-level allowed_idps
+# stays empty so API-created apps match generated config exactly.
 
 # --- 1. tunnel ingress, all routes at once (idempotent) ---
 # Wanted pairs travel as argv (clean JSON throughout; no string surgery on
@@ -167,7 +168,7 @@ for host in $hostnames; do
   if [ "$host" = "$EDGE_HOSTNAME" ]; then app_name="Coolify Dashboard"; else app_name="Coolify SSH Administration"; fi
   app_id="$(api "https://api.cloudflare.com/client/v4/accounts/${acct}/access/apps?domain=${host}" | python3 -c 'import json,sys; r=json.load(sys.stdin).get("result",[]); print(r[0].get("id","") if r else "")')"
   if [ -z "$app_id" ]; then
-    app_id="$(apost -d '{"name":"'"${app_name}"'","domain":"'"${host}"'","type":"self_hosted","session_duration":"24h","auto_redirect_to_identity":false,"allowed_idps":["'"${otp_uid}"'"],"enable_binding_cookie":true}' "https://api.cloudflare.com/client/v4/accounts/${acct}/access/apps" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("result",{}).get("id",""))')"
+    app_id="$(apost -d '{"name":"'"${app_name}"'","domain":"'"${host}"'","type":"self_hosted","session_duration":"24h","auto_redirect_to_identity":false,"allowed_idps":[],"enable_binding_cookie":true}' "https://api.cloudflare.com/client/v4/accounts/${acct}/access/apps" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("result",{}).get("id",""))')"
     [ -n "$app_id" ] || { echo "Access app creation failed for ${host} (fail closed)." >&2; exit 2; }
     log "Access app created for ${host}."
   else

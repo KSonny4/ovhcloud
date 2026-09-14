@@ -249,6 +249,14 @@ CLOUDFLARE_ACCOUNT_ID=rehearsal CLOUDFLARE_ZONE_ID=rehearsal \
   || { echo 'emit generated config failed on synthetic handoff.' >&2; exit 1; }
 [ -f /tmp/rehearsal-fresh-out/main.tf ] && [ -f /tmp/rehearsal-fresh-out/imports.tf ] || { echo 'emitter omits main.tf/imports.tf.' >&2; exit 1; }
 grep -q 'non_identity' /tmp/rehearsal-fresh-out/main.tf || { echo 'generated apps diverge from the nested non_identity convention.' >&2; exit 1; }
+# Exactness: generated config must mirror API-created resources attribute for
+# attribute (live converged shape), so post-adoption plan is empty.
+grep -q 'name                      = "Coolify Dashboard"' /tmp/rehearsal-fresh-out/main.tf || { echo 'generated dashboard app name diverges from live.' >&2; exit 1; }
+grep -q 'name                      = "Coolify SSH Administration"' /tmp/rehearsal-fresh-out/main.tf || { echo 'generated ssh app name diverges from live.' >&2; exit 1; }
+grep -q '"Fresh ' /tmp/rehearsal-fresh-out/main.tf && { echo 'generated config carries Fresh-prefixed names.' >&2; exit 1; } || true
+grep -q 'allowed_idps              = \[\]' /tmp/rehearsal-fresh-out/main.tf || { echo 'generated apps diverge from converged empty allowed_idps.' >&2; exit 1; }
+grep -q 'comment = "Fresh ' /tmp/rehearsal-fresh-out/main.tf && { echo 'generated DNS carries comments wire never creates.' >&2; exit 1; } || true
+! grep -q 'allowed_idps.*otp' scripts/wire-fresh-edge.sh || { echo 'wire still injects OTP into app creation.' >&2; exit 1; }
 if command -v terraform >/dev/null 2>&1; then
   cp infra/terraform-fresh/versions.tf infra/terraform-fresh/variables.tf /tmp/rehearsal-fresh-out/
   seed_providers /tmp/rehearsal-fresh-out

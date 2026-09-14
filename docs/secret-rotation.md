@@ -83,9 +83,11 @@ Why dashboard: R2 token routes return 404 under the deployment token.
    `bao kv put -mount=secret projects/ovhcloud/COOLIFY_R2
    access_key_id=<id> secret_access_key=<secret> bucket=ovh-coolify-backups
    endpoint=https://<account-id>.r2.cloudflarestorage.com`
-3. Rewire downstream and verify:
-   - Coolify destination: update `s3_storages` row id 1 (`key`, `secret`;
-     `endpoint` is account-scoped and unchanged by rotation).
+3. Verify (nothing to rewire):
+   - Coolify holds NO R2 copy: the `s3_storages` destination row was deleted
+     2026-09-14 after proving zero references (no schedules, no avatars or
+     icons point at it). Do NOT re-create it — the host timer is the single
+     backup plane, and a new row would reintroduce an at-rest credential.
    - Host: nothing to rewrite — the timer pulls memory-only via
      `fetch-r2-env.sh` on every run, so new keys take effect automatically.
    - `eval "$(BAO_ADDR=https://secrets.pkubelka.cz bash scripts/tf-env-from-openbao.sh)"`
