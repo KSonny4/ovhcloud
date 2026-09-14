@@ -87,6 +87,7 @@ refuse_preserved_host "$host" || exit 2
 generated_key_dir=''
 ssh_pub_file=''
 derived_pub_file=''
+key_generated=0
 # Live-only credential preparation runs after the dry-run early exit below;
 # dry-run logs the plan without generating keys or touching OVH/OpenBao.
 prepare_operator_credentials() {
@@ -107,6 +108,7 @@ if [ -z "$ssh_key" ] || [ ! -e "$ssh_key" ]; then
   fi
   ssh_key="${generated_key_dir}/id_ed25519"
   ssh_pub_file="${generated_key_dir}/id_ed25519.pub"
+  key_generated=1
 else
   ssh_pub_file="${ssh_key}.pub"
   if [ ! -f "$ssh_pub_file" ]; then
@@ -169,7 +171,13 @@ else:
     print(f'OVH account key {want!r} registered.')
 PY
 else
-  echo 'WARNING: ~/.ovh.conf absent; OVH account key registration skipped (order-time injection then manual).' >&2
+  # Fail closed only when skipping strands a freshly generated key (nothing
+  # else could have distributed it). A supplied key stays operator-owned.
+  if [ "$key_generated" -eq 1 ]; then
+    echo '~/.ovh.conf absent; cannot register the generated key at OVH (fail closed).' >&2
+    exit 2
+  fi
+  echo 'WARNING: ~/.ovh.conf absent; OVH account key registration skipped (supplied key stays operator-distributed).' >&2
 fi
 } # prepare_operator_credentials
 log "target host: ${host} (user ${ssh_user})"
@@ -179,7 +187,9 @@ log "coolify version: ${coolify_version}"
 log "stages: ${stages}"
 log "dry run: ${dry_run}"
 
-ssh_opts=(-i "$ssh_key" -o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new)
+# ssh_opts is (re)built AFTER credential preparation: generation may replace
+# an empty ssh_key, and a stale `-i ""` would break every remote stage.
+ssh_opts=()
 remote_dir='/tmp/ovh-provision'
 remote_touched=0
 env_file=''
@@ -228,6 +238,7 @@ fi
 command -v bao >/dev/null 2>&1 || { echo 'bao CLI is required on the operator machine.' >&2; exit 2; }
 export BAO_ADDR="$bao_addr"
 prepare_operator_credentials
+ssh_opts=(-i "$ssh_key" -o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new)
 
 # Admin bootstrap credentials are OpenBao-managed end to end: operator values
 # take precedence, otherwise the runner generates a password and escrows the
@@ -268,7 +279,8 @@ log 'OpenBao retrieval ok (all required fields present).'
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 env_file="$(mktemp /tmp/ovh-provision-env.XXXXXX)"
 chmod 600 "$env_file"
-trap 'rm -f "$env_file"' EXIT
+# NOTE: the single EXIT trap installed near the top already covers env file +
+# generated keys + remote material on every path; do NOT install another here.
 cat >"$env_file" <<ENV_EOF
 BOOTSTRAP_TARGET_HOST=${host}
 BOOTSTRAP_SSH_PUBLIC_KEY=${ssh_pub}
