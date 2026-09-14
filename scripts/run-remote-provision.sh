@@ -135,24 +135,25 @@ fi
 # any base64 symbols, lowercase for tidiness.
 key_fingerprint="$(ssh-keygen -lf "$ssh_pub_file" 2>/dev/null | awk '{print $2}' | tr -cd 'a-zA-Z0-9' | cut -c1-16 | tr '[:upper:]' '[:lower:]')"
 if [ -z "$key_fingerprint" ]; then echo 'cannot fingerprint the SSH public key.' >&2; exit 2; fi
-if [ -f "$HOME/.ovh.conf" ]; then
+# OVH authorization arrives ONLY from OpenBao (OVH_API entry) via environment;
+# The local OVH credential file is never read (see the rehearsal gate). Missing escrow fails
+# closed when a generated key would be stranded; a supplied key stays
+# operator-distributed.
+ovh_ak="$(bao kv get -field=application_key secret/projects/ovhcloud/OVH_API 2>/dev/null || true)"
+ovh_as="$(bao kv get -field=application_secret secret/projects/ovhcloud/OVH_API 2>/dev/null || true)"
+ovh_ck="$(bao kv get -field=consumer_key secret/projects/ovhcloud/OVH_API 2>/dev/null || true)"
+ovh_ep="$(bao kv get -field=endpoint secret/projects/ovhcloud/OVH_API 2>/dev/null || true)"
+if [ -n "$ovh_ak" ] && [ -n "$ovh_as" ] && [ -n "$ovh_ck" ] && [ -n "$ovh_ep" ]; then
   OVH_KEY_NAME="ovh-coolify-${key_fingerprint}"
   export OVH_KEY_NAME OVH_PUB_FILE="$ssh_pub_file"
+  export OVH_ENDPOINT="$ovh_ep" OVH_APPLICATION_KEY="$ovh_ak" OVH_APPLICATION_SECRET="$ovh_as" OVH_CONSUMER_KEY="$ovh_ck"
+  ovh_ak=''; ovh_as=''; ovh_ck=''
   python3 - <<'PY'
 import hashlib, json, os, sys, time, urllib.request, urllib.error
-def load(p):
-    d = {}
-    for line in open(os.path.expanduser(p)):
-        line = line.strip()
-        if '=' in line and not line.startswith('[') and not line.startswith('#'):
-            k, v = line.split('=', 1)
-            d[k.strip()] = v.strip()
-    return d
 try:
-    c = load('~/.ovh.conf')
-    ak, ash, ck = c['application_key'], c['application_secret'], c['consumer_key']
-except Exception as e:
-    sys.exit(f'OVH credentials unreadable, skipping account key registration: {e}')
+    ak, ash, ck = os.environ['OVH_APPLICATION_KEY'], os.environ['OVH_APPLICATION_SECRET'], os.environ['OVH_CONSUMER_KEY']
+except KeyError as e:
+    sys.exit(f'OVH credentials missing from environment, skipping account key registration: {e}')
 def call(method, path, body=None):
     url = 'https://eu.api.ovh.com/1.0' + path
     data = json.dumps(body).encode() if body is not None else None
@@ -181,10 +182,10 @@ else
   # Fail closed only when skipping strands a freshly generated key (nothing
   # else could have distributed it). A supplied key stays operator-owned.
   if [ "$key_generated" -eq 1 ]; then
-    echo "OVH credentials file absent ($HOME/.ovh.conf); cannot register the generated key at OVH (fail closed)." >&2
+    echo 'OVH_API escrow incomplete in OpenBao; cannot register the generated key at OVH (fail closed).' >&2
     exit 2
   fi
-  echo "WARNING: OVH credentials file absent ($HOME/.ovh.conf); key registration skipped (supplied key stays operator-distributed)." >&2
+  echo 'WARNING: OVH_API escrow incomplete in OpenBao; key registration skipped (supplied key stays operator-distributed).' >&2
 fi
 } # prepare_operator_credentials
 log "target host: ${host} (user ${ssh_user})"
@@ -272,6 +273,16 @@ if [ "$reinstall_with_key" -eq 1 ]; then
     exit 2
   fi
   command -v ovhcloud >/dev/null 2>&1 || { echo 'ovhcloud CLI is required for reinstall mode.' >&2; exit 2; }
+  # Reinstall authenticates the CLI from OpenBao escrow (never a local file).
+  OVH_ENDPOINT="$(bao kv get -field=endpoint secret/projects/ovhcloud/OVH_API 2>/dev/null || true)"
+  OVH_APPLICATION_KEY="$(bao kv get -field=application_key secret/projects/ovhcloud/OVH_API 2>/dev/null || true)"
+  OVH_APPLICATION_SECRET="$(bao kv get -field=application_secret secret/projects/ovhcloud/OVH_API 2>/dev/null || true)"
+  OVH_CONSUMER_KEY="$(bao kv get -field=consumer_key secret/projects/ovhcloud/OVH_API 2>/dev/null || true)"
+  export OVH_ENDPOINT OVH_APPLICATION_KEY OVH_APPLICATION_SECRET OVH_CONSUMER_KEY
+  if [ -z "$OVH_APPLICATION_KEY" ] || [ -z "$OVH_APPLICATION_SECRET" ] || [ -z "$OVH_CONSUMER_KEY" ]; then
+    echo 'OVH_API escrow incomplete in OpenBao; cannot reinstall (fail closed).' >&2
+    exit 2
+  fi
   image_id="${PROVISION_IMAGE_ID:-}"
   if [ -z "$image_id" ]; then
     log 'resolving newest Ubuntu LTS image for the service...'
@@ -435,10 +446,15 @@ if want_stage edge; then
   fi
   if [ -z "$tunnel_id" ]; then echo 'tunnel identity unresolvable in OpenBao (ensure-tunnel must run first).' >&2; exit 2; fi
   log '== fresh-edge wiring (operator side) =='
+  handoff_file="${repo_root}/.fresh-handoff-${tunnel_slug}.json"
   run env BAO_ADDR="$bao_addr" CLOUDFLARE_ACCOUNT_ID="$cf_account" \
     CLOUDFLARE_ZONE_ID="$cf_zone" TUNNEL_ID="$tunnel_id" \
-    EDGE_HOSTNAME="$dashboard_host" \
-    bash "$repo_root/scripts/wire-fresh-edge.sh"
+    EDGE_HOSTNAME="$dashboard_host" SSH_HOSTNAME="ssh.${zone}" \
+    bash "$repo_root/scripts/wire-fresh-edge.sh" --handoff-file "$handoff_file"
+  log "edge handoff recorded at ${handoff_file} (gitignored; feed to emit-fresh-imports.sh)."
+  run env CLOUDFLARE_ACCOUNT_ID="$cf_account" CLOUDFLARE_ZONE_ID="$cf_zone" \
+    bash "$repo_root/scripts/emit-fresh-imports.sh" --handoff "$handoff_file" > "${handoff_file%.json}.imports.tf.txt"
+  log "import blocks written to ${handoff_file%.json}.imports.tf.txt (review, add fresh_* resources, terraform import)."
   # Complete service-token lifecycle first (operator side, OpenBao-complete):
   # ensures the token exists, escrows the pair, and proves HTTP 200.
   log '== service-token lifecycle (operator side) =='

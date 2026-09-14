@@ -14,7 +14,7 @@ authorization), and every derived secret is escrowed back to OpenBao.
 ## Prerequisites (operator machine)
 
 - `bao` authenticated against `https://secrets.pkubelka.cz` (runner identity).
-- `ovhcloud` CLI with API credentials (`~/.ovh.conf`) for VPS discovery.
+- `ovhcloud` CLI (authorization comes from the OpenBao `OVH_API` entry via `OVH_*` env; no credential file) for VPS discovery.
 - An SSH client. No pre-existing keypair is required (the runner generates +
   escrows one when absent); no Terraform values need hand-editing.
 

@@ -149,6 +149,11 @@ grep -q 'fetch-r2-env.sh' scripts/schedule-coolify-backup.sh || { echo 'schedule
 if grep -rnE '(tee|>)[^|]*r2\.env' scripts/*.sh | grep -v test-clean-target-install >/dev/null; then echo 'a script still writes r2.env.' >&2; exit 1; fi
 if grep -q 'EnvironmentFile=.*r2' scripts/schedule-coolify-backup.sh; then echo 'unit still consumes a credential EnvironmentFile.' >&2; exit 1; fi
 grep -q 'wire-fresh-edge.sh' scripts/run-remote-provision.sh || { echo 'runner omits fresh-edge wiring.' >&2; exit 1; }
+# OVH authorization boundary: no script may read the local OVH credential file; OVH_* must come
+# from the OpenBao OVH_API escrow.
+if grep -rn '\.ovh\.conf' scripts/*.sh scripts/lib/*.sh 2>/dev/null | grep -v 'rehearse-fresh-environment.sh' | grep -q .; then echo 'a script still depends on the local OVH credential file.' >&2; exit 1; fi
+grep -q 'OVH_API' scripts/tf-env-from-openbao.sh || { echo 'loader omits the OVH_API escrow.' >&2; exit 1; }
+grep -q 'export OVH_APPLICATION_KEY' scripts/tf-env-from-openbao.sh scripts/run-remote-provision.sh || { echo 'OVH_* env emission missing.' >&2; exit 1; }
 # First-access determinism gates: key-only minting, destructive reinstall
 # with freshness confirmation, and fail-closed SSH probe with guidance.
 for gate in --generate-key-only --reinstall-with-key --i-confirm-host-is-fresh; do
@@ -159,6 +164,31 @@ grep -q 'Deterministic options' scripts/run-remote-provision.sh || { echo 'runne
 # a credential file, ever.
 if grep -rn -- '--env-file' scripts/backup-app-workloads.sh scripts/rollback-coolify-backup.sh scripts/schedule-coolify-backup.sh scripts/fetch-r2-env.sh >/dev/null; then echo 'a backup/rollback script still accepts --env-file.' >&2; exit 1; fi
 if grep -rn "source \"\\\$env_file\"" scripts/backup-app-workloads.sh scripts/rollback-coolify-backup.sh >/dev/null; then echo 'a backup/rollback script still sources a credential file.' >&2; exit 1; fi
+# Complete administration path: the runner must wire BOTH dashboard and SSH
+# routes (DNS + ingress + Access), and record the Terraform handoff.
+for gate in 'SSH_HOSTNAME=' '--handoff-file' 'emit-fresh-imports.sh'; do
+  grep -q -- "$gate" scripts/run-remote-provision.sh || { echo "runner omits complete edge path: ${gate}." >&2; exit 1; }
+done
+for gate in 'SSH_HOSTNAME' 'ssh://localhost:22' 'access_app_id' 'emit-fresh-imports'; do
+  grep -q -- "$gate" scripts/wire-fresh-edge.sh || { echo "wire script omits SSH/Access/handoff: ${gate}." >&2; exit 1; }
+done
+log '== edge_routes (dry-run, zero network) =='
+CLOUDFLARE_ACCOUNT_ID=rehearsal CLOUDFLARE_ZONE_ID=rehearsal TUNNEL_ID=rehearsal-tunnel \
+  EDGE_HOSTNAME=coolify.rehearsal.invalid SSH_HOSTNAME=ssh.rehearsal.invalid \
+  bash scripts/wire-fresh-edge.sh --dry-run --handoff-file /tmp/rehearsal-handoff.json > /tmp/rehearsal-edge.log 2>&1 \
+  || { echo 'wire dry-run failed.' >&2; exit 1; }
+for host in coolify.rehearsal.invalid ssh.rehearsal.invalid; do
+  grep -q "$host" /tmp/rehearsal-edge.log || { echo "wire dry-run omits route: ${host}." >&2; exit 1; }
+done
+grep -q 'ssh://localhost:22' /tmp/rehearsal-edge.log || { echo 'wire dry-run omits the ssh ingress route.' >&2; exit 1; }
+rm -f /tmp/rehearsal-handoff.json
+printf '{"tunnel_id":"t","routes":[{"hostname":"h","service":"s","dns_record_id":"d","access_app_id":"a","policy_ids":["p"]}]}' > /tmp/rehearsal-handoff.json
+CLOUDFLARE_ACCOUNT_ID=rehearsal CLOUDFLARE_ZONE_ID=rehearsal \
+  bash scripts/emit-fresh-imports.sh --handoff /tmp/rehearsal-handoff.json > /tmp/rehearsal-imports.log 2>&1 \
+  || { echo 'emit imports failed on synthetic handoff.' >&2; exit 1; }
+grep -q 'accounts/rehearsal/a' /tmp/rehearsal-imports.log || { echo 'emit imports omits the access app block.' >&2; exit 1; }
+rm -f /tmp/rehearsal-handoff.json
+log 'edge routes proven in dry-run: dashboard + ssh ingress/DNS/Access planned, handoff import blocks emit.'
 log 'runner dry-run idempotent across two passes; all four stages present; backup companion staged + scheduled; fileless R2 delivery enforced; fresh edge wired; no network touched.'
 phase_ok runner_channel | tee -a "$artifact_dir/phases.log"
 

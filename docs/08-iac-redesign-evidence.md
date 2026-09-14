@@ -496,3 +496,25 @@
   API call) on top of the existing hostname guard.
 - Drive-by fix: `/me/sshKey` returns name strings, not objects — the
   registration dedup crashed on non-empty accounts; now handles both shapes.
+
+## 2026-09-14 — OVH via OpenBao + complete SSH admin path + import handoff (audit round)
+
+- OVH authorization is now OpenBao-only: new `OVH_API` entry
+  (`application_key`, `application_secret`, `consumer_key`, `endpoint`;
+  escrowed once from the operator file, values never printed — first attempt
+  teased out that `kv put` overwrites, so all four went in one atomic put).
+  `tf-env-from-openbao.sh` exports `OVH_*` (env-native for provider + CLI)
+  before discovery; the runner's key-registration and reinstall paths read
+  env only. Proven with the credential file hidden: discovery + validate
+  pass. Rehearsal fails on any `ovh.conf` reference in scripts.
+- Complete administration path: `wire-fresh-edge.sh` now wires dashboard AND
+  ssh hostnames (ingress `http://127.0.0.1:8000` + `ssh://localhost:22`,
+  both CNAMEs, self-hosted Access app + service-token/email policies per
+  host, dashboard-200 + ssh-gated-status verification). Proven with
+  disposables (tunnel create, ssh ingress PUT 200, app + both policies 201,
+  GET confirms precedence 1/2, app + tunnel deleted, 0 remaining). Runner
+  passes `SSH_HOSTNAME=ssh.<zone>` + `--handoff-file`; rehearsal asserts both
+  routes in dry-run output.
+- IaC handoff: `--handoff-file` JSON + `scripts/emit-fresh-imports.sh`
+  emitting exact v5.25 import blocks (verified on synthetic handoff), so the
+  API-created edge is adopted into state instead of diverging.
