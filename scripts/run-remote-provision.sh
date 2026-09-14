@@ -225,6 +225,7 @@ want_stage() {
 if [ "$dry_run" -eq 1 ]; then
   log 'DRY-RUN: verify SSH connectivity (ssh -BatchMode user@host true)'
   log 'DRY-RUN: prepare credentials (generate + escrow SSH keypair when absent, register OVH account key, retrieve OpenBao fields by name); generate + escrow bootstrap password when ROOT_USER_PASSWORD absent (fail closed)'
+  log 'DRY-RUN: run ensure-tunnel.sh (existing escrow no-op, else create via API + escrow) before credential retrieval'
   log 'DRY-RUN: run ensure-service-token.sh (ensure/create/escrow/verify HTTP 200) before the edge stage'
   log 'DRY-RUN: scp stage scripts (only) to /tmp/ovh-provision; credentials travel as a base64 env blob inside each SSH command (memory-only both ends)'
   want_stage bootstrap && log 'DRY-RUN: remote sudo BOOTSTRAP_TARGET_HOST/BOOTSTRAP_SSH_PUBLIC_KEY bash bootstrap-vps.sh + verify docker hello-world'
@@ -263,6 +264,17 @@ log 'checking SSH connectivity...'
 run ssh "${ssh_opts[@]}" "${ssh_user}@${host}" true
 log 'SSH connectivity ok.'
 
+# Tunnel lifecycle first (operator side, OpenBao-complete): an existing
+# escrow is a no-op; a missing one is created via API + escrowed BEFORE any
+# stage consumes it, so fresh provisioning never depends on dashboard-made
+# secrets. R2 keys stay dashboard-gated (API issuance 403/404, documented).
+repo_root="$(cd "$(dirname "$0")/.." && pwd)"
+tunnel_slug="$(printf '%s' "$host" | tr -c 'a-zA-Z0-9-' '-' | tr '[:upper:]' '[:lower:]')"
+log '== tunnel lifecycle (operator side) =='
+run env BAO_ADDR="$bao_addr" CLOUDFLARE_ACCOUNT_ID="$cf_account" \
+  TUNNEL_NAME="${TUNNEL_NAME:-coolify-${tunnel_slug}}" \
+  bash "$repo_root/scripts/ensure-tunnel.sh"
+
 log 'retrieving stage credentials from OpenBao (names only, values never printed)...'
 ssh_pub="$(bao_get COOLIFY_SSH_PUBLIC_KEY value)"
 tunnel_token="$(bao_get COOLIFY_TUNNEL_TOKEN tunnel_token)"
@@ -276,7 +288,6 @@ for v in ssh_pub tunnel_token svc_id svc_secret r2_ak r2_sk r2_bucket; do
 done
 log 'OpenBao retrieval ok (all required fields present).'
 
-repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 # NOTE: the single EXIT trap installed near the top covers generated keys +
 # remote material on every path; do NOT install another here.
 #
@@ -312,8 +323,11 @@ remote_env_blob="$( { qline BOOTSTRAP_TARGET_HOST "$host"
 log 'copying stage scripts to the target (no credential files)...'
 run ssh "${ssh_opts[@]}" "${ssh_user}@${host}" "mkdir -p ${remote_dir}/lib && chmod 700 ${remote_dir} ${remote_dir}/lib"
 remote_touched=1
+# Both backup scripts travel together: schedule-coolify-backup.sh fails closed
+# on a clean host when its application-workload companion is absent.
 run scp -p "${ssh_opts[@]}" "$repo_root/scripts/bootstrap-vps.sh" "$repo_root/scripts/provision-coolify.sh" \
   "$repo_root/scripts/configure-tunnel-access.sh" "$repo_root/scripts/schedule-coolify-backup.sh" \
+  "$repo_root/scripts/backup-app-workloads.sh" \
   "${ssh_user}@${host}:${remote_dir}/"
 run scp -p "${ssh_opts[@]}" "$repo_root/scripts/lib/preserved-guard.sh" \
   "${ssh_user}@${host}:${remote_dir}/lib/"

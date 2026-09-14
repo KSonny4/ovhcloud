@@ -13,17 +13,25 @@
 #   fresh install); this host-level job protects the instance DB itself.
 #
 # Usage (on the host, as root):
-#   bash scripts/schedule-coolify-backup.sh [--env-file PATH] [--dry-run]
+#   bash scripts/schedule-coolify-backup.sh [--env-file PATH] [--dry-run] [--install-only]
+#
+# Testability: BACKUP_DIR and SYSTEMD_DIR override the install prefixes so a
+# clean-target test can run the NON-dry-run installer into an isolated prefix
+# (production paths untouched, host systemd untouched). --install-only skips
+# the immediate first-backup run (used by the clean-target test; the live
+# path always runs it).
 set -euo pipefail
 
 dry_run=0
+install_only=0
 env_file='/root/coolify-backup/r2.env'
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --dry-run) dry_run=1; shift ;;
+    --install-only) install_only=1; shift ;;
     --env-file) env_file="$2"; shift 2 ;;
     --env-file=*) env_file="${1#--env-file=}"; shift ;;
-    -h|--help) echo 'usage: schedule-coolify-backup.sh [--env-file PATH] [--dry-run]'; exit 0 ;;
+    -h|--help) echo 'usage: schedule-coolify-backup.sh [--env-file PATH] [--dry-run] [--install-only]'; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -68,8 +76,10 @@ if ! command -v docker >/dev/null 2>&1 && [ "$dry_run" -eq 0 ]; then
   exit 2
 fi
 
-backup_dir='/root/coolify-backup'
+backup_dir="${BACKUP_DIR:-/root/coolify-backup}"
+systemd_dir="${SYSTEMD_DIR:-/etc/systemd/system}"
 backup_script="${backup_dir}/backup-to-r2.sh"
+app_installed="${backup_dir}/backup-app-workloads.sh"
 log "backup dir: ${backup_dir}"
 
 if [ "$dry_run" -eq 1 ]; then
@@ -91,7 +101,7 @@ if [ -f "$app_src" ]; then
   run cp "$app_src" "${backup_dir}/backup-app-workloads.sh"
   run chmod 700 "${backup_dir}/backup-app-workloads.sh"
   log 'installed application-workload companion script.'
-elif [ ! -f "${backup_dir}/backup-app-workloads.sh" ] && [ "$dry_run" -eq 0 ]; then
+elif [ ! -f "$app_installed" ] && [ "$dry_run" -eq 0 ]; then
   echo 'backup-app-workloads.sh found neither beside this script nor installed; refusing to schedule a partial backup.' >&2
   exit 2
 fi
@@ -132,7 +142,7 @@ run chmod 700 "$backup_script"
 # The application-workload script must sit beside the instance script (the
 # runner/live operator scp's it there); the unit runs both sequentially and
 # fails if either fails.
-cat >/etc/systemd/system/coolify-backup.service <<SERVICE_EOF
+cat >"${systemd_dir}/coolify-backup.service" <<SERVICE_EOF
 [Unit]
 Description=Nightly Coolify instance + application workload backup to R2
 Wants=network-online.target
@@ -142,10 +152,10 @@ After=network-online.target docker.service
 Type=oneshot
 EnvironmentFile=${env_file}
 ExecStart=${backup_script}
-ExecStart=/root/coolify-backup/backup-app-workloads.sh
+ExecStart=${app_installed}
 SERVICE_EOF
 
-cat >/etc/systemd/system/coolify-backup.timer <<'TIMER_EOF'
+cat >"${systemd_dir}/coolify-backup.timer" <<'TIMER_EOF'
 [Unit]
 Description=Run Coolify R2 backup daily at 02:00 UTC
 
@@ -157,9 +167,25 @@ Persistent=true
 WantedBy=timers.target
 TIMER_EOF
 
-run systemctl daemon-reload
-run systemctl enable --now coolify-backup.timer
-log 'timer enabled: coolify-backup.timer (daily 02:00 UTC)'
+# An overridden SYSTEMD_DIR means an isolated clean-target test: verify the
+# unit files parse instead of touching host systemd.
+if [ "$systemd_dir" != '/etc/systemd/system' ]; then
+  if command -v systemd-analyze >/dev/null 2>&1; then
+    systemd-analyze verify "${systemd_dir}/coolify-backup.service" \
+      && log 'unit verified: coolify-backup.service parses (isolated prefix, host systemd untouched).'
+  else
+    log 'systemd-analyze unavailable; unit content asserted by the caller (host systemd untouched).'
+  fi
+else
+  run systemctl daemon-reload
+  run systemctl enable --now coolify-backup.timer
+  log 'timer enabled: coolify-backup.timer (daily 02:00 UTC)'
+fi
+
+if [ "$install_only" -eq 1 ]; then
+  log 'install-only: skipping the immediate first-backup run by request.'
+  exit 0
+fi
 
 # First backup now (proves the schedule works end to end).
 # shellcheck source=/dev/null

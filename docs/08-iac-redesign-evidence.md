@@ -388,3 +388,27 @@
   runbook moved to `docs/00-quickstart-legacy-manual.md` with a break-glass
   banner. `docs/05-backup-recovery.md` application section now references the
   executable procedure + live proof instead of manual restore.
+
+## 2026-09-14 — runner failure fixed + fresh secret lifecycle (audit round)
+
+- Runner now stages `backup-app-workloads.sh` alongside
+  `schedule-coolify-backup.sh` (the exact missing-shipment failure); the
+  schedule script self-installs the companion and fails closed otherwise.
+- Clean-target non-dry-run test `scripts/test-clean-target-install.sh`:
+  mirrors runner staging, runs the installer NON-dry-run into an isolated
+  prefix (BACKUP_DIR/SYSTEMD_DIR overrides + --install-only; production paths
+  and host systemd untouched), asserts exit 0, both scripts executable, both
+  ExecStart lines in the unit, timer present, `systemd-analyze verify`
+  passes. Result live: 7/7 ok, CLEAN-TARGET INSTALL TEST: PASS.
+- Rehearsal regression gate: runner scp list must contain
+  backup-app-workloads.sh and the schedule script must carry the workload
+  ExecStart (fails the gate otherwise).
+- Fresh secret lifecycle `scripts/ensure-tunnel.sh` (operator side,
+  OpenBao-complete): existing escrow = no-op (proven live); missing escrow =
+  create via Cloudflare API + escrow {tunnel_id,tunnel_token} before
+  consumption. Create capability proven live with a disposable probe tunnel
+  (POST 200 -> id assigned; DELETE 200; name-query 0 matches afterwards).
+  Runner calls it before credential retrieval (fresh tunnel name defaults to
+  coolify-<host-slug>). Service-token lifecycle already operator-side via
+  ensure-service-token.sh; R2 keys remain the single dashboard-gated item
+  (API issuance 403/404 verified).

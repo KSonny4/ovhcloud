@@ -138,7 +138,12 @@ done
 # verification) — never the bare zone, never a doubled prefix.
 grep -q 'dashboard hostname: coolify.rehearsal.invalid' /tmp/rehearsal-runner-1.log || { echo 'runner domain contract broken.' >&2; exit 1; }
 if grep -q 'coolify.coolify\.' /tmp/rehearsal-runner-1.log; then echo 'doubled dashboard prefix.' >&2; exit 1; fi
-log 'runner dry-run idempotent across two passes; all four stages present; no network touched.'
+# Regression gate for the fresh-host partial-backup failure: the runner must
+# stage the workload companion alongside the schedule script, and the
+# schedule script must install both timer commands.
+grep -q 'backup-app-workloads.sh' scripts/run-remote-provision.sh || { echo 'runner does not stage backup-app-workloads.sh.' >&2; exit 1; }
+grep -q 'ExecStart=${app_installed}' scripts/schedule-coolify-backup.sh || { echo 'schedule script omits the workload ExecStart.' >&2; exit 1; }
+log 'runner dry-run idempotent across two passes; all four stages present; backup companion staged + scheduled; no network touched.'
 phase_ok runner_channel | tee -a "$artifact_dir/phases.log"
 
 log '== backup_ready (dry-run) =='
