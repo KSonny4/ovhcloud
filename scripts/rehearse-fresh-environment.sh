@@ -180,6 +180,32 @@ grep -q 'fetch-r2-env.sh' scripts/schedule-coolify-backup.sh || { echo 'schedule
 if grep -rnE '(tee|>)[^|]*r2\.env' scripts/*.sh | grep -v test-clean-target-install >/dev/null; then echo 'a script still writes r2.env.' >&2; exit 1; fi
 if grep -q 'EnvironmentFile=.*r2' scripts/schedule-coolify-backup.sh; then echo 'unit still consumes a credential EnvironmentFile.' >&2; exit 1; fi
 grep -q 'wire-fresh-edge.sh' scripts/run-remote-provision.sh || { echo 'runner omits fresh-edge wiring.' >&2; exit 1; }
+# Two-phase edge ordering: the runner's own dry-run emits the shipped edge
+# sequence line by line; wiring must precede the connector install and every
+# readiness gate must follow it. Plus mode-partition proof: --skip-verify
+# never verifies, --verify-only never mutates (executed, not grepped).
+python3 - <<'PYEOF' || exit 1
+import re
+log = open('/tmp/rehearsal-runner-1.log').read().splitlines()
+def idx(pat):
+    hits = [i for i, l in enumerate(log) if re.search(pat, l)]
+    assert hits, pat
+    return hits[0]
+w = idx(r'edge 1/5.*--skip-verify')
+a = idx(r'edge 2/5.*adopt --apply')
+c = idx(r'edge 3/5.*configure-tunnel-access')
+s = idx(r'edge 4/5.*ensure-service-token full')
+v = idx(r'edge 5/5.*--verify-only')
+assert w < a < c < s < v, f'edge order broken: {w} {a} {c} {s} {v}'
+print(f'edge order proven: wire@{w} adopt@{a} connector@{c} token@{s} verify@{v}')
+PYEOF
+sv_out="$(CLOUDFLARE_ACCOUNT_ID=rehearsal CLOUDFLARE_ZONE_ID=rehearsal TUNNEL_ID=rehearsal-tunnel EDGE_HOSTNAME=wire.rehearsal.invalid bash scripts/wire-fresh-edge.sh --dry-run --skip-verify 2>&1 || true)"
+printf '%s' "$sv_out" | grep -q 'verification deferred' || { echo 'skip-verify mode omits the deferral marker.' >&2; exit 1; }
+printf '%s' "$sv_out" | grep -q 'verify dashboard 200' && { echo 'skip-verify mode still verifies.' >&2; exit 1; } || true
+vo_out="$(CLOUDFLARE_ACCOUNT_ID=rehearsal CLOUDFLARE_ZONE_ID=rehearsal TUNNEL_ID=rehearsal-tunnel EDGE_HOSTNAME=wire.rehearsal.invalid bash scripts/wire-fresh-edge.sh --dry-run --verify-only 2>&1 || true)"
+printf '%s' "$vo_out" | grep -q 'verify dashboard 200' || { echo 'verify-only mode omits verification.' >&2; exit 1; }
+printf '%s' "$vo_out" | grep -q 'DRY-RUN: DNS CNAME' && { echo 'verify-only mode still mutates.' >&2; exit 1; } || true
+log 'wire mode partition proven: skip-verify wires without verifying, verify-only verifies without wiring.'
 # Dedicated tunnel identity: per-target secret path, preserved name refused,
 # preserved singleton escrow never consumed on the fresh path.
 grep -q 'TUNNEL_SECRET_PATH=' scripts/run-remote-provision.sh || { echo 'runner omits per-target tunnel secret path.' >&2; exit 1; }
@@ -221,7 +247,7 @@ done
 # precede every consumer (retrieval, wire); verification runs post-wiring.
 ensure_line="$(grep -n 'ensure-service-token.sh. --ensure-only' scripts/run-remote-provision.sh | cut -d: -f1)"
 retrieval_line="$(grep -n 'retrieving stage credentials' scripts/run-remote-provision.sh | cut -d: -f1)"
-wire_line="$(grep -n 'wire-fresh-edge.sh. --handoff-file' scripts/run-remote-provision.sh | cut -d: -f1)"
+wire_line="$(grep -n 'wire-fresh-edge.sh.*--skip-verify.*--handoff-file' scripts/run-remote-provision.sh | cut -d: -f1)"
 verify_line="$(grep -n 'DASHBOARD_LOGIN_URL=' scripts/run-remote-provision.sh | cut -d: -f1)"
 for l in "$ensure_line" "$retrieval_line" "$wire_line" "$verify_line"; do
   [ -n "$l" ] || { echo 'service-token flow ordering unresolvable.' >&2; exit 1; }

@@ -753,3 +753,23 @@
   `No changes. Your infrastructure matches the configuration.`
 - Host timer companions refreshed to current scripts (pre-coollabsio
   exclusion would have failed tonight's run on the helper container).
+
+## 2026-09-14 — two-phase edge ordering (audit round)
+
+- `wire-fresh-edge.sh` split into API wiring vs readiness gating:
+  `--skip-verify` (ingress + DNS + Access + handoff, no 200-gate) and
+  `--verify-only` (dashboard 200 + ssh gated status, no API mutation).
+- Runner edge sequence reordered to the fresh-host-executable order:
+  wire --skip-verify -> emit -> adopt --apply -> connector install
+  (`configure-tunnel-access.sh`) -> ensure-service-token full (200) ->
+  wire --verify-only (replaces the inline smoke check). Verifying before
+  the connector exists failed on every genuinely fresh host.
+- Regression coverage (rehearsal): shipped dry-run emits the five edge
+  steps in order and asserts `wire < adopt < connector < token < verify`
+  by line index; wire mode partition executed (skip-verify wires without
+  verifying, verify-only verifies without wiring); legacy line-order gate
+  regex repaired (still green). Dry-run edge summary rewritten to the true
+  sequence (it previously described the old remote-only flow).
+- `docs/iac-inventory.md` reconciled: R2 rotation + timer entries now state
+  the `s3_storages` deletion and the no-at-rest reality, with the `r2.env`
+  and destination-row states retained only as dated transitional notes.

@@ -239,7 +239,14 @@ if [ "$dry_run" -eq 1 ]; then
   log 'DRY-RUN: scp stage scripts (only) to /tmp/ovh-provision; credentials travel as a base64 env blob inside each SSH command (memory-only both ends)'
   want_stage bootstrap && log 'DRY-RUN: remote sudo BOOTSTRAP_TARGET_HOST/BOOTSTRAP_SSH_PUBLIC_KEY bash bootstrap-vps.sh + verify docker hello-world'
   want_stage coolify && log "DRY-RUN: remote sudo COOLIFY_TARGET_HOST/COOLIFY_DOMAIN/COOLIFY_VERSION/ROOT_* bash provision-coolify.sh (FQDN + firewall + origin smoke) + verify origin login + fetch APP_KEY over SSH and escrow operator-side (fail closed)"
-  want_stage edge && log 'DRY-RUN: remote sudo TUNNEL_TARGET_HOST/TUNNEL_DOMAIN/CLOUDFLARED_TUNNEL_TOKEN/CF_ACCESS_* bash configure-tunnel-access.sh + verify domain login HTTP 200 locally'
+  if want_stage edge; then
+    log 'DRY-RUN edge sequence (two-phase; readiness gates only after the connector runs):'
+    log 'DRY-RUN edge 1/5: wire --skip-verify (API wiring: ingress + DNS + Access, handoff; NO readiness gate)'
+    log 'DRY-RUN edge 2/5: emit (generate fresh IaC) + adopt --apply (imports + zero-change plan assert)'
+    log 'DRY-RUN edge 3/5: remote sudo TUNNEL_TARGET_HOST/TUNNEL_DOMAIN/CLOUDFLARED_TUNNEL_TOKEN/CF_ACCESS_* bash configure-tunnel-access.sh (connector install + start)'
+    log 'DRY-RUN edge 4/5: ensure-service-token full (prove escrowed pair -> HTTP 200)'
+    log 'DRY-RUN edge 5/5: wire --verify-only (dashboard 200 + ssh gated status)'
+  fi
   want_stage backup && log 'DRY-RUN: mint R2 reader token + place accessor (0600) via stdin pipe + remote sudo bash schedule-coolify-backup.sh (fetch-r2-env memory-only) + verify timer + R2 object'
   log 'DRY-RUN: remove remote stage scripts on every exit path; report per-stage pass/fail (fail closed)'
   exit 0
@@ -502,12 +509,16 @@ if want_stage edge; then
     tunnel_id="$(printf '%s' "$tunnel_token" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("t",""))' 2>/dev/null || true)"
   fi
   if [ -z "$tunnel_id" ]; then echo 'tunnel identity unresolvable in OpenBao (ensure-tunnel must run first).' >&2; exit 2; fi
-  log '== fresh-edge wiring (operator side) =='
+  # Two-phase edge contract: API wiring runs BEFORE the connector exists
+  # (no traffic can flow yet), readiness verification runs AFTER the
+  # connector is installed and started. Verifying before install fails on
+  # every genuinely fresh host.
+  log '== fresh-edge wiring (operator side, API only) =='
   handoff_file="${repo_root}/.fresh-handoff-${tunnel_slug}.json"
   run env BAO_ADDR="$bao_addr" CLOUDFLARE_ACCOUNT_ID="$cf_account" \
     CLOUDFLARE_ZONE_ID="$cf_zone" TUNNEL_ID="$tunnel_id" \
     EDGE_HOSTNAME="$dashboard_host" SSH_HOSTNAME="ssh.${zone}" \
-    bash "$repo_root/scripts/wire-fresh-edge.sh" --handoff-file "$handoff_file"
+    bash "$repo_root/scripts/wire-fresh-edge.sh" --skip-verify --handoff-file "$handoff_file"
   log "edge handoff recorded at ${handoff_file} (gitignored; feed to emit-fresh-imports.sh)."
   run env CLOUDFLARE_ACCOUNT_ID="$cf_account" CLOUDFLARE_ZONE_ID="$cf_zone" \
     bash "$repo_root/scripts/emit-fresh-imports.sh" --handoff "$handoff_file"
@@ -517,27 +528,19 @@ if want_stage edge; then
   run env BAO_ADDR="$bao_addr" CLOUDFLARE_ACCOUNT_ID="$cf_account" \
     CLOUDFLARE_ZONE_ID="$cf_zone" \
     bash "$repo_root/scripts/adopt-fresh-edge.sh" --handoff "$handoff_file" --apply
-  # Complete service-token lifecycle AFTER wiring (operator side): the token
-  # was created/escrowed before retrieval (ensure-only); now that the Access
-  # application and DNS route exist, the full run proves HTTP 200.
-  log '== service-token lifecycle (operator side, post-wiring verification) =='
+  remote_stage edge configure-tunnel-access.sh
+  # Readiness verification AFTER the connector runs (operator side): the
+  # token was created/escrowed before retrieval (ensure-only); now that the
+  # connector serves traffic, the full lifecycle proves HTTP 200, then the
+  # wire verify pass proves dashboard 200 + ssh gated status.
+  log '== service-token lifecycle (operator side, post-connector verification) =='
   run env BAO_ADDR="$bao_addr" CLOUDFLARE_ACCOUNT_ID="$cf_account" \
     DASHBOARD_LOGIN_URL="https://${dashboard_host}/login" \
     bash "$repo_root/scripts/ensure-service-token.sh"
-  # Re-read the escrowed pair (post-wiring truth) before remote verification.
-  svc_id="$(bao kv get -field=client_id secret/projects/ovhcloud/COOLIFY_ACCESS_SERVICE_TOKEN)"
-  svc_secret="$(bao kv get -field=client_secret secret/projects/ovhcloud/COOLIFY_ACCESS_SERVICE_TOKEN)"
-  if [ -z "$svc_id" ] || [ -z "$svc_secret" ]; then echo 'service-token escrow unreadable post-wiring (fail closed).' >&2; exit 2; fi
-  remote_stage edge configure-tunnel-access.sh
-  smoke_code="$(curl -sS -o /dev/null -w '%{http_code}' --cookie-jar /dev/null --max-time 30 \
-    -H "CF-Access-Client-Id: ${svc_id}" -H "CF-Access-Client-Secret: ${svc_secret}" \
-    "https://${dashboard_host}/login")"
-  if [ "$smoke_code" = '200' ]; then
-    log "edge verified: https://${dashboard_host}/login -> HTTP 200 (service token accepted)."
-  else
-    echo "edge verification failed: HTTP ${smoke_code} (required 200)." >&2
-    exit 1
-  fi
+  run env BAO_ADDR="$bao_addr" CLOUDFLARE_ACCOUNT_ID="$cf_account" \
+    CLOUDFLARE_ZONE_ID="$cf_zone" TUNNEL_ID="$tunnel_id" \
+    EDGE_HOSTNAME="$dashboard_host" SSH_HOSTNAME="ssh.${zone}" \
+    bash "$repo_root/scripts/wire-fresh-edge.sh" --verify-only
 fi
 
 if want_stage backup; then

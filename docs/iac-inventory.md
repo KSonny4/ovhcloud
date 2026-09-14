@@ -50,8 +50,14 @@
    `scripts/tf-env-from-openbao.sh` (env-only, never a file), never hand-populated.
 2. RESOLVED 2026-09-14: Cloudflare admin token replaced (with API-Tokens
    Write; mint-grant proven) and R2 keys rotated, both escrowed
-   (`ADMIN_CLOUDFLARE`, `COOLIFY_R2`), rewired (host r2.env then removed for
-   fileless pull, `s3_storages` id 1), old tokens revoked by operator.
+   (`ADMIN_CLOUDFLARE`, `COOLIFY_R2` with all four fields), old tokens
+   revoked by operator. Transitional states, superseded the same day:
+   host `r2.env` (removed for the memory-only `fetch-r2-env.sh` pull) and
+   the Coolify `s3_storages` destination (row id 1, deleted after proving
+   zero references — no schedules, avatars, or icons point at it).
+   Current state: NO R2 credential exists at rest anywhere (host holds
+   scripts + accessor token only; secret-bearing R2 dumps purged; OpenBao
+   is the sole escrow). Do NOT re-create the destination row.
    R2 key issuance has no Cloudflare API route (verified 10015); future R2
    rotations stay dashboard-minted + escrowed, everything else is
    API-automated. See `docs/secret-rotation.md`.
@@ -65,10 +71,11 @@
    idempotence/cleanup.
 4. Coolify administrator bootstrap via `ROOT_USERNAME/ROOT_USER_EMAIL/ROOT_USER_PASSWORD` is implemented in `scripts/provision-coolify.sh`; the live host already has its admin (`ksonny4@gmail.com`, 1 user) so no live bootstrap is needed. The runner generates + escrows the password when absent.
 5. RESOLVED 2026-09-14: nightly `coolify-db` -> R2 timer live and verified
-   (first backup `coolify-db-20260914T072213Z.dump.gz`, 14-day retention),
-   S3 destination registered in Coolify (row id 1), and executable rollback
+   (14-day retention), and executable rollback
    `scripts/rollback-coolify-backup.sh` reports RESTORE_OK (users=1, admin
-   present, probe dropped). Per-application database/volume schedules attach
+   present, probe dropped). The Coolify S3 destination (row id 1, briefly
+   registered then deleted 2026-09-14) is NOT part of live state: the host
+   timer is the single backup plane. Per-application database/volume schedules attach
    once applications exist (zero app databases on this fresh install).
 6. The supported guest OS baseline is version-sensitive: the current host reports Ubuntu 26.04 LTS while the older runbooks mention Ubuntu 24.04 LTS. Fresh bootstrap supports both and verifies Docker itself.
 

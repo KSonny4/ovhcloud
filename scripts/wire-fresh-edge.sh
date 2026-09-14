@@ -18,6 +18,12 @@
 #     service-token pair; ssh https://<host> -> a gated status
 #     (301/302/401/403: route live and policy-gated, no token needed).
 #
+# Two-phase fresh-host contract (the connector cannot serve traffic before
+# it is installed): run wiring first with --skip-verify, install + start
+# cloudflared on the target, then run --verify-only. --verify-only skips
+# all API mutation and re-proves readiness; --skip-verify skips only the
+# readiness gate (handoff is still written).
+#
 # With --handoff-file PATH, writes machine-readable IDs (tunnel, DNS records,
 # Access apps/policies) for the Terraform import handoff
 # (scripts/emit-fresh-imports.sh). Never prints secrets.
@@ -25,10 +31,12 @@
 # Usage (operator machine):
 #   BAO_ADDR=... CLOUDFLARE_ACCOUNT_ID=... CLOUDFLARE_ZONE_ID=... \
 #   TUNNEL_ID=<uuid> EDGE_HOSTNAME=<dash-host> [SSH_HOSTNAME=<ssh-host>] \
-#   bash scripts/wire-fresh-edge.sh [--dry-run] [--handoff-file PATH]
+#   bash scripts/wire-fresh-edge.sh [--dry-run] [--skip-verify] [--verify-only] [--handoff-file PATH]
 set -euo pipefail
 
 dry_run=0
+skip_verify=0
+verify_only=0
 self_test=0
 handoff_file=''
 while [ "$#" -gt 0 ]; do
@@ -37,7 +45,9 @@ while [ "$#" -gt 0 ]; do
     --self-test-merge) self_test=1; shift ;;
     --handoff-file) handoff_file="$2"; shift 2 ;;
     --handoff-file=*) handoff_file="${1#--handoff-file=}"; shift ;;
-    -h|--help) echo 'usage: wire-fresh-edge.sh [--dry-run] [--handoff-file PATH]'; exit 0 ;;
+    --skip-verify) skip_verify=1; shift ;;
+    --verify-only) verify_only=1; shift ;;
+    -h|--help) echo 'usage: wire-fresh-edge.sh [--dry-run] [--skip-verify] [--verify-only] [--handoff-file PATH]'; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -104,13 +114,19 @@ service_for() {
 }
 
 if [ "$dry_run" -eq 1 ]; then
-  for host in $hostnames; do
-    log "DRY-RUN: ingress ${host} -> $(service_for "$host") on tunnel ${TUNNEL_ID} (PUT only on drift)"
-    log "DRY-RUN: DNS CNAME ${host} -> ${TUNNEL_ID}.cfargotunnel.com (proxied, idempotent)"
-    log "DRY-RUN: ensure Access app + service-token/email policies for ${host}"
-  done
-  log 'DRY-RUN: verify dashboard 200 with service token + ssh gated status (propagation retries, fail closed)'
-  [ -n "$handoff_file" ] && log "DRY-RUN: write handoff JSON to ${handoff_file}"
+  if [ "${verify_only:-0}" -eq 0 ]; then
+    for host in $hostnames; do
+      log "DRY-RUN: ingress ${host} -> $(service_for "$host") on tunnel ${TUNNEL_ID} (PUT only on drift)"
+      log "DRY-RUN: DNS CNAME ${host} -> ${TUNNEL_ID}.cfargotunnel.com (proxied, idempotent)"
+      log "DRY-RUN: ensure Access app + service-token/email policies for ${host}"
+    done
+    [ -n "$handoff_file" ] && log "DRY-RUN: write handoff JSON to ${handoff_file}"
+  fi
+  if [ "${skip_verify:-0}" -eq 0 ]; then
+    log 'DRY-RUN: verify dashboard 200 with service token + ssh gated status (propagation retries, fail closed)'
+  else
+    log 'DRY-RUN: verification deferred (connector not running yet)'
+  fi
   exit 0
 fi
 
@@ -129,6 +145,7 @@ handoff_routes='[]'
 # (precedence 2), mirroring the converged Terraform: app-level allowed_idps
 # stays empty so API-created apps match generated config exactly.
 
+if [ "${verify_only:-0}" -eq 0 ]; then
 # --- 1. tunnel ingress, all routes at once (idempotent) ---
 # Wanted pairs travel as argv (clean JSON throughout; no string surgery on
 # the fetched config, so unrelated existing routes are never discarded).
@@ -192,7 +209,9 @@ for host in $hostnames; do
   done
   handoff_routes="$(printf '%s' "$handoff_routes" | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin) + [{"hostname": "'"${host}"'", "service": "'"$(service_for "${host}")"'", "dns_record_id": "'"${dns_id}"'", "access_app_id": "'"${app_id}"'", "policy_ids": json.loads(sys.argv[1])}]))' "$policy_ids")"
 done
+fi  # verify_only=0: API wiring done; verification runs later
 
+if [ "${skip_verify:-0}" -eq 0 ]; then
 # --- 4. end-to-end verification (propagation retries, fail closed) ---
 admin=''
 ok_dash=0
@@ -220,6 +239,7 @@ if [ -n "${SSH_HOSTNAME:-}" ]; then
   [ "$ok_ssh" -eq 1 ] || { echo "ssh route verification failed after 6 attempts (required a gated 301/302/401/403)." >&2; exit 1; }
   log "ssh route verified: https://${SSH_HOSTNAME}/ is live and policy-gated."
 fi
+fi  # skip_verify=0: readiness gate (connector must already run)
 
 if [ -n "$handoff_file" ]; then
   tunnel_name="${TUNNEL_NAME:-$(api "https://api.cloudflare.com/client/v4/accounts/${acct}/cfd_tunnel/${tid}" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("result",{}).get("name",""))')}"
@@ -227,4 +247,4 @@ if [ -n "$handoff_file" ]; then
   python3 -c 'import json,sys; print(json.dumps({"tunnel_id": sys.argv[1], "tunnel_name": sys.argv[2], "routes": json.loads(sys.argv[3])}))' "$tid" "$tunnel_name" "$handoff_routes" >"$handoff_file"
   log "handoff written to ${handoff_file} (feed to scripts/emit-fresh-imports.sh)."
 fi
-log 'wire complete: ingress + DNS + Access + verification for all hostnames.'
+if [ "${verify_only:-0}" -eq 1 ]; then log 'wire verify-only complete: routes proven live.'; elif [ "${skip_verify:-0}" -eq 1 ]; then log 'wire complete (verification deferred until the connector runs).'; else log 'wire complete: ingress + DNS + Access + verification for all hostnames.'; fi
