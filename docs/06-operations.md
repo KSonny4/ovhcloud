@@ -256,7 +256,7 @@ sudo ss -lntup
 docker ps --format 'table {{.Names}}\t{{.Ports}}'
 ```
 
-For normal Coolify web apps, the public host should mostly expose 80/443. Public TCP 22 should not be part of the steady-state path because SSH administration goes through Cloudflare Tunnel + Access.
+For normal Coolify web apps, public reachability lives at the Cloudflare edge; the origin host exposes no public web ports (UFW denies 80/443, tunneled traffic only). Public TCP 22 should not be part of the steady-state path because SSH administration goes through Cloudflare Tunnel + Access.
 
 Treat entries like these as a reason to investigate:
 

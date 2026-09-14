@@ -54,7 +54,9 @@ elif existing="$(bao kv get -field=password "$esc_path" 2>/dev/null || true)"; [
 else
   db_password="$(openssl rand -base64 24)"
   stamp_for_escrow="${stamp:-latest}"
-  bao kv put -mount=secret "projects/ovhcloud/COOLIFY_WORKLOAD_$(printf '%s' "$name" | tr '[:lower:]' '[:upper:]' | tr -c '[:upper:]0-9_' '_')" "password=${db_password}" "stamp=${stamp_for_escrow}" "rotated_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >/dev/null \
+  # password=- reads the value from stdin: never in argv (ps-visible),
+  # never on disk; the other fields are non-secret metadata.
+  printf '%s' "$db_password" | bao kv put -mount=secret "projects/ovhcloud/COOLIFY_WORKLOAD_$(printf '%s' "$name" | tr '[:lower:]' '[:upper:]' | tr -c '[:upper:]0-9_' '_')" 'password=-' "stamp=${stamp_for_escrow}" "rotated_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >/dev/null \
     || { echo "password escrow to ${esc_path} failed (fail closed)." >&2; exit 2; }
   pw_source="generated + escrowed at ${esc_path}"
 fi

@@ -85,24 +85,27 @@ For the normal Coolify web-app architecture used by this runbook:
 
 | Port | Public? | Purpose |
 |---|---:|---|
-| 80/tcp | yes | HTTP and ACME/certificate flow through Coolify proxy |
-| 443/tcp | yes | HTTPS through Coolify proxy |
+| 80/tcp | no (UFW deny) | Origin-only: serves tunneled app traffic (Traefik) via Cloudflare Tunnel |
+| 443/tcp | no (UFW deny) | Reserved; no public listener |
 | 22/tcp | no after bootstrap | Human SSH goes through Cloudflare Tunnel + Access |
-| 8000/tcp | no after setup | Direct Coolify dashboard bootstrap access |
-| 6001/tcp | no after setup | Coolify realtime updates when using direct-IP dashboard |
-| 6002/tcp | no after setup | Coolify web terminal when using direct-IP dashboard |
+| 8000/tcp | no after setup | Coolify dashboard origin, served only through the Tunnel |
+| 6001/tcp | no after setup | Coolify realtime origin, Tunnel-only |
+| 6002/tcp | no after setup | Coolify web terminal origin, Tunnel-only |
 
-During initial installation, 22 and 8000 may temporarily be reachable. Close direct public access to 22/8000/6001/6002 after Cloudflare administrative access and the Coolify HTTPS dashboard are verified.
-
-A later fully-tunnelled web setup can also remove direct 80/443 exposure, but that is a separate design choice. This baseline keeps Coolify's normal public reverse-proxy path simple while using Cloudflare Tunnel specifically for administration.
+The origin exposes no public web ports: Cloudflare is the sole public edge
+and every hostname resolves to the Tunnel. During initial installation, 22
+and 8000 may temporarily be reachable; direct public access to
+22/8000/6001/6002 is closed once Cloudflare administrative access and the
+Coolify HTTPS dashboard are verified, and 80/443 stay denied at the host
+firewall by design (`provision-coolify.sh` enforces this).
 
 ## Security principles
 
 1. **Keys only for SSH.** Keep `PermitRootLogin prohibit-password`, because Coolify uses SSH to manage localhost as well as remote servers.
 2. **Cloudflare Access for human administration.** Run `cloudflared` on the VPS and route an SSH hostname to `localhost:22`; require Cloudflare Access authentication.
 3. **Provider firewall first.** Use OVH network controls where available. Docker-published ports can bypass normal UFW input rules, so do not assume `ufw deny` protects an exposed Docker port.
-4. **Expose only what is deliberate.** Normal public apps use 80/443; databases and administration interfaces stay private.
-5. **Back up off-machine.** Cloudflare R2 is the default S3-compatible destination in this runbook.
+4. **Expose only what is deliberate.** Public reachability lives at the Cloudflare edge; the origin holds no public listeners. Databases and administration interfaces stay private.
+5. **Back up off-machine.** The host backup timer is the single backup plane to Cloudflare R2 (memory-only credentials); there is deliberately no Coolify S3 destination.
 6. **Test restores.** A backup that has never been restored is not trusted.
 7. **Keep secrets out of Git.** Store the Coolify `APP_KEY`, Cloudflare Tunnel token, R2 keys and other credentials in a password/secrets manager.
 

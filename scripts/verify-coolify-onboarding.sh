@@ -11,8 +11,6 @@
 #   bash scripts/verify-coolify-onboarding.sh [--ssh-key PATH] [--host USER@HOST]
 set -euo pipefail
 
-ssh_key="${1:-}"
-host="${2:-}"
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --ssh-key) ssh_key="$2"; shift 2 ;;
@@ -68,8 +66,23 @@ PYEOF
 remote_probe="/tmp/coolify-onboard-probe-$(date +%s).py"
 scp -i "$ssh_key" -o BatchMode=yes -o ConnectTimeout=20 "$probe" "${host}:${remote_probe}" >/dev/null || { echo 'probe staging failed.' >&2; exit 2; }
 ssh -i "$ssh_key" -o BatchMode=yes -o ConnectTimeout=20 "$host" \
-  "docker inspect coolify --format '{{json .Config.Env}}' 2>/dev/null | python3 '$remote_probe'; rm -f '$remote_probe'" 2>/dev/null > /tmp/coolify-onboard-out.txt || true
+  "docker inspect coolify --format '{{json .Config.Env}}' 2>/dev/null | python3 '$remote_probe'; rm -f '$remote_probe'" 2>/dev/null > /tmp/coolify-onboard-out.txt || ssh_rc=$?
 cat /tmp/coolify-onboard-out.txt
+if [ "${ssh_rc:-0}" -ne 0 ]; then
+  echo "onboarding probe transport failed (SSH exit ${ssh_rc}); refusing to report success." >&2
+  rm -f /tmp/coolify-onboard-out.txt
+  exit 2
+fi
+if [ ! -s /tmp/coolify-onboard-out.txt ]; then
+  echo 'onboarding probe returned no output; refusing to report success.' >&2
+  rm -f /tmp/coolify-onboard-out.txt
+  exit 2
+fi
+if ! grep -q ONBOARD_OK /tmp/coolify-onboard-out.txt; then
+  echo 'onboarding probe returned no passing checks; refusing to report success.' >&2
+  rm -f /tmp/coolify-onboard-out.txt
+  exit 2
+fi
 if grep -q ONBOARD_MISS /tmp/coolify-onboard-out.txt; then
   echo 'onboarding incomplete (fail closed).' >&2
   rm -f /tmp/coolify-onboard-out.txt

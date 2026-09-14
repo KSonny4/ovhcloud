@@ -105,8 +105,8 @@ if [ "$dry_run" -eq 1 ]; then
   log 'DRY-RUN: verify coolify containers healthy'
   log 'DRY-RUN: verify origin http://127.0.0.1:8000 responds without printing secrets'
   log 'DRY-RUN: escrow Coolify APP_KEY/admin bootstrap metadata to OpenBao by name only'
-  log 'DRY-RUN: wait for onboarding state (admin user + reachable localhost) via read-only coolify-db poll, fail closed on timeout'
   log "DRY-RUN: set instance_settings.fqdn to https://${domain} in coolify-db, restart coolify container, re-verify origin login"
+  log 'DRY-RUN: wait for onboarding state (admin user + reachable localhost) via read-only coolify-db poll, fail closed on timeout'
   log 'DRY-RUN: close bootstrap ports with UFW (allow 22/tcp, deny 80/443/8000/8080/6001/6002, default deny incoming) and verify active'
   log "DRY-RUN: domain smoke deployment check https://${domain}/login via service-token headers, require HTTP 200 (fail closed)"
 else

@@ -13,7 +13,7 @@ This repository is the source of truth for the OVHcloud VPS deployment runbook a
 ## Invariants
 
 1. The canonical domain is supplied by an authorized operator; `example.com` and similar values are documentation placeholders, never deployable configuration.
-2. Public steady-state origin ports are 80/443. SSH and Coolify bootstrap ports are closed or restricted only after their replacement access paths are proven.
+2. The origin exposes no public web ports (UFW denies 80/443; Cloudflare Tunnel is the sole public edge). SSH and Coolify bootstrap ports are closed or restricted; Tunnel-served access is the steady state.
 3. Cloudflare Access protects human-only administration. Machine API clients use application authentication or an explicit service-token design, not an interactive login page.
 4. The Terraform plan is reviewable and non-live by default. A provider apply requires an encrypted state backend, external credentials, an approved domain, and an operator authorization. `ovhcloud` CLI discovery may seed or verify Terraform inputs, but CLI commands that mutate VPS state remain operator-only.
 5. Backups are not trusted until a restore proves known data; OVH automated backup is an additional layer, not a replacement for Cloudflare R2.

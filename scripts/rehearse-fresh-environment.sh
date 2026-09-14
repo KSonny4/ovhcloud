@@ -398,6 +398,10 @@ grep -q 'COOLIFY_WORKLOAD_DEMO' /tmp/rehearsal-bao-puts.log || { echo 'generatio
 [ "$(printf '%s\n' "$res_out" | grep -c .)" -eq 1 ] || { echo 'resolution leaks extra output (possible secret).' >&2; exit 1; }
 rm -rf /tmp/rehearsal-bin /tmp/rehearsal-bao-puts.log
 log 'recreate credential resolution proven: explicit > escrowed reuse > generate+escrow, value never on stdout.'
+# Onboarding verifier fails closed on transport failure (never reports
+# success on empty output): refused localhost SSH must exit nonzero.
+if bash scripts/verify-coolify-onboarding.sh --host ubuntu@127.0.0.1 >/dev/null 2>&1; then echo 'onboarding verifier accepts transport failure.' >&2; exit 1; fi
+log 'onboarding verifier proven fail-closed on transport failure.'
 # Rollback accepts the env credential and reports its source in dry-run.
 env_out="$(APP_DB_PASSWORD=env-test-pw bash scripts/rollback-app-workloads.sh --dry-run 2>&1 || true)"
 printf '%s' "$env_out" | grep -q 'credential source: env' || { echo 'rollback ignores APP_DB_PASSWORD.' >&2; exit 1; }

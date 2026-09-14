@@ -14,8 +14,8 @@ What the bootstrap stage does and verifies:
 - Hostname + UTC timezone.
 - Key-only SSH for `ubuntu` and `root` (`prohibit-password`), password and
   keyboard-interactive auth disabled, via a validated `sshd_config` drop-in.
-- UFW baseline (public surface ends at 80/443 only where needed; SSH is
-  Tunnel-served, never public).
+- UFW baseline (no public web ports: 80/443 denied; tunneled app traffic
+  only; SSH is Tunnel-served, never public).
 - Docker Engine from the official repository (never Snap) + `hello-world`
   verification.
 - 2 GB swap baseline (swappiness 10) on small hosts.

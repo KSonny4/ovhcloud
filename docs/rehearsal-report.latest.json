@@ -1,44 +1,44 @@
 {
   "rehearsal": "ovh-coolify-fresh-environment",
   "dry_run": true,
-  "git_head": "c60a75b",
-  "started_utc": "2026-09-14T14:36:43Z",
-  "finished_utc": "2026-09-14T14:36:55Z",
+  "git_head": "7befcf9",
+  "started_utc": "2026-09-14T14:43:51Z",
+  "finished_utc": "2026-09-14T14:44:00Z",
   "phases": [
     {
       "phase": "provider_access",
       "status": "pass",
-      "utc": "2026-09-14T14:36:43Z",
+      "utc": "2026-09-14T14:43:51Z",
       "evidence": {}
     },
     {
       "phase": "origin_identity",
       "status": "pass",
-      "utc": "2026-09-14T14:36:43Z",
+      "utc": "2026-09-14T14:43:51Z",
       "evidence": {}
     },
     {
       "phase": "terraform_gates",
       "status": "pass",
-      "utc": "2026-09-14T14:36:48Z",
+      "utc": "2026-09-14T14:43:55Z",
       "evidence": {}
     },
     {
       "phase": "guest_ready",
       "status": "pass",
-      "utc": "2026-09-14T14:36:48Z",
+      "utc": "2026-09-14T14:43:55Z",
       "evidence": {}
     },
     {
       "phase": "coolify_ready",
       "status": "pass",
-      "utc": "2026-09-14T14:36:49Z",
+      "utc": "2026-09-14T14:43:56Z",
       "evidence": {}
     },
     {
       "phase": "edge_ready",
       "status": "pass",
-      "utc": "2026-09-14T14:36:49Z",
+      "utc": "2026-09-14T14:43:56Z",
       "evidence": {
         "dryrun_hostnames": "2"
       }
@@ -46,7 +46,7 @@
     {
       "phase": "runner_channel",
       "status": "pass",
-      "utc": "2026-09-14T14:36:53Z",
+      "utc": "2026-09-14T14:43:59Z",
       "evidence": {
         "dryrun_lines": "22",
         "dryrun_sha256": "918aa67ffcdeb25083850f2a9b90691c609e986c8cc81d7347d696883d80015a"
@@ -55,7 +55,7 @@
     {
       "phase": "backup_ready",
       "status": "pass",
-      "utc": "2026-09-14T14:36:54Z",
+      "utc": "2026-09-14T14:44:00Z",
       "evidence": {
         "topology_assertions": "15",
         "dbflags_present": "16",
@@ -65,19 +65,19 @@
     {
       "phase": "ephemeral_cleanup",
       "status": "pass",
-      "utc": "2026-09-14T14:36:54Z",
+      "utc": "2026-09-14T14:44:00Z",
       "evidence": {}
     },
     {
       "phase": "no_plaintext_secrets",
       "status": "pass",
-      "utc": "2026-09-14T14:36:54Z",
+      "utc": "2026-09-14T14:44:00Z",
       "evidence": {}
     },
     {
       "phase": "context_graph",
       "status": "pass",
-      "utc": "2026-09-14T14:36:55Z",
+      "utc": "2026-09-14T14:44:00Z",
       "evidence": {}
     }
   ]
