@@ -81,9 +81,13 @@ manage_application_wildcard = false
 access_service_token_name = "ovh-coolify-machine-verification"
 access_service_token_duration = "8760h"
 provision_ovh_vps        = false
+manage_existing_vps      = true
 TFVARS_EOF
 chmod 600 "$tfvars"
-log "wrote ${tfvars} (0600, ignored)."
+# Canonical formatting keeps `terraform fmt -check -recursive` green when the
+# file exists locally; fmt prints nothing, so no values leak through it.
+terraform fmt "$tfvars" >/dev/null 2>&1 || true
+log "wrote ${tfvars} (0600, ignored, canonically formatted)."
 
 # Backend (R2 state) credentials go to stdout as eval-able exports only.
 printf 'export AWS_ACCESS_KEY_ID=%s\n' "$r2_ak"
