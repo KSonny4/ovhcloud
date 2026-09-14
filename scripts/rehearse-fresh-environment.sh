@@ -269,6 +269,17 @@ python3 -c 'import json,sys; d=json.dumps({"tunnel_id": sys.argv[1], "tunnel_nam
   || { echo 'handoff file serialization broken.' >&2; exit 1; }
 log 'handoff serialization proven: route append + file write produce valid JSON with required keys.'
 rm -f /tmp/rehearsal-route.json
+# SSH-key identity gate: the exact function from run-remote-provision.sh must
+# accept identical material and reject different/garbage keys (lockout guard).
+sed -n '/^ssh_keys_match() {/,/^}/p' scripts/run-remote-provision.sh > /tmp/rehearsal-sshfn.sh
+# shellcheck disable=SC1091 # generated snippet (exact function under test)
+. /tmp/rehearsal-sshfn.sh
+ssh-keygen -t ed25519 -N '' -f /tmp/rehearsal-k1 -q && ssh-keygen -t ed25519 -N '' -f /tmp/rehearsal-k2 -q
+ssh_keys_match /tmp/rehearsal-k1.pub "$(cat /tmp/rehearsal-k1.pub)" || { echo 'ssh_keys_match rejects identical keys.' >&2; exit 1; }
+ssh_keys_match /tmp/rehearsal-k1.pub "$(cat /tmp/rehearsal-k2.pub)" && { echo 'ssh_keys_match accepts different keys.' >&2; exit 1; } || true
+ssh_keys_match /tmp/rehearsal-k1.pub 'not-a-key' && { echo 'ssh_keys_match accepts garbage.' >&2; exit 1; } || true
+rm -f /tmp/rehearsal-sshfn.sh /tmp/rehearsal-k1 /tmp/rehearsal-k1.pub /tmp/rehearsal-k2 /tmp/rehearsal-k2.pub
+log 'ssh key identity gate proven: identical accepted, different/garbage rejected.'
 log 'edge routes proven in dry-run: dashboard + ssh ingress/DNS/Access planned, handoff import blocks emit.'
 log 'runner dry-run idempotent across two passes; all four stages present; backup companion staged + scheduled; fileless R2 delivery enforced; fresh edge wired; no network touched.'
 phase_ok runner_channel | tee -a "$artifact_dir/phases.log"
@@ -289,6 +300,14 @@ for want in '"ports": ["18081:8080/tcp"]' '"DB_PASSWORD": "REDACTED"' '"APP_MODE
   printf '%s' "$topo_out" | grep -qF "$want" || { echo "topology extractor broken (missing ${want})." >&2; exit 1; }
 done
 log 'topology extractor proven on synthetic inspect JSON (ports, redaction, mounts, full runtime contract).'
+dbflags_out="$(bash scripts/rollback-app-workloads.sh --self-test-db-flags 2>/dev/null || true)"
+for want in '--network' 'dbnet' '-p' '5433:5432/tcp' '--restart' 'on-failure:3' '--health-cmd' 'pg_isready -U dbowner' '--health-retries' '3' '-e' 'PGDATA=/var/lib/postgresql/data' '-l' 'proof=dbflags' '-u' 'postgres'; do
+  printf '%s' "$dbflags_out" | grep -qF -- "$want" || { echo "db flag builder broken (missing ${want})." >&2; exit 1; }
+done
+for absent in 'POSTGRES_USER' 'POSTGRES_PASSWORD' 'REDACTED' 'dbproof-data:/var/lib/postgresql/data'; do
+  printf '%s' "$dbflags_out" | grep -qF -- "$absent" && { echo "db flag builder leaks ${absent}." >&2; exit 1; } || true
+done
+log 'database flag builder proven offline (topology restored; fresh credential + pgdata mount omitted).'
 bash scripts/ensure-service-token.sh --dry-run
 bash scripts/ensure-service-token.sh --dry-run --ensure-only
 bash scripts/tf-env-from-openbao.sh --dry-run

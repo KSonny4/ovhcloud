@@ -14,7 +14,7 @@
 - Encrypted, locked production backend declared in `infra/terraform/versions.tf` (`backend "s3" {}`); operator values live in ignored `backend.hcl` (see `backend.hcl.example`). Disposable rehearsal uses `-backend=false` local state only.
 - Import workflow documented in `infra/terraform/imports.tf.example` (ignored `imports.tf` at apply time): Tunnel, both CNAMEs, both Access apps, OTP provider, machine service token, existing R2 bucket. Live IDs come from provider discovery, never hardcoded.
 - Lifecycle guards: `prevent_destroy = true` on `ovh_vps.platform` (when provisioned), the `coolify-admin` Tunnel, the OTP provider, and the R2 bucket.
-- Cloudflare model matches live state: Tunnel-backed CNAMEs (not origin A), declared ingress (`coolify.<domain>` → `http://localhost:8000`, `ssh.<domain>` → `ssh://localhost:22`, fallback 404), human email policy retained, machine `non_identity` service-token policy on the dashboard, OTP provider, service-token escrow via `vault_kv_secret_v2.access_service_token`.
+- Cloudflare model matches live state: Tunnel-backed CNAMEs (not origin A), declared ingress (`coolify.<domain>` → `http://localhost:8000`, `ssh.<domain>` → `ssh://localhost:22`, fallback 404), human email policy retained, machine `non_identity` service-token policy on the dashboard, OTP provider. Service-token escrow is owned by `scripts/ensure-service-token.sh` + runner (the earlier `vault_kv_secret_v2.access_service_token` Terraform record was removed; see the escrow-boundary entry below).
 
 ## Fresh-host automation (preserved VPS is never a target)
 
@@ -695,3 +695,35 @@
   loader + probe in one step.
 - Live proof: loader exported `R2_ENDPOINT` + `R2_BUCKET=ovh-coolify-backups`,
   probe printed `probe ok` (write/head/restore/delete, object removed).
+
+## 2026-09-14 — full auditor-report round (DB topology, SSH identity, evidence, R2 endpoint)
+
+- Database `--recreate` now restores the full recorded topology through the
+  shared `build_run_args` builder (networks + extra-net attach, ports,
+  restart+max, healthcheck with healthy-convergence wait, non-secret env,
+  labels, user/workdir/entrypoint/cmd, non-data mounts). The pgdata mount is
+  omitted (dump restore authoritative); POSTGRES_* come from the fresh
+  `--db-password`. Missing topology entry fails closed (no bare restore).
+- Service connectivity proven per pair: recreated app must reach recreated DB
+  on each shared network via disposable `alpine:3 nc` prober (`CONNECT_OK`,
+  fail closed). Stamp resolution ignores `gaps-*` files; empty recreates
+  refuse success (`recreated nothing ... refusing empty success`).
+- Live proof on destroyed `dbproof-*` (custom net, 55433:5432, on-failure:3,
+  pg_isready health, env, label, 3 rows): volume 1568 files, DB tables=1
+  rows=3, DB `healthy`, app restored, `CONNECT_OK app→db:5432 on dbproof-net`,
+  flags verified on inspect (net/restart/ports/env). Test keys purged from R2
+  (6/6); user `fabric-*` data left untouched.
+- Offline gate: `--self-test-db-flags` (docker/s3 stubbed) asserts topology
+  flags present and credential/pgdata/redacted material absent; rehearsal
+  enforces both directions.
+- Runner: supplied `PROVISION_SSH_KEY` must fingerprint-match escrowed
+  `COOLIFY_SSH_PUBLIC_KEY` (`ssh_keys_match`, fail closed with guidance);
+  rehearsal unit-tests the exact function (accept identical, reject
+  different/garbage throwaway keys).
+- Evidence: current-state `Terraform reconciliation` no longer describes the
+  removed vault record (all remaining mentions under dated headings);
+  `secret-rotation.md` R2 procedure escrows all four fields with loader+probe
+  verification (live `probe ok` rerun).
+- Incidental finds fixed: backup `s3 put-object` typo on gaps path (now
+  `aws s3api put-object`); `coollabsio/*` platform containers excluded from
+  coverage + recording by image (hash-named helper no longer trips the gate).

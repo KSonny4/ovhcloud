@@ -312,6 +312,14 @@ if [ -z "${ROOT_USER_PASSWORD:-}" ]; then
   fi
 fi
 bao_get() { bao kv get "-field=$2" "secret/projects/ovhcloud/$1"; }
+# ssh_keys_match <pubkey-file> <pubkey-string>: true when both carry
+# identical key material (fingerprint comparison; empty/unparseable fails).
+ssh_keys_match() {
+  local fp_file fp_str
+  fp_file="$(ssh-keygen -l -f "$1" 2>/dev/null | awk '{print $2}')"
+  fp_str="$(printf '%s' "$2" | ssh-keygen -l -f /dev/stdin 2>/dev/null | awk '{print $2}')"
+  [ -n "$fp_file" ] && [ -n "$fp_str" ] && [ "$fp_file" = "$fp_str" ]
+}
 
 log 'checking SSH connectivity (first-access probe)...'
 if ssh "${ssh_opts[@]}" "${ssh_user}@${host}" true 2>/dev/null; then
@@ -371,6 +379,18 @@ svc_secret="$(bao_get COOLIFY_ACCESS_SERVICE_TOKEN client_secret)"
 for v in ssh_pub tunnel_token svc_id svc_secret; do
   if [ -z "${!v}" ]; then echo "OpenBao escrow missing for ${v}; refusing to continue." >&2; exit 2; fi
 done
+# The operator connects with PROVISION_SSH_KEY but the host is installed
+# with the escrowed COOLIFY_SSH_PUBLIC_KEY: when a key was supplied (not
+# generated this run), the two must be identical, otherwise the operator
+# would connect with one key while installing another (lockout risk).
+if [ "${key_generated:-0}" != 1 ] && [ -n "${ssh_key:-}" ] && [ -f "${ssh_pub_file:-}" ]; then
+  if ! ssh_keys_match "$ssh_pub_file" "$ssh_pub"; then
+    echo 'PROVISION_SSH_KEY does not match escrowed COOLIFY_SSH_PUBLIC_KEY; refusing to continue.' >&2
+    echo 'Unset PROVISION_SSH_KEY to use the escrowed pair, or re-escrow the supplied key first.' >&2
+    exit 2
+  fi
+  log 'supplied SSH key matches escrowed COOLIFY_SSH_PUBLIC_KEY.'
+fi
 log 'OpenBao retrieval ok (all required fields present).'
 
 # Preflight: fail FAST before any mutation when the single dashboard-gated

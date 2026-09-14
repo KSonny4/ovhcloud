@@ -30,19 +30,20 @@ while [ "$#" -gt 0 ]; do
     --stamp=*) stamp="${1#--stamp=}"; shift ;;
     --recreate) recreate="$2"; shift 2 ;;
     --recreate=*) recreate="${1#--recreate=}"; shift ;;
-    -h|--help) echo 'usage: rollback-app-workloads.sh [--stamp STAMP] [--dry-run] [--recreate NAME]'; exit 0 ;;
+    --self-test-db-flags) self_test_db=1; shift ;;
+    -h|--help) echo 'usage: rollback-app-workloads.sh [--stamp STAMP] [--dry-run] [--recreate NAME] [--self-test-db-flags]'; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
 
 log() { printf '%s\n' "$*"; }
 
-if [ "$(id -u)" -ne 0 ] && [ "$dry_run" -eq 0 ]; then
+if [ "$(id -u)" -ne 0 ] && [ "$dry_run" -eq 0 ] && [ "${self_test_db:-0}" -eq 0 ]; then
   echo 'must run as root.' >&2
   exit 2
 fi
 for v in R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY R2_ENDPOINT R2_BUCKET; do
-  if [ -z "${!v:-}" ] && [ "$dry_run" -eq 0 ]; then echo "missing ${v}: run through fetch-r2-env.sh -- <this-script>." >&2; exit 2; fi
+  if [ -z "${!v:-}" ] && [ "$dry_run" -eq 0 ] && [ "${self_test_db:-0}" -eq 0 ]; then echo "missing ${v}: run through fetch-r2-env.sh -- <this-script>." >&2; exit 2; fi
 done
 
 if [ "$dry_run" -eq 1 ]; then
@@ -54,10 +55,17 @@ if [ "$dry_run" -eq 1 ]; then
   exit 0
 fi
 
+if [ "${self_test_db:-0}" -eq 1 ]; then
+  R2_ACCESS_KEY_ID='selftest' R2_SECRET_ACCESS_KEY='selftest' R2_ENDPOINT='selftest' R2_BUCKET='selftest'
+fi
 export AWS_ACCESS_KEY_ID="$R2_ACCESS_KEY_ID" AWS_SECRET_ACCESS_KEY="$R2_SECRET_ACCESS_KEY"
 export AWS_DEFAULT_REGION="${AWS_DEFAULT_REGION:-auto}"
-command -v aws >/dev/null 2>&1 || { echo 'awscli is required.' >&2; exit 2; }
-command -v docker >/dev/null 2>&1 || { echo 'docker is required.' >&2; exit 2; }
+if [ "${self_test_db:-0}" -ne 1 ]; then
+  command -v aws >/dev/null 2>&1 || { echo 'awscli is required.' >&2; exit 2; }
+fi
+if [ "${self_test_db:-0}" -ne 1 ]; then
+  command -v docker >/dev/null 2>&1 || { echo 'docker is required.' >&2; exit 2; }
+fi
 
 workdir="$(mktemp -d)"
 trap 'rm -rf "$workdir"; docker rm -f rollback-app-probe-db >/dev/null 2>&1 || true' EXIT
@@ -66,8 +74,159 @@ trap 'rm -rf "$workdir"; docker rm -f rollback-app-probe-db >/dev/null 2>&1 || t
 s3ls() { aws --endpoint-url "$R2_ENDPOINT" s3 ls "s3://${R2_BUCKET}/$1" 2>/dev/null | awk -v p="$1" '{print p $4}'; }
 s3get() { aws --endpoint-url "$R2_ENDPOINT" s3api get-object --bucket "$R2_BUCKET" --key "$1" "$2" >/dev/null; }
 
+
+
+# build_run_args: shared docker-run flag builder for application and
+# database containers (auditor fix: databases restore full recorded topology).
+# Inputs: SPEC_CSPEC (topology entry JSON), SPEC_CNAME, SPEC_SKIP_ENVS
+# (space-separated env names to omit), SPEC_SKIP_MOUNT (one mount target to
+# omit, e.g. dump-authoritative pgdata). Needs manifest_json/workdir/s3get
+# for snapshot restores. Outputs run_args, cmd_args, extra_nets, first_net;
+# appends redacted names to needs_secrets. Returns nonzero on failure.
+build_run_args() {
+  cspec="${SPEC_CSPEC:?build_run_args needs SPEC_CSPEC}"
+  run_args=()
+  while IFS= read -r kv; do
+    [ -n "$kv" ] || continue
+    k="${kv%%=*}"; v="${kv#*=}"
+    case " ${SPEC_SKIP_ENVS:-} " in *" $k "*) continue ;; esac
+    if [ "$v" = 'REDACTED' ]; then needs_secrets="${needs_secrets} ${SPEC_CNAME}:${k}"; continue; fi
+    run_args+=(-e "${k}=${v}")
+  done <<<"$(printf '%s' "$cspec" | python3 -c 'import json,sys; [print(f"{k}={v}") for k,v in json.load(sys.stdin).get("env",{}).items()]')"
+  while IFS= read -r pm; do
+    [ -n "$pm" ] || continue
+    run_args+=(-p "$pm")
+  done <<<"$(printf '%s' "$cspec" | python3 -c 'import json,sys; [print(p) for p in json.load(sys.stdin).get("ports",[])]')"
+  while IFS= read -r lb; do
+    [ -n "$lb" ] || continue
+    run_args+=(-l "$lb")
+  done <<<"$(printf '%s' "$cspec" | python3 -c 'import json,sys; [print(f"{k}={v}") for k,v in json.load(sys.stdin).get("labels",{}).items()]')"
+  first_net="$(printf '%s' "$cspec" | python3 -c 'import json,sys; n=json.load(sys.stdin).get("networks",[]); print(n[0] if n else "")')"
+  extra_nets="$(printf '%s' "$cspec" | python3 -c 'import json,sys; [print(n) for n in json.load(sys.stdin).get("networks",[])[1:]]')"
+  for net in $first_net $extra_nets; do
+    [ -n "$net" ] || continue
+    docker network inspect "$net" >/dev/null 2>&1 || docker network create "$net" >/dev/null 2>&1 || { echo "FAILED network ${net}." >&2; FAILED=1; return 1; }
+  done
+  [ -n "$first_net" ] && run_args+=(--network "$first_net")
+  # Full runtime contract: workdir, user, entrypoint, restart policy,
+  # healthcheck, and command (appended after the image). Null entrypoint
+  # or empty cmd means image default (nothing passed).
+  rt_workdir="$(printf '%s' "$cspec" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("runtime",{}).get("workdir",""))')"
+  rt_user="$(printf '%s' "$cspec" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("runtime",{}).get("user",""))')"
+  # Arrays travel element-per-line (never word-split): faithful for quoted
+  # arguments with spaces. Portable while-read (no mapfile: macOS bash 3).
+  # Entrypoint: first element is the executable, the rest are pre-image args.
+  rt_entry_arr=()
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    rt_entry_arr+=("$line")
+  done <<<"$(printf '%s' "$cspec" | python3 -c 'import json,sys; e=json.load(sys.stdin).get("runtime",{}).get("entrypoint"); [print(x) for x in (e or [])]')"
+  if [ "${#rt_entry_arr[@]}" -gt 0 ]; then
+    run_args+=(--entrypoint "${rt_entry_arr[0]}")
+    run_args+=("${rt_entry_arr[@]:1}")
+  fi
+  rt_restart="$(printf '%s' "$cspec" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("runtime",{}).get("restart",""))')"
+  rt_restart_max="$(printf '%s' "$cspec" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("runtime",{}).get("restart_max",0))')"
+  [ -n "$rt_workdir" ] && run_args+=(-w "$rt_workdir")
+  [ -n "$rt_user" ] && run_args+=(-u "$rt_user")
+  case "$rt_restart" in
+    ''|no) ;;
+    on-failure)
+      if [ "${rt_restart_max:-0}" -gt 0 ] 2>/dev/null; then
+        run_args+=(--restart "on-failure:${rt_restart_max}")
+      else
+        run_args+=(--restart on-failure)
+      fi ;;
+    *) run_args+=(--restart "$rt_restart") ;;
+  esac
+  hc_kind="$(printf '%s' "$cspec" | python3 -c 'import json,sys; t=(json.load(sys.stdin).get("runtime",{}).get("healthcheck",{}) or {}).get("Test",[]); print(t[0] if t else "")')"
+  if [ "$hc_kind" = 'NONE' ]; then
+    run_args+=(--no-healthcheck)
+  elif [ "$hc_kind" = 'CMD-SHELL' ]; then
+    hc_cmd="$(printf '%s' "$cspec" | python3 -c 'import json,sys; t=(json.load(sys.stdin).get("runtime",{}).get("healthcheck",{}) or {}).get("Test",[]); print(t[1] if len(t)>1 else "")')"
+    [ -n "$hc_cmd" ] && run_args+=(--health-cmd "$hc_cmd")
+  elif [ "$hc_kind" = 'CMD' ]; then
+    # Exec-form healthcheck: shlex.join preserves quoting semantics through
+    # the shell that --health-cmd runs under (documented approximation:
+    # argument vectors survive, exotic control operators do not).
+    hc_cmd="$(printf '%s' "$cspec" | python3 -c 'import json,shlex,sys; t=(json.load(sys.stdin).get("runtime",{}).get("healthcheck",{}) or {}).get("Test",[]); print(shlex.join(t[1:]) if len(t)>1 else "")')"
+    [ -n "$hc_cmd" ] && run_args+=(--health-cmd "$hc_cmd")
+  fi
+  for hf in Interval Timeout StartPeriod; do
+    hv="$(printf '%s' "$cspec" | python3 -c 'import json,sys; print((json.load(sys.stdin).get("runtime",{}).get("healthcheck",{}) or {}).get("'"$hf"'",0))')"
+    if [ "${hv:-0}" -gt 0 ] 2>/dev/null; then
+      case "$hf" in
+        Interval) run_args+=(--health-interval "${hv}ns") ;;
+        Timeout) run_args+=(--health-timeout "${hv}ns") ;;
+        StartPeriod) run_args+=(--health-start-period "${hv}ns") ;;
+      esac
+    fi
+  done
+  hr="$(printf '%s' "$cspec" | python3 -c 'import json,sys; print((json.load(sys.stdin).get("runtime",{}).get("healthcheck",{}) or {}).get("Retries",0))')"
+  [ "${hr:-0}" -gt 0 ] 2>/dev/null && run_args+=(--health-retries "$hr")
+  # Command array, element-faithful (appended after the image).
+  cmd_args=()
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    cmd_args+=("$line")
+  done <<<"$(printf '%s' "$cspec" | python3 -c 'import json,sys; c=json.load(sys.stdin).get("runtime",{}).get("cmd"); [print(x) for x in (c or [])]')"
+  while IFS= read -r mnt; do
+    [ -n "$mnt" ] || continue
+    mtype="${mnt%%|*}"; rest="${mnt#*|}"; msrc="${rest%%|*}"; rest2="${rest#*|}"; mdst="${rest2%%|*}"; mro="${rest2#*|}"
+    if [ -n "${SPEC_SKIP_MOUNT:-}" ] && [ "$mdst" = "$SPEC_SKIP_MOUNT" ]; then continue; fi
+    if [ "$mtype" = 'volume' ]; then
+      # docker inspect reports named-volume sources as host paths
+      # (/var/lib/docker/volumes/<name>/_data): normalize to the name.
+      case "$msrc" in
+        /var/lib/docker/volumes/*/_data) msrc="$(printf '%s' "$msrc" | sed 's|^/var/lib/docker/volumes/||; s|/_data$||')" ;;
+      esac
+      if ! docker volume inspect "$msrc" >/dev/null 2>&1; then
+        vsnap="$(python3 -c 'import json,sys; print(next((v["key"] for v in json.load(open(sys.argv[1])).get("volumes",[]) if v["volume"]==sys.argv[2]),""))' "$manifest_json" "$msrc")"
+        [ -n "$vsnap" ] || { echo "FAILED mount ${msrc}: volume missing and no snapshot recorded." >&2; FAILED=1; return 1; }
+        docker volume create "$msrc" >/dev/null || { echo "FAILED create volume ${msrc}." >&2; FAILED=1; return 1; }
+        s3get "$vsnap" "$workdir/m.tar.gz" || { echo "FAILED download ${vsnap}." >&2; FAILED=1; return 1; }
+        docker run --rm -v "${msrc}:/data" -v "${workdir}:/backup" alpine:3 tar xzf /backup/m.tar.gz -C /data >/dev/null 2>&1 || { echo "FAILED untar into ${msrc}." >&2; FAILED=1; return 1; }
+        rm -f "$workdir/m.tar.gz"
+        log "mount volume restored: ${msrc}"
+      fi
+      if [ "$mro" = 'True' ]; then run_args+=(-v "${msrc}:${mdst}:ro"); else run_args+=(-v "${msrc}:${mdst}"); fi
+    elif [ "$mtype" = 'bind' ]; then
+      mkdir -p "$msrc" || { echo "FAILED bind dir ${msrc}." >&2; FAILED=1; return 1; }
+      run_args+=(-v "${msrc}:${mdst}")
+    fi
+  done <<<"$(printf '%s' "$cspec" | python3 -c 'import json,sys; [print(str(m.get("type","")) + "|" + str(m.get("source","")) + "|" + str(m.get("target","")) + "|" + str(m.get("ro",False))) for m in json.load(sys.stdin).get("mounts",[])]')"
+}
+
+# Offline self-test: prove the shared builder restores database topology
+# (networks, ports, restart+max, health, non-secret env) while omitting the
+# fresh credential envs and the dump-authoritative pgdata mount. docker/s3
+# are stubbed: no daemon, no network, no R2 touched.
+if [ "${self_test_db:-0}" -eq 1 ]; then
+  docker() { return 0; }
+  s3get() { return 0; }
+  manifest_json=$workdir/selftest-manifest.json
+  python3 - >"$manifest_json" <<'PYEOF'
+import json
+entry = {'name': 'dbproof-db', 'image': 'postgres:15-alpine',
+ 'env': {'POSTGRES_USER': 'dbowner', 'POSTGRES_PASSWORD': 'REDACTED', 'PGDATA': '/var/lib/postgresql/data', 'TZ': 'UTC'},
+ 'ports': ['5433:5432/tcp'], 'networks': ['dbnet', 'backend'],
+ 'labels': {'proof': 'dbflags'},
+ 'mounts': [{'type': 'volume', 'source': '/var/lib/docker/volumes/dbproof-data/_data', 'target': '/var/lib/postgresql/data', 'ro': False}],
+ 'runtime': {'cmd': [], 'entrypoint': None, 'workdir': '', 'user': 'postgres',
+  'restart': 'on-failure', 'restart_max': 3,
+  'healthcheck': {'Test': ['CMD-SHELL', 'pg_isready -U dbowner'], 'Interval': 10000000000, 'Timeout': 5000000000, 'StartPeriod': 0, 'Retries': 3}}}
+print(json.dumps({'databases': [], 'volumes': [], 'binds': [], 'containers': [entry]}))
+PYEOF
+  needs_secrets=''
+  SPEC_CSPEC=$(python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1]))["containers"][0]))' "$manifest_json")
+  SPEC_CNAME='dbproof-db' SPEC_SKIP_ENVS='POSTGRES_USER POSTGRES_PASSWORD' SPEC_SKIP_MOUNT='/var/lib/postgresql/data'
+  build_run_args || { echo 'SELFTEST build failed.' >&2; exit 2; }
+  printf '%s\n' "${run_args[@]}"
+  exit 0
+fi
+
 if [ -z "$stamp" ]; then
-  manifest="$(s3ls 'app-manifests/' | sort | tail -n1)"
+  manifest="$(s3ls 'app-manifests/' | grep -E '[0-9]{8}T[0-9]{6}Z\.json$' | grep -v '/gaps-' | sort | tail -n1)"
   [ -n "$manifest" ] || { echo 'no app manifests in R2 (fail closed).' >&2; exit 2; }
   stamp="$(printf '%s' "$manifest" | grep -oE '[0-9]{8}T[0-9]{6}Z')"
   [ -n "$stamp" ] || { echo 'manifest name carries no stamp (fail closed).' >&2; exit 2; }
@@ -75,6 +234,9 @@ if [ -z "$stamp" ]; then
 fi
 
 FAILED=0
+recreated_count=0
+
+
 
 # --- --recreate NAME: bring the workload back into service ---
 # Recreates destroyed volumes from snapshots, recreates destroyed containers
@@ -113,8 +275,10 @@ if [ -n "$recreate" ]; then
       if [ "${got:-0}" -ge "${vfiles:-0}" ]; then
         if [ "${got:-0}" -eq "${vfiles:-0}" ]; then
           log "RESTORED-INTO-SERVICE volume: ${vname} (files=${got})"
+          recreated_count=$((recreated_count+1))
         else
           log "RESTORED-INTO-SERVICE volume: ${vname} (files=${got}, manifest had ${vfiles}: hot-copy growth, dump parity authoritative)"
+          recreated_count=$((recreated_count+1))
         fi
       else
         echo "FAILED parity ${vname}: manifest files=${vfiles}, restored=${got} (short)." >&2; FAILED=1
@@ -124,11 +288,27 @@ if [ -n "$recreate" ]; then
     fi
     rm -f "$workdir/v.tar.gz"
   done
-  # Containers: one per recorded container name, image from manifest.
+  # Database containers: full recorded topology (networks, ports, restart,
+  # health, env, labels, non-data mounts) via the shared builder. The pgdata
+  # mount is omitted (dump restore is authoritative); POSTGRES_* come from
+  # the fresh credential, never the redacted record. No topology entry in
+  # containers[] means an unrecorded past: fail closed, never bare-restore.
+  recreated_dbs=''
   for cname in $(python3 -c 'import json,sys; print(" ".join(sorted({d["container"] for d in json.load(open(sys.argv[1])).get("databases",[]) if d.get("container","").startswith(sys.argv[2]+"-")})))' "$manifest_json" "$recreate"); do
     cimage="$(python3 -c 'import json,sys; print(next(d.get("image","postgres:15-alpine") for d in json.load(open(sys.argv[1])).get("databases",[]) if d["container"]==sys.argv[2]))' "$manifest_json" "$cname")"
     cuser="$(python3 -c 'import json,sys; print(next((d.get("user") or "postgres") for d in json.load(open(sys.argv[1])).get("databases",[]) if d["container"]==sys.argv[2]))' "$manifest_json" "$cname")"
-    docker run -d --name "$cname" -e "POSTGRES_USER=${cuser}" -e POSTGRES_PASSWORD="$newpw" "$cimage" >/dev/null 2>&1 || { echo "FAILED start ${cname}." >&2; FAILED=1; continue; }
+    cspec="$(python3 -c 'import json,sys; cs=[c for c in json.load(open(sys.argv[1])).get("containers",[]) if c["name"]==sys.argv[2]]; print(json.dumps(cs[0]) if cs else "")' "$manifest_json" "$cname")"
+    [ -n "$cspec" ] || { echo "FAILED topology ${cname}: no recorded entry (refusing bare restore)." >&2; FAILED=1; continue; }
+    pgdata="$(printf '%s' "$cspec" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("env",{}).get("PGDATA","/var/lib/postgresql/data"))')"
+    [ -n "$pgdata" ] || pgdata='/var/lib/postgresql/data'
+    SPEC_CSPEC="$cspec"; SPEC_CNAME="$cname"; SPEC_SKIP_ENVS='POSTGRES_USER POSTGRES_PASSWORD'; SPEC_SKIP_MOUNT="$pgdata"
+    build_run_args || { echo "FAILED flags ${cname}." >&2; FAILED=1; continue; }
+    run_args+=(-e "POSTGRES_USER=${cuser}" -e "POSTGRES_PASSWORD=${newpw}")
+    docker run -d --name "$cname" "${run_args[@]}" "$cimage" ${cmd_args[@]+"${cmd_args[@]}"} >/dev/null 2>&1 || { echo "FAILED start ${cname}." >&2; FAILED=1; continue; }
+    for net in $extra_nets; do
+      [ -n "$net" ] && docker network connect "$net" "$cname" >/dev/null 2>&1 || true
+    done
+    recreated_dbs="${recreated_dbs} ${cname}"
     sleep 8
     for dkey in $(python3 -c 'import json,sys; print(" ".join(d["key"] for d in json.load(open(sys.argv[1])).get("databases",[]) if d["container"]==sys.argv[2]))' "$manifest_json" "$cname"); do
       dbase="$(python3 -c 'import json,sys; print(next(d["database"] for d in json.load(open(sys.argv[1])).get("databases",[]) if d["key"]==sys.argv[2]))' "$manifest_json" "$dkey")"
@@ -142,6 +322,7 @@ if [ -n "$recreate" ]; then
         got_r="$(docker exec -e "PGPASSWORD=${newpw}" "$cname" psql -U "$cuser" -d "$dbase" -tAc "SELECT coalesce(sum(n_live_tup)::int,0) FROM pg_stat_user_tables;" 2>/dev/null || echo -1)"
         if [ "${got_t:-0}" -eq "${exp_tables:-0}" ] && [ "${got_r:-0}" -ge "${exp_rows:-0}" ]; then
           log "RESTORED-INTO-SERVICE database: ${cname}/${dbase} (tables=${got_t}, rows=${got_r})"
+          recreated_count=$((recreated_count+1))
         else
           echo "FAILED parity ${cname}/${dbase}: expected tables=${exp_tables} rows>=${exp_rows}, got tables=${got_t} rows=${got_r}." >&2; FAILED=1
         fi
@@ -150,13 +331,24 @@ if [ -n "$recreate" ]; then
       fi
       rm -f "$workdir/r.dump.gz"
     done
-    if docker inspect "$cname" --format '{{.State.Running}}' 2>/dev/null | grep -q true; then
+    if [ -n "$(printf '%s' "$cspec" | python3 -c 'import json,sys; t=(json.load(sys.stdin).get("runtime",{}).get("healthcheck",{}) or {}).get("Test",[]); print("yes" if t else "")')" ]; then
+      healthy=''; for _ in $(seq 1 12); do
+        [ "$(docker inspect "$cname" --format '{{.State.Health.Status}}' 2>/dev/null)" = 'healthy' ] && { healthy=1; break; }
+        sleep 5
+      done
+      if [ -n "$healthy" ]; then
+        log "HEALTHY: ${cname} healthy (recorded healthcheck converging; replacement superuser password rotated in at recreate; re-point consumers)."
+      else
+        echo "FAILED health: ${cname} never reached healthy." >&2; FAILED=1
+      fi
+    elif docker inspect "$cname" --format '{{.State.Running}}' 2>/dev/null | grep -q true; then
       log "HEALTHY: ${cname} running (replacement superuser password was rotated in at recreate; re-point consumers)."
     else
       echo "FAILED health: ${cname} not running." >&2; FAILED=1
     fi
   done
   # Application (non-database) containers: full topology recreation.
+  recreated_apps=''
   db_containers="$(python3 -c 'import json,sys; print(" ".join(sorted({d["container"] for d in json.load(open(sys.argv[1])).get("databases",[])})))' "$manifest_json")"
   needs_secrets=''
   for cname in $(python3 -c 'import json,sys; print(" ".join(sorted({c["name"] for c in json.load(open(sys.argv[1])).get("containers",[])})))' "$manifest_json"); do
@@ -165,114 +357,8 @@ if [ -n "$recreate" ]; then
     cspec="$(python3 -c 'import json,sys; print(json.dumps(next(c for c in json.load(open(sys.argv[1])).get("containers",[]) if c["name"]==sys.argv[2])))' "$manifest_json" "$cname")"
     cimage="$(printf '%s' "$cspec" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("image",""))')"
     [ -n "$cimage" ] || { echo "FAILED topology ${cname}: no image recorded." >&2; FAILED=1; continue; }
-    run_args=()
-    while IFS= read -r kv; do
-      [ -n "$kv" ] || continue
-      k="${kv%%=*}"; v="${kv#*=}"
-      if [ "$v" = 'REDACTED' ]; then needs_secrets="${needs_secrets} ${cname}:${k}"; continue; fi
-      run_args+=(-e "${k}=${v}")
-    done <<<"$(printf '%s' "$cspec" | python3 -c 'import json,sys; [print(f"{k}={v}") for k,v in json.load(sys.stdin).get("env",{}).items()]')"
-    while IFS= read -r pm; do
-      [ -n "$pm" ] || continue
-      run_args+=(-p "$pm")
-    done <<<"$(printf '%s' "$cspec" | python3 -c 'import json,sys; [print(p) for p in json.load(sys.stdin).get("ports",[])]')"
-    while IFS= read -r lb; do
-      [ -n "$lb" ] || continue
-      run_args+=(-l "$lb")
-    done <<<"$(printf '%s' "$cspec" | python3 -c 'import json,sys; [print(f"{k}={v}") for k,v in json.load(sys.stdin).get("labels",{}).items()]')"
-    first_net="$(printf '%s' "$cspec" | python3 -c 'import json,sys; n=json.load(sys.stdin).get("networks",[]); print(n[0] if n else "")')"
-    extra_nets="$(printf '%s' "$cspec" | python3 -c 'import json,sys; [print(n) for n in json.load(sys.stdin).get("networks",[])[1:]]')"
-    for net in $first_net $extra_nets; do
-      [ -n "$net" ] || continue
-      docker network inspect "$net" >/dev/null 2>&1 || docker network create "$net" >/dev/null 2>&1 || { echo "FAILED network ${net}." >&2; FAILED=1; continue 2; }
-    done
-    [ -n "$first_net" ] && run_args+=(--network "$first_net")
-    # Full runtime contract: workdir, user, entrypoint, restart policy,
-    # healthcheck, and command (appended after the image). Null entrypoint
-    # or empty cmd means image default (nothing passed).
-    rt_workdir="$(printf '%s' "$cspec" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("runtime",{}).get("workdir",""))')"
-    rt_user="$(printf '%s' "$cspec" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("runtime",{}).get("user",""))')"
-    # Arrays travel element-per-line (never word-split): faithful for quoted
-    # arguments with spaces. Portable while-read (no mapfile: macOS bash 3).
-    # Entrypoint: first element is the executable, the rest are pre-image args.
-    rt_entry_arr=()
-    while IFS= read -r line; do
-      [ -n "$line" ] || continue
-      rt_entry_arr+=("$line")
-    done <<<"$(printf '%s' "$cspec" | python3 -c 'import json,sys; e=json.load(sys.stdin).get("runtime",{}).get("entrypoint"); [print(x) for x in (e or [])]')"
-    if [ "${#rt_entry_arr[@]}" -gt 0 ]; then
-      run_args+=(--entrypoint "${rt_entry_arr[0]}")
-      run_args+=("${rt_entry_arr[@]:1}")
-    fi
-    rt_restart="$(printf '%s' "$cspec" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("runtime",{}).get("restart",""))')"
-    rt_restart_max="$(printf '%s' "$cspec" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("runtime",{}).get("restart_max",0))')"
-    [ -n "$rt_workdir" ] && run_args+=(-w "$rt_workdir")
-    [ -n "$rt_user" ] && run_args+=(-u "$rt_user")
-    case "$rt_restart" in
-      ''|no) ;;
-      on-failure)
-        if [ "${rt_restart_max:-0}" -gt 0 ] 2>/dev/null; then
-          run_args+=(--restart "on-failure:${rt_restart_max}")
-        else
-          run_args+=(--restart on-failure)
-        fi ;;
-      *) run_args+=(--restart "$rt_restart") ;;
-    esac
-    hc_kind="$(printf '%s' "$cspec" | python3 -c 'import json,sys; t=(json.load(sys.stdin).get("runtime",{}).get("healthcheck",{}) or {}).get("Test",[]); print(t[0] if t else "")')"
-    if [ "$hc_kind" = 'NONE' ]; then
-      run_args+=(--no-healthcheck)
-    elif [ "$hc_kind" = 'CMD-SHELL' ]; then
-      hc_cmd="$(printf '%s' "$cspec" | python3 -c 'import json,sys; t=(json.load(sys.stdin).get("runtime",{}).get("healthcheck",{}) or {}).get("Test",[]); print(t[1] if len(t)>1 else "")')"
-      [ -n "$hc_cmd" ] && run_args+=(--health-cmd "$hc_cmd")
-    elif [ "$hc_kind" = 'CMD' ]; then
-      # Exec-form healthcheck: shlex.join preserves quoting semantics through
-      # the shell that --health-cmd runs under (documented approximation:
-      # argument vectors survive, exotic control operators do not).
-      hc_cmd="$(printf '%s' "$cspec" | python3 -c 'import json,shlex,sys; t=(json.load(sys.stdin).get("runtime",{}).get("healthcheck",{}) or {}).get("Test",[]); print(shlex.join(t[1:]) if len(t)>1 else "")')"
-      [ -n "$hc_cmd" ] && run_args+=(--health-cmd "$hc_cmd")
-    fi
-    for hf in Interval Timeout StartPeriod; do
-      hv="$(printf '%s' "$cspec" | python3 -c 'import json,sys; print((json.load(sys.stdin).get("runtime",{}).get("healthcheck",{}) or {}).get("'"$hf"'",0))')"
-      if [ "${hv:-0}" -gt 0 ] 2>/dev/null; then
-        case "$hf" in
-          Interval) run_args+=(--health-interval "${hv}ns") ;;
-          Timeout) run_args+=(--health-timeout "${hv}ns") ;;
-          StartPeriod) run_args+=(--health-start-period "${hv}ns") ;;
-        esac
-      fi
-    done
-    hr="$(printf '%s' "$cspec" | python3 -c 'import json,sys; print((json.load(sys.stdin).get("runtime",{}).get("healthcheck",{}) or {}).get("Retries",0))')"
-    [ "${hr:-0}" -gt 0 ] 2>/dev/null && run_args+=(--health-retries "$hr")
-    # Command array, element-faithful (appended after the image).
-    cmd_args=()
-    while IFS= read -r line; do
-      [ -n "$line" ] || continue
-      cmd_args+=("$line")
-    done <<<"$(printf '%s' "$cspec" | python3 -c 'import json,sys; c=json.load(sys.stdin).get("runtime",{}).get("cmd"); [print(x) for x in (c or [])]')"
-    while IFS= read -r mnt; do
-      [ -n "$mnt" ] || continue
-      mtype="${mnt%%|*}"; rest="${mnt#*|}"; msrc="${rest%%|*}"; rest2="${rest#*|}"; mdst="${rest2%%|*}"; mro="${rest2#*|}"
-      if [ "$mtype" = 'volume' ]; then
-        # docker inspect reports named-volume sources as host paths
-        # (/var/lib/docker/volumes/<name>/_data): normalize to the name.
-        case "$msrc" in
-          /var/lib/docker/volumes/*/_data) msrc="$(printf '%s' "$msrc" | sed 's|^/var/lib/docker/volumes/||; s|/_data$||')" ;;
-        esac
-        if ! docker volume inspect "$msrc" >/dev/null 2>&1; then
-          vsnap="$(python3 -c 'import json,sys; print(next((v["key"] for v in json.load(open(sys.argv[1])).get("volumes",[]) if v["volume"]==sys.argv[2]),""))' "$manifest_json" "$msrc")"
-          [ -n "$vsnap" ] || { echo "FAILED mount ${msrc}: volume missing and no snapshot recorded." >&2; FAILED=1; continue 2; }
-          docker volume create "$msrc" >/dev/null || { echo "FAILED create volume ${msrc}." >&2; FAILED=1; continue 2; }
-          s3get "$vsnap" "$workdir/m.tar.gz" || { echo "FAILED download ${vsnap}." >&2; FAILED=1; continue 2; }
-          docker run --rm -v "${msrc}:/data" -v "${workdir}:/backup" alpine:3 tar xzf /backup/m.tar.gz -C /data >/dev/null 2>&1 || { echo "FAILED untar into ${msrc}." >&2; FAILED=1; continue 2; }
-          rm -f "$workdir/m.tar.gz"
-          log "mount volume restored: ${msrc}"
-        fi
-        if [ "$mro" = 'True' ]; then run_args+=(-v "${msrc}:${mdst}:ro"); else run_args+=(-v "${msrc}:${mdst}"); fi
-      elif [ "$mtype" = 'bind' ]; then
-        mkdir -p "$msrc" || { echo "FAILED bind dir ${msrc}." >&2; FAILED=1; continue 2; }
-        run_args+=(-v "${msrc}:${mdst}")
-      fi
-    done <<<"$(printf '%s' "$cspec" | python3 -c 'import json,sys; [print(str(m.get("type","")) + "|" + str(m.get("source","")) + "|" + str(m.get("target","")) + "|" + str(m.get("ro",False))) for m in json.load(sys.stdin).get("mounts",[])]')"
+    SPEC_CSPEC="$cspec"; SPEC_CNAME="$cname"; SPEC_SKIP_ENVS=''; SPEC_SKIP_MOUNT=''
+    build_run_args || { echo "FAILED flags ${cname}." >&2; FAILED=1; continue; }
     if docker run -d --name "$cname" "${run_args[@]}" "$cimage" ${cmd_args[@]+"${cmd_args[@]}"} >/dev/null 2>&1; then
       for net in $extra_nets; do
         [ -n "$net" ] && docker network connect "$net" "$cname" >/dev/null 2>&1 || true
@@ -280,6 +366,8 @@ if [ -n "$recreate" ]; then
       sleep 5
       if docker inspect "$cname" --format '{{.State.Running}}' 2>/dev/null | grep -q true; then
         log "RESTORED-INTO-SERVICE app container: ${cname} (${cimage})"
+        recreated_count=$((recreated_count+1))
+        recreated_apps="${recreated_apps:-} ${cname}"
       else
         echo "FAILED health: ${cname} not running." >&2; FAILED=1
       fi
@@ -303,6 +391,7 @@ if [ -n "$recreate" ]; then
       got="$(find "$bpath" -type f 2>/dev/null | wc -l)"
       if [ "${got:-0}" -eq "${bfiles:-0}" ]; then
         log "RESTORED-INTO-SERVICE bind: ${bpath} (files=${got})"
+        recreated_count=$((recreated_count+1))
       else
         echo "FAILED parity ${bpath}: manifest files=${bfiles}, restored=${got}." >&2; FAILED=1
       fi
@@ -311,9 +400,33 @@ if [ -n "$recreate" ]; then
     fi
     rm -f "$workdir/b.tar.gz"
   done
-  trap - EXIT
-  rm -rf "$workdir"
+  # Service connectivity: every recreated app container must reach every
+  # recreated database container on each shared network (disposable nc
+  # prober on that network; no dependence on app-image tooling).
+  while IFS='|' read -r app db net port; do
+    [ -n "$app" ] || continue
+    if docker run --rm --network "$net" alpine:3 sh -c "nc -z -w5 '$db' '$port'" >/dev/null 2>&1; then
+      log "CONNECT_OK: ${app} reaches ${db}:${port} on ${net}"
+    else
+      echo "FAILED connectivity: ${app} cannot reach ${db}:${port} on ${net}." >&2; FAILED=1
+    fi
+  done <<<"$(python3 -c '
+import json,sys
+m = json.load(open(sys.argv[1]))
+apps = {c["name"]: c.get("networks",[]) for c in m.get("containers",[]) if c["name"] in sys.argv[2].split()}
+dbs = {}
+for c in m.get("containers",[]):
+    if c["name"] not in sys.argv[3].split(): continue
+    ports = [p.split(":")[-1].split("/")[0] for p in c.get("ports",[]) if "/tcp" in p]
+    dbs[c["name"]] = (c.get("networks",[]), ports[0] if ports else "5432")
+for an, anets in apps.items():
+    for dn, (dnets, dport) in dbs.items():
+        for net in sorted(set(anets) & set(dnets)):
+            print(f"{an}|{dn}|{net}|{dport}")
+' "$manifest_json" "${recreated_apps:-}" "${recreated_dbs:-}")"
+  if [ "${recreated_count:-0}" -eq 0 ]; then echo "FAILED: stamp ${stamp} recreated nothing for ${recreate} (refusing empty success)." >&2; exit 2; fi
   if [ "$FAILED" -ne 0 ]; then echo 'recreate incomplete (fail closed; partial state left for inspection).' >&2; exit 2; fi
+  trap - EXIT
   log "recreate complete: workload ${recreate} back in service from stamp ${stamp}."
   exit 0
 fi

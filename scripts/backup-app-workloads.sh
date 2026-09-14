@@ -131,6 +131,7 @@ for cname in $(docker ps --format '{{.Names}}' 2>/dev/null || true); do
   case "$cname" in coolify*) continue ;; esac
   [ -n "$cname" ] || continue
   image="$(docker inspect "$cname" --format '{{.Config.Image}}' 2>/dev/null || true)"
+  case "$image" in *coollabsio/*) continue ;; esac  # platform control plane (hash-named helpers are stateless)
   case "$image" in
     *mysql*|*mariadb*|*mongo*|*redis*|*memcached*|*cassandra*|*couchdb*|*elasticsearch*|*clickhouse*)
       gaps="${gaps} container ${cname} image ${image}: no native dumper (only postgres supported);" ;;
@@ -151,7 +152,7 @@ done
 if [ -n "$gaps" ]; then
   echo "WORKLOAD COVERAGE GAP (fail closed): ${gaps}" >&2
   printf '{"stamp":"%s","databases":[],"volumes":[],"binds":[],"containers":[],"gaps":%s}\n' "$(date -u +%Y%m%dT%H%M%SZ)" "$(printf '%s' "$gaps" | python3 -c 'import json,sys; print(json.dumps([g for g in sys.stdin.read().split(";") if g]))')" >"$workdir/gaps.json"
-  s3 put-object --bucket "$R2_BUCKET" --key "app-manifests/gaps-$(date -u +%Y%m%dT%H%M%SZ).json" --body "$workdir/gaps.json" || true
+  aws --endpoint-url "$R2_ENDPOINT" s3api put-object --bucket "$R2_BUCKET" --key "app-manifests/gaps-$(date -u +%Y%m%dT%H%M%SZ).json" --body "$workdir/gaps.json" || true
   exit 2
 fi
 log 'workload coverage ok: no unbackupable stateful mounts or databases detected.'
@@ -261,6 +262,7 @@ for cname in $(docker ps --format '{{.Names}}' 2>/dev/null || true); do
   [ -n "$cname" ] || continue
   cspec="$(docker inspect "$cname" 2>/dev/null || true)"
   [ -n "$cspec" ] || { echo "FAILED inspect ${cname}." >&2; FAILED=1; continue; }
+  case "$(printf '%s' "$cspec" | python3 -c 'import json,sys; print(json.load(sys.stdin)[0].get("Config",{}).get("Image",""))')" in *coollabsio/*) continue ;; esac
   printf '%s' "$cspec" >"$workdir/inspect.json"
   centry="$(topology_entry "$workdir/inspect.json" || true)"
   rm -f "$workdir/inspect.json"
