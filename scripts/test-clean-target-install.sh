@@ -39,6 +39,9 @@ if [ -n "$host" ]; then
   # shellcheck disable=SC2029
   ssh "${ssh_opts[@]}" "$host" "sudo bash $remote_stage/test-clean-target-install.sh --local-dir $remote_stage"
   rc=$?
+  # Client-side expansion is intended: remote_stage is a locally generated
+  # /tmp/clean-target-test-PID path, never operator input.
+  # shellcheck disable=SC2029
   ssh "${ssh_opts[@]}" "$host" "sudo rm -rf $remote_stage" || true
   exit $rc
 fi
@@ -52,10 +55,12 @@ prefix="$(mktemp -d /tmp/clean-target-install.XXXXXX)"
 trap 'rm -rf "$prefix"' EXIT
 export BACKUP_DIR="$prefix/backup" SYSTEMD_DIR="$prefix/systemd"
 mkdir -p "$SYSTEMD_DIR"
-echo 'R2_ACCESS_KEY_ID=test-only' >"$prefix/r2.env"
-echo 'R2_SECRET_ACCESS_KEY=test-only' >>"$prefix/r2.env"
-echo 'R2_ENDPOINT=https://test-only' >>"$prefix/r2.env"
-echo 'R2_BUCKET=test-only' >>"$prefix/r2.env"
+{
+echo 'R2_ACCESS_KEY_ID=test-only'
+echo 'R2_SECRET_ACCESS_KEY=test-only'
+echo 'R2_ENDPOINT=https://test-only'
+echo 'R2_BUCKET=test-only'
+} >"$prefix/r2.env"
 chmod 600 "$prefix/r2.env"
 
 fail=0
@@ -74,4 +79,9 @@ fi
 
 trap - EXIT
 rm -rf "$prefix"
-[ "$fail" -eq 0 ] && echo 'CLEAN-TARGET INSTALL TEST: PASS' || { echo 'CLEAN-TARGET INSTALL TEST: FAIL' >&2; exit 1; }
+if [ "$fail" -eq 0 ]; then
+  echo 'CLEAN-TARGET INSTALL TEST: PASS'
+else
+  echo 'CLEAN-TARGET INSTALL TEST: FAIL' >&2
+  exit 1
+fi

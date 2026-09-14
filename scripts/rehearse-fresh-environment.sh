@@ -142,7 +142,7 @@ if grep -q 'coolify.coolify\.' /tmp/rehearsal-runner-1.log; then echo 'doubled d
 # stage the workload companion alongside the schedule script, and the
 # schedule script must install both timer commands.
 grep -q 'backup-app-workloads.sh' scripts/run-remote-provision.sh || { echo 'runner does not stage backup-app-workloads.sh.' >&2; exit 1; }
-grep -q 'ExecStart=${app_installed}' scripts/schedule-coolify-backup.sh || { echo 'schedule script omits the workload ExecStart.' >&2; exit 1; }
+grep -q "ExecStart=\${app_installed}" scripts/schedule-coolify-backup.sh || { echo 'schedule script omits the workload ExecStart.' >&2; exit 1; }
 log 'runner dry-run idempotent across two passes; all four stages present; backup companion staged + scheduled; no network touched.'
 phase_ok runner_channel | tee -a "$artifact_dir/phases.log"
 

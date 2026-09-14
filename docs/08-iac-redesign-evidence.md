@@ -22,9 +22,9 @@
 | --- | --- | --- |
 | Ubuntu/Docker-ready guest | `scripts/bootstrap-vps.sh` | version-aware (24.04/26.04), idempotent, key-only SSH, swap, UTC; `--dry-run` passes on macOS rehearsal |
 | Coolify | `scripts/provision-coolify.sh` | pinned release (default `4.3.19`), Snap-Docker refusal, skips healthy installs, origin `/login` probe |
-| Tunnel + Access | `scripts/configure-tunnel-access.sh` | official cloudflared install, token stays in one command env, service-token `curl` must return 200/302 |
+| Tunnel + Access | `scripts/configure-tunnel-access.sh` | official cloudflared install, token via owned unit + 0600 `--token-file` (never a CLI arg), service-token `curl` must return exactly HTTP 200 (302 = rejection, fatal) |
 | R2 backups | `scripts/backup-r2-probe.sh` | scoped credentials from OpenBao env only; put/head/get/delete probe; retention/rollback expectations printed |
-| Full rehearsal | `scripts/rehearse-fresh-environment.sh` | every fresh script runs twice in dry-run (byte-identical), Terraform gates pass, no plaintext secrets, `graft check` OK, JSON report in `/tmp/ovh-coolify-rehearsal/rehearsal-report.json`; 9/9 pass 2026-09-13 |
+| Full rehearsal | `scripts/rehearse-fresh-environment.sh` | every fresh script runs twice in dry-run (byte-identical), Terraform gates pass, no plaintext secrets, `graft check` OK, JSON report in `/tmp/ovh-coolify-rehearsal/rehearsal-report.json`; 11/11 pass (current; historical counts 9/9 then 10/10 as phases were added) |
 
 ## Live backup evidence (2026-09-13, preserved VPS, no mutation)
 
@@ -188,7 +188,7 @@
   `init -backend=false`; workflow documented in `infra/terraform/README.md`
   steps 5/7 so the contamination cannot recur silently).
 - Re-run after fixes: `validate-repository.sh` pass, `rehearse-fresh-environment.sh`
-  9/9 pass, `terraform fmt -check` + `validate` clean, `git diff --check` clean.
+  11/11 pass, `terraform fmt -check` + `validate` clean, `git diff --check` clean.
 - Live verification re-run: machine `/login` 200, human `/` 302, fqdn set,
   UFW active, backup timer enabled (next 2026-09-15), Coolify 4.3.19 pinned,
   R2 backup object present (70163 bytes).
@@ -200,13 +200,14 @@
   verification, replacing manual scp/ad-hoc-ssh choreography. Refuses the
   preserved VPS first; retrieves all stage secrets from OpenBao by field name
   (SSH pubkey, tunnel token, service-token pair, R2 triple) and fails closed
-  when any is absent; ships scripts + a 0600 env file over the encrypted
-  channel; verifies docker hello-world, origin login, domain login HTTP 200,
+  when any is absent; ships scripts only, credentials travel as a base64 env
+  blob evaluated inside each SSH command (memory-only both ends, no env file;
+  hardened after the stage.env exposure); verifies docker hello-world, origin login, domain login HTTP 200,
   and timer enablement; cleans both ends.
 - Rehearsal gained the `runner_channel` phase: runner `--dry-run` twice
   byte-identical with all four stages present and zero network use — now
-  10/10 phases passing alongside `validate-repository.sh`.
-- Full live run awaits a fresh billable host (accepted gap); every remote
+  11/11 phases passing alongside `validate-repository.sh`.
+- Full live run on a fresh billable host DEFERRED PERMANENTLY by operator decision 2026-09-14 (no paid second VPS; see inventory item 3); every remote
   command in the runner replicates the manually executed, live-proven
   sequence (same scripts, same stdin-pipe env provisioning proven by the
   backup-schedule deploy), so the channel is review-verified, not speculative.
@@ -427,3 +428,22 @@
   keys); Coolify s3_storages id 1 rewired (plaintext 32/64 convention);
   machine verification HTTP 200 throughout. Handoff file overwritten + deleted.
 - Remaining operator step: revoke the OLD dashboard tokens.
+
+## Current status (2026-09-14, HEAD)
+
+- Repository gate: `bash scripts/validate-repository.sh` exits 0 (bash -n +
+  shellcheck clean on all scripts, terraform fmt/validate warning-free,
+  git diff --check clean, graft in sync). Historical ShellCheck notes at
+  rehearse:145 / test-clean-target-install:42,56,77 fixed at root and gated.
+- Fresh-environment rehearsal: `scripts/rehearse-fresh-environment.sh`
+  11/11 phases pass, dry-run by design (no network, no credentials).
+- Fresh-environment live requirement: NOT satisfied as a full run and will
+  not be — permanently deferred by operator decision (no paid second VPS).
+  Standing evidence: per-stage live proofs on the preserved host (Docker
+  hello-world, Coolify FQDN/firewall/smoke, Tunnel API create/delete, backup
+  install 7/7 clean-target PASS, app destroy-restore cycle), 11/11 rehearsal,
+  runner-staging regression gate.
+- Live platform: 6/6 Coolify containers healthy, cloudflared + backup timer
+  active, machine /login 200, human / 302. Rotations complete (admin token
+  mint-grant proven, R2 keys proven, both escrowed + rewired, old tokens
+  revoked by operator).
