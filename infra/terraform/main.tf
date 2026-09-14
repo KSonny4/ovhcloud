@@ -10,13 +10,32 @@ data "ovh_vps" "existing" {
   service_name = var.ovh_service_name
 }
 
+# The preserved production VPS as a managed, protected state record. This
+# resource is import-only: it brings the existing service under Terraform
+# state protection without modeling (or permitting) any mutation. Combined
+# with prevent_destroy + ignore_changes = all, no plan can replace, update,
+# or destroy it; removal from management requires explicitly deleting this
+# block AND the state entry in a separately authorized workflow.
+resource "ovh_vps" "preserved" {
+  count = var.manage_existing_vps && !var.provision_ovh_vps ? 1 : 0
+
+  lifecycle {
+    prevent_destroy = true
+    ignore_changes  = all
+  }
+
+  # ovh_subsidiary is the provider's only required argument; its value is
+  # inert here because every attribute is ignored after import.
+  ovh_subsidiary = var.ovh_subsidiary
+}
+
 resource "ovh_vps" "platform" {
   count = var.provision_ovh_vps ? 1 : 0
 
   lifecycle {
-    # The current VPS is a preservation target: never let a refresh or variable
-    # change silently replace it. Replacement requires an explicitly authorized
-    # follow-up workflow, not this redesign plan.
+    # A newly ordered VPS is a preservation target from birth: never let a
+    # refresh or variable change silently replace it. Replacement requires
+    # an explicitly authorized follow-up workflow, not this redesign plan.
     prevent_destroy = true
   }
 

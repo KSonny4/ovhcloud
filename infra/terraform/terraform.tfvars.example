@@ -14,6 +14,8 @@ manage_application_wildcard = false
 access_service_token_name = "ovh-coolify-machine-verification"
 access_service_token_duration = "1y"
 provision_ovh_vps       = false
+# Import-only protection for the preserved production VPS (no ordering).
+manage_existing_vps     = false
 
 # Only needed when intentionally ordering a new VPS rather than importing the existing one.
 # ovh_subsidiary = "REPLACE_WITH_BILLING_SUBSIDIARY"
