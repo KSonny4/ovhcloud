@@ -834,3 +834,28 @@
 - Edge docs reconciled to tunnel-only: README port table + principles,
   deployment-plan topology/verification/evidence rows. 05 documents the
   wrapper + by-design redacted re-injection list.
+
+## 2026-09-14 — auditor 14:46 round (evidence freshness, OVH boundary, CF reads, reseed)
+
+- Rehearsal evidence committed at the claimed HEAD (prior round committed
+  the code but a stale `git_head`): report regenerated + committed together.
+- OVH authorization boundary closed: new `ovh_cli()` in
+  `scripts/lib/preserved-guard.sh` builds a throwaway HOME with a config
+  written ONLY from OpenBao-derived `OVH_*` env (ambient `~/.ovh.conf`
+  unreachable by construction, missing credential fails closed). The guard
+  makes no API call without those variables (name + embedded fallback only).
+  `run-remote-provision.sh` loads OVH escrow BEFORE the guard on live runs
+  (order asserted in rehearsal); reinstall + discovery paths converted.
+  `tf-env-from-openbao.sh` discovery converted. Proven executed with a
+  stubbed CLI (no ambient read, HOME redirect, fail closed).
+- Cloudflare reads fail closed: new `api_must()` envelope guard (transport,
+  empty, bad JSON, `success=false` all exit 2) on all five wire reads
+  (ingress, DNS, Access app, policies, tunnel name). Proven executed with
+  stubbed bao/curl in three failure modes: nonzero exit, zero mutations.
+- Post-cleanup reseed recorded: instance `coolify-db-20260914T145142Z.dump.gz`
+  + app manifest `20260914T145149Z.json`; instance `RESTORE_OK` (probe,
+  production untouched); app probe `RESTORE_OK` on every item (incl. fabric
+  postgres-data 1271 files, neo4j-data 84, state 32). `live-proofs.json`
+  extended (UFW tunnel-only posture, image pins, reseed stamps, dump GET +
+  `gzip -t` round-trip `gzip-ok`); `live-reconciliation.json` refreshed
+  (12 resources, plan empty). No unresolved reseed remains.
