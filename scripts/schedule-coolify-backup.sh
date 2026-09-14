@@ -83,6 +83,19 @@ fi
 run mkdir -p "$backup_dir"
 run chmod 700 "$backup_dir"
 
+# The application-workload companion must live beside the instance script:
+# install it from alongside this script when present, keep the existing copy
+# when already deployed, fail closed when found nowhere.
+app_src="$(cd "$(dirname "$0")" && pwd)/backup-app-workloads.sh"
+if [ -f "$app_src" ]; then
+  run cp "$app_src" "${backup_dir}/backup-app-workloads.sh"
+  run chmod 700 "${backup_dir}/backup-app-workloads.sh"
+  log 'installed application-workload companion script.'
+elif [ ! -f "${backup_dir}/backup-app-workloads.sh" ] && [ "$dry_run" -eq 0 ]; then
+  echo 'backup-app-workloads.sh found neither beside this script nor installed; refusing to schedule a partial backup.' >&2
+  exit 2
+fi
+
 cat >"$backup_script" <<'BACKUP_EOF'
 #!/usr/bin/env bash
 # Nightly Coolify instance DB backup. Sources its credential env file so it
@@ -116,9 +129,12 @@ BACKUP_EOF
 run sed -i "s|@@ENV_FILE@@|${env_file}|" "$backup_script"
 run chmod 700 "$backup_script"
 
+# The application-workload script must sit beside the instance script (the
+# runner/live operator scp's it there); the unit runs both sequentially and
+# fails if either fails.
 cat >/etc/systemd/system/coolify-backup.service <<SERVICE_EOF
 [Unit]
-Description=Nightly Coolify instance DB backup to R2
+Description=Nightly Coolify instance + application workload backup to R2
 Wants=network-online.target
 After=network-online.target docker.service
 
@@ -126,6 +142,7 @@ After=network-online.target docker.service
 Type=oneshot
 EnvironmentFile=${env_file}
 ExecStart=${backup_script}
+ExecStart=/root/coolify-backup/backup-app-workloads.sh
 SERVICE_EOF
 
 cat >/etc/systemd/system/coolify-backup.timer <<'TIMER_EOF'

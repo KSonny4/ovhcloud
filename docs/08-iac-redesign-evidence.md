@@ -367,3 +367,24 @@
   the configuration."** — zero adds, zero changes, zero destroys, zero
   replacements. The deliberately-excluded-escrow era is over: nothing is
   excluded anymore.
+
+## 2026-09-14 — application-scope backup/restore + quickstart rewrite (audit round)
+
+- New `scripts/backup-app-workloads.sh` (on-target, root, dry-run, fail-closed):
+  dumps every application PostgreSQL database (password-aware via container
+  env) and snapshots every non-infrastructure Docker volume (tar.gz sidecar)
+  to R2 (`app-databases/`, `app-volumes/`, `app-manifests/`, 14-day retention,
+  verified objects). Wired into the nightly `coolify-backup.timer` (dual
+  ExecStart) with self-install from alongside the schedule script.
+- Live proof on disposable seeded workload (production untouched): postgres
+  container with 3 known rows + volume with 2 known files -> backup ok ->
+  workload DESTROYED (container + volumes removed) -> volume restored
+  byte-identical (known-file-alpha/beta) -> database restored (3 rows
+  alpha/beta/gamma) -> all probe artifacts removed from host AND R2 (only
+  genuine scheduled backups remain). Debugged live: grep-pipeline pipefail
+  guards, PGPASSWORD passthrough, pg_restore createdb-first retargeting.
+- `docs/00-quickstart.md` rewritten as the thin noninteractive canonical path
+  (order -> one runner command -> verify -> state/backups); the 26-step manual
+  runbook moved to `docs/00-quickstart-legacy-manual.md` with a break-glass
+  banner. `docs/05-backup-recovery.md` application section now references the
+  executable procedure + live proof instead of manual restore.

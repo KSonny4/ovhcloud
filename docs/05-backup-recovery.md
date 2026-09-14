@@ -91,6 +91,15 @@ Applications often store state outside a database, for example:
 
 Coolify can schedule backups for supported volume/directory mounts to S3-compatible storage.
 
+This platform additionally runs an executable host-level procedure
+(`scripts/backup-app-workloads.sh`, nightly via `coolify-backup.timer`)
+that dumps every application PostgreSQL database and snapshots every
+non-infrastructure Docker volume to R2 (`app-databases/`, `app-volumes/`,
+`app-manifests/`, 14-day retention) — proven live 2026-09-14 against a
+disposable seeded workload (3 known rows + 2 known files destroyed, then
+restored byte-identical from R2; see the evidence register). Instance scope
+is covered by `scripts/schedule-coolify-backup.sh` + `scripts/rollback-coolify-backup.sh` (RESTORE_OK).
+
 For every deployed app, explicitly answer:
 
 > If this container and VPS disappear right now, where does its irreplaceable state live and how is that state restored?
