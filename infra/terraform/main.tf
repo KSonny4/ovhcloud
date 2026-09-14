@@ -22,6 +22,11 @@ resource "ovh_vps" "preserved" {
   lifecycle {
     prevent_destroy = true
     ignore_changes  = all
+
+    precondition {
+      condition     = !(var.manage_existing_vps && var.provision_ovh_vps)
+      error_message = "manage_existing_vps and provision_ovh_vps are mutually exclusive."
+    }
   }
 
   # ovh_subsidiary is the provider's only required argument; its value is
