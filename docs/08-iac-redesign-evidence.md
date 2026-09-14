@@ -277,3 +277,25 @@
   the live connector authenticates via token-file (verified in ps + 0600
   file), so the secret is inert; rotating it means tunnel replacement
   surgery — operator call.
+
+## 2026-09-14 — prerequisites removed, tfvars loader, executable rollback (audit round)
+
+- Runner prerequisites removed: PROVISION_SSH_KEY omitted -> ed25519 generated
+  + both halves escrowed (fail closed); public half registered at the OVH
+  account via signed `POST /me/sshKey` (proven live with the current key,
+  idempotent by fingerprint name); ROOT_USER_EMAIL defaults to the blessed
+  identity, ROOT password generates + escrows. Remaining manual step: the VPS
+  order itself (payment-gated).
+- `scripts/load-tfvars-from-openbao.sh` (new): generates the ignored 0600
+  terraform.tfvars from OpenBao fields + read-only OVH discovery (service
+  name, IPv4), prints backend AWS exports for eval; proven live end to end
+  (correct values, file removed after). Terraform/README workflow updated.
+- `scripts/rollback-coolify-backup.sh` (new): executable rollback — latest R2
+  backup restored into a probe DB, known-data verification (users=1, admin
+  present), probe dropped, RESTORE_OK. Debugged live (pg_restore --create
+  cannot retarget piped archives; createdb-first works). Production untouched.
+- `docs/secret-rotation.md` (new): complete per-credential replacement paths
+  (proven: OpenBao root, service token, SSH; operator: CF admin, R2, tunnel
+  deliberately unchanged with rationale + verification invariant).
+- `docs/iac-inventory.md` gaps rewritten to current truth (resolved/open/
+  deferred each dated); rehearsal covers loader + rollback dry-runs.

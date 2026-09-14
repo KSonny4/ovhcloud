@@ -144,6 +144,8 @@ phase_ok runner_channel | tee -a "$artifact_dir/phases.log"
 
 log '== backup_ready (dry-run) =='
 bash scripts/backup-r2-probe.sh --dry-run >/tmp/rehearsal-backup.log 2>&1
+bash scripts/rollback-coolify-backup.sh --dry-run >>/tmp/rehearsal-backup.log 2>&1
+bash scripts/load-tfvars-from-openbao.sh --dry-run >>/tmp/rehearsal-backup.log 2>&1
 phase_ok backup_ready | tee -a "$artifact_dir/phases.log"
 
 log '== no_plaintext_secrets =='
