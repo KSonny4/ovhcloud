@@ -116,3 +116,40 @@
   (`R2 ovh-coolify-backups`, region `auto`, team 0, usable) inserted with
   dollar-quoted SQL over SSH stdin; per-database/per-volume schedules attach
   to it once application databases exist (none on this fresh install).
+
+## 2026-09-14 — LIVE Terraform apply to encrypted R2 backend (authorized)
+
+- Backend: production state at `s3://ovh-coolify-backups/terraform/ovhcloud-coolify/terraform.tfstate`
+  (R2 encrypts at rest; access via the scoped bucket credential from OpenBao,
+  supplied through env only). `backend.hcl` / `terraform.tfvars` / `imports.tf`
+  are local-only ignored files, verified via `git check-ignore`.
+- Applied with explicit resource targets excluding
+  `vault_kv_secret_v2.access_service_token`: Terraform cannot read the live
+  service-token secret back from Cloudflare, so managing the escrow record
+  would clobber the good OpenBao v2 entry. Escrow stays dashboard/API +
+  OpenBao by runbook (documented in README workflow).
+- Result: **Apply complete! 0 added, 2 changed, 0 destroyed** — the two app
+  policy reconciliations (representational nesting only; live values match).
+  All 8 imports recorded in state (tunnel, 2 DNS, 2 apps, OTP, service token,
+  R2 bucket) + tunnel ingress config. `prevent_destroy` guards held; the
+  preserved VPS untouched (read-only data source).
+- Service-token version incident: the imported token state recorded
+  `client_secret_version = null` while live is 4 (rotations during bring-up);
+  the provider defaulted to 1 and the API rejected the blind PUT (400/12130).
+  Fixed without rotation: `terraform state pull`, set version to the live
+  value 4 in an offline copy, `state push` (serial 7→8), plus
+  `ignore_changes = [client_secret_version, client_secret, expires_at]` in
+  config since the secret half is OpenBao-managed. Post-fix plan showed only
+  the 2 app updates; token update vanished.
+- Config drift pinned in the same pass: `enable_binding_cookie = true` and
+  `options_preflight_bypass = false` set explicitly on both apps to match live
+  (provider had shown null-out drift that would have weakened the binding cookie).
+- Post-apply verification: machine `curl` with escrowed service-token headers
+  → **HTTP 200**; human no-token request → **302** to Access login (email flow
+  intact). Full untargeted plan afterwards: **1 to add, 0 to change,
+  0 to destroy** — the single add is the deliberately excluded vault record.
+- Hygiene notes: `terraform fmt -diff` run in the live dir printed secret
+  values from the ignored tfvars into the operator transcript — rotate the
+  OpenBao runner token and the Cloudflare admin token after this session, and
+  never run bare `fmt`/`-diff` where ignored credential files live (scope fmt
+  to named `.tf` files). Throwaway `/tmp` state copies were shredded.
