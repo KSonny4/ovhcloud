@@ -239,7 +239,8 @@ resource "cloudflare_zero_trust_access_application" "ssh" {
 # scripts/ensure-service-token.sh (create/rotate/escrow/verify), because
 # Cloudflare never reveals the secret back and a Terraform-managed write
 # would clobber the good escrow with unreadable state. No vault provider,
-# no vault resources: the live plan converges with zero residual adds.
+# no vault resources, no openbao_ variables/outputs: escrow lives outside
+# Terraform, and the live plan converges with zero residual adds.
 resource "cloudflare_r2_bucket" "backups" {
   account_id    = var.cloudflare_account_id
   name          = var.r2_bucket_name

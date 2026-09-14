@@ -56,8 +56,14 @@ for label, fragment in required_fragments.items():
 
 # Escrow-boundary convergence: no Terraform-managed secret writes may exist —
 # any vault_kv_secret would reintroduce the perpetual unmanaged-resource diff.
+# The openbao_ prefix guard also forbids the variables/outputs creeping back.
 if 'vault_kv_secret' in main or 'provider "vault"' in versions:
     raise SystemExit("escrow boundary violated: Terraform must not manage secret writes")
+import re as _re
+for name, text in [("main.tf", main), ("variables.tf", variables), ("outputs.tf", (TF / "outputs.tf").read_text())]:
+    flat = _re.sub(r"[^a-z]+", " ", text.lower())
+    if ' openbao ' in f" {flat} " and 'escrow lives outside terraform' not in flat:
+        raise SystemExit(f"escrow boundary violated: openbao_ material returned to {name}")
 
 for heading in [
     "## Evidence and change register",
