@@ -252,3 +252,28 @@
   `systemctl is-active` failure is fatal (no `|| true`); verification requires
   exactly HTTP 200 (302 = rejection, fatal). Rehearsal asserts 200-only,
   no redirect tolerance, no health suppression, plus the lifecycle dry-run.
+
+## 2026-09-14 — credential rotation + artifact cleanup (audit round)
+
+- Exposure inventory: repo history + worktree grep clean (no cfut_/key literals
+  committed); /tmp hits were other-session GitHub blobs predating this work
+  (no cfut_, no ovhcloud secrets); my-session /tmp artifacts clean (provider
+  binaries only); leftover gate dirs + throwaway Terraform dirs removed.
+- Plaintext `infra/terraform/terraform.tfvars` (held live CF token, tunnel
+  secret, OpenBao token) shredded; future live plans regenerate it from
+  OpenBao per the README workflow. backend.hcl/imports.tf kept (no secrets).
+- OpenBao root token (`...DbFUxNYqA`, exposed in transcript) REPLACED:
+  created revocable root-policy service token (768h TTL, renewable, orphan),
+  verified read/write/roundtrip/delete, swapped `~/.vault-token` (0600),
+  revoked the old accessor — lookup now fails, only the new accessor lists.
+  Transcript value is dead.
+- Cloudflare service-token secret rotated via `ensure-service-token.sh
+  --rotate` (now version 5), re-escrowed, verified HTTP 200; Terraform
+  unaffected (version ignored in config/state).
+- Remaining, dashboard-gated (token lacks User API-Token Write / R2 token
+  admin; API returns 403/404): Cloudflare admin API token rotation and R2 S3
+  key rotation must be minted in the dashboard by the operator, then handed
+  to the runner for escrow. Tunnel secret (44-char, exposed) left in place:
+  the live connector authenticates via token-file (verified in ps + 0600
+  file), so the secret is inert; rotating it means tunnel replacement
+  surgery — operator call.
