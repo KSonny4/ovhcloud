@@ -29,7 +29,8 @@ done
 [ -f "$token_file" ] || { echo "OpenBao accessor token file not found: ${token_file}." >&2; exit 2; }
 command -v bao >/dev/null 2>&1 || { echo 'bao CLI is required on the target.' >&2; exit 2; }
 export BAO_ADDR="${BAO_ADDR:-https://secrets.pkubelka.cz}"
-export BAO_TOKEN="$(cat "$token_file")"
+BAO_TOKEN="$(cat "$token_file")"
+export BAO_TOKEN
 [ -n "$BAO_TOKEN" ] || { echo 'accessor token file is empty.' >&2; exit 2; }
 
 # Best-effort renewal (periodic token); a failed renewal is fatal only if the

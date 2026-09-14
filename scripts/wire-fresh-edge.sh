@@ -58,7 +58,6 @@ acct="$CLOUDFLARE_ACCOUNT_ID"; zone="$CLOUDFLARE_ZONE_ID"; tid="$TUNNEL_ID"; hos
 
 # --- 1. tunnel ingress (idempotent) ---
 current_ingress="$(api "https://api.cloudflare.com/client/v4/accounts/${acct}/cfd_tunnel/${tid}/configurations" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(json.dumps(d.get(\"result\",{}).get(\"config\",{}).get(\"ingress\",[])))' || true)"
-wanted_rule="$(python3 -c 'import json; print(json.dumps({"hostname": "'"${host}"'", "service": "http://127.0.0.1:8000"}))')"
 if printf '%s' "$current_ingress" | python3 -c 'import json,sys; rules=json.load(sys.stdin); sys.exit(0 if any(r.get("hostname")=="'"${host}"'" and r.get("service")=="http://127.0.0.1:8000" for r in rules) else 1)'; then
   log 'ingress already routes the hostname; no PUT.'
 else
@@ -84,7 +83,7 @@ if [ "$existing" = "" ]; then
   { [ "$code" = '200' ] || [ "$code" = '201' ]; } || { echo "DNS create failed: HTTP ${code} (fail closed)." >&2; exit 2; }
   log "DNS CNAME created: ${host} -> ${target}."
 else
-  rec_id="${existing%% *}"; rec_content="${existing#* }"
+  rec_content="${existing#* }"
   if [ "$rec_content" = "$target" ]; then
     log 'DNS CNAME already correct; no change.'
   else
