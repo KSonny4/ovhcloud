@@ -114,7 +114,9 @@ else
     if [ -z "$app_key" ]; then
       echo 'WARNING: APP_KEY not found in /data/coolify/source/.env; escrow skipped.' >&2
     else
-      printf 'app_key=%s\nemail=%s\n' "$app_key" "${ROOT_USER_EMAIL:-}" | bao kv put -mount=secret projects/ovhcloud/COOLIFY_ADMIN - >/dev/null
+      # bao kv put takes KEY=VALUE as arguments; stdin `-` is a single value,
+      # not a kv map, so values are passed as args (never written to disk).
+      bao kv put -mount=secret projects/ovhcloud/COOLIFY_ADMIN "app_key=${app_key}" "email=${ROOT_USER_EMAIL:-}" >/dev/null
       log 'escrowed Coolify APP_KEY + admin email to secret/projects/ovhcloud/COOLIFY_ADMIN (value not printed)'
     fi
   else
