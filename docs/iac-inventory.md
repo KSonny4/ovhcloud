@@ -53,11 +53,14 @@
    all proven. Remaining: dashboard-gated rotation of the Cloudflare admin
    token and R2 keys (API returns 403/404) — deferred by operator decision
    with a recorded resume path; see `docs/secret-rotation.md`.
-3. OPEN (operator cost decision): the current VPS was bootstrapped
-   imperatively; fresh-host bootstrap is scripted and the remote runner
-   (`scripts/run-remote-provision.sh`) executes it end to end, but a paid
-   disposable-VPS rehearsal has not been ordered. Rehearsal proves the path
-   10/10 in dry-run; a full live run awaits the order.
+3. DEFERRED PERMANENTLY by operator decision 2026-09-14 (no paid second
+   VPS): a full live fresh-VPS run will not be ordered. Standing in as
+   fresh-path evidence are the per-stage live proofs (bootstrap Docker
+   checks, Coolify FQDN/firewall/smoke, Tunnel create/delete via API,
+   backup install 7/7 clean-target PASS + destroy-restore cycle) plus the
+   11/11 dry-run rehearsal and the runner-staging regression gate. If a
+   spare host ever becomes available, run the provisioner twice + record
+   idempotence/cleanup.
 4. Coolify administrator bootstrap via `ROOT_USERNAME/ROOT_USER_EMAIL/ROOT_USER_PASSWORD` is implemented in `scripts/provision-coolify.sh`; the live host already has its admin (`ksonny4@gmail.com`, 1 user) so no live bootstrap is needed. The runner generates + escrows the password when absent.
 5. RESOLVED 2026-09-14: nightly `coolify-db` -> R2 timer live and verified
    (first backup `coolify-db-20260914T072213Z.dump.gz`, 14-day retention),
