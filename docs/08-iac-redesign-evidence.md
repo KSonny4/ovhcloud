@@ -174,3 +174,21 @@
   (lockout guard: background auto-disable armed, new SSH verified, guard
   confirmed gone with 0 residual processes); domain smoke → **HTTP 200**;
   `cloudflared` still `active` post-firewall.
+
+## 2026-09-14 — validation warnings removed + all gates re-run after fixes
+
+- `terraform validate` emitted two `Redundant ignore_changes element` warnings
+  (`client_secret`, `expires_at` are provider-decided). Trimmed the service-token
+  lifecycle to `ignore_changes = [client_secret_version]` — the only configurable
+  attribute that matters (state holds the live version 4; the API rejects a reset).
+  Validate is now warning-free: `Success! The configuration is valid.`
+- Live full plan after the trim: **1 to add, 0 to change, 0 to destroy** (only the
+  deliberately excluded vault escrow record); the token stays out of the update loop.
+- Credential-free gates restored after live-backend ops (`rm -rf .terraform` +
+  `init -backend=false`; workflow documented in `infra/terraform/README.md`
+  steps 5/7 so the contamination cannot recur silently).
+- Re-run after fixes: `validate-repository.sh` pass, `rehearse-fresh-environment.sh`
+  9/9 pass, `terraform fmt -check` + `validate` clean, `git diff --check` clean.
+- Live verification re-run: machine `/login` 200, human `/` 302, fqdn set,
+  UFW active, backup timer enabled (next 2026-09-15), Coolify 4.3.19 pinned,
+  R2 backup object present (70163 bytes).

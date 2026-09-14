@@ -108,11 +108,11 @@ resource "cloudflare_zero_trust_access_service_token" "machine" {
 
   # The token secret itself is lifecycle-managed in OpenBao (rotation happens
   # via dashboard/API + re-escrow, Cloudflare never reveals the secret back).
-  # Terraform tracks the token identity/policy binding only and must never
-  # attempt a blind update: the imported state cannot know the live secret
-  # version (the API rejects a lower version) and expires_at is informational.
+  # Terraform tracks the token identity/policy binding only: the secret version
+  # recorded at import must never be reset (the API rejects a lower version).
+  # client_secret/expires_at are provider-decided and intentionally absent here.
   lifecycle {
-    ignore_changes = [client_secret_version, client_secret, expires_at]
+    ignore_changes = [client_secret_version]
   }
 }
 
