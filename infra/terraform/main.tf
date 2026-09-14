@@ -105,6 +105,15 @@ resource "cloudflare_zero_trust_access_service_token" "machine" {
   name       = var.access_service_token_name
   duration   = var.access_service_token_duration
   enabled    = true
+
+  # The token secret itself is lifecycle-managed in OpenBao (rotation happens
+  # via dashboard/API + re-escrow, Cloudflare never reveals the secret back).
+  # Terraform tracks the token identity/policy binding only and must never
+  # attempt a blind update: the imported state cannot know the live secret
+  # version (the API rejects a lower version) and expires_at is informational.
+  lifecycle {
+    ignore_changes = [client_secret_version, client_secret, expires_at]
+  }
 }
 
 resource "cloudflare_zero_trust_tunnel_cloudflared_config" "admin" {
@@ -136,6 +145,8 @@ resource "cloudflare_zero_trust_access_application" "coolify" {
   type                      = "self_hosted"
   allowed_idps              = []
   auto_redirect_to_identity = false
+  enable_binding_cookie     = true
+  options_preflight_bypass  = false
   session_duration          = "24h"
   policies = concat(
     [{
@@ -170,6 +181,8 @@ resource "cloudflare_zero_trust_access_application" "ssh" {
   type                      = "self_hosted"
   allowed_idps              = []
   auto_redirect_to_identity = false
+  enable_binding_cookie     = true
+  options_preflight_bypass  = false
   session_duration          = "24h"
   policies = concat(
     [{
