@@ -245,6 +245,23 @@ grep -q 'TUNNEL_SECRET_PATH' scripts/ensure-tunnel.sh || { echo 'ensure-tunnel o
 # shellcheck disable=SC2088,SC2016 # patterns are intentional literals: match a literal ~/ and literal $HOME in other scripts' source.
 if grep -rnE '~/\.ovh\.conf|\$HOME/\.ovh\.conf|\${HOME}/\.ovh\.conf' scripts/*.sh scripts/lib/*.sh 2>/dev/null | grep -v 'rehearse-fresh-environment.sh' | grep -vE ':[0-9]+:#' | grep -q .; then echo 'a script still depends on the ambient OVH credential file.' >&2; exit 1; fi
 grep -q 'tmp_home}/\.ovh\.conf' scripts/lib/preserved-guard.sh || { echo 'ovh_cli lost its explicit config path.' >&2; exit 1; }
+# Ambient Cloudflare rejection: no script may read an operator CF profile,
+# token file, or ambient token env (hygiene `unset` lines and comments are
+# not reads). Provider auth arrives only as TF_VAR_* from the loader.
+# shellcheck disable=SC2088,SC2016 # patterns are intentional literals: match a literal ~/ and literal $VAR in other scripts' source.
+if grep -rnE '~/\.cloudflared|\.cloudflared/|\$(\{|)CLOUDFLARE_API_TOKEN|\$(\{|)CLOUDFLARE_TOKEN' scripts/*.sh scripts/lib/*.sh 2>/dev/null | grep -v 'rehearse-fresh-environment.sh' | grep -vE ':[0-9]+:#' | grep -v 'unset ' | grep -q .; then echo 'a script still depends on ambient Cloudflare auth.' >&2; exit 1; fi
+log 'ambient Cloudflare auth proven absent (TF_VAR-only provider authorization).'
+# Tunnel secret contract, three disjoint entries (executed consistency, not
+# prose): preserved Terraform credential, preserved cold recovery escrow,
+# per-target fresh entries — each with exactly one documented consumer.
+grep -q 'bao kv get -field=tunnel_secret secret/projects/ovhcloud/COOLIFY_TUNNEL_SECRET' scripts/tf-env-from-openbao.sh || { echo 'loader does not read COOLIFY_TUNNEL_SECRET.tunnel_secret.' >&2; exit 1; }
+grep -q 'TF_VAR_cloudflare_tunnel_secret' scripts/tf-env-from-openbao.sh || { echo 'loader does not emit TF_VAR_cloudflare_tunnel_secret.' >&2; exit 1; }
+grep -q 'COOLIFY_TUNNEL_SECRET' infra/terraform/variables.tf || { echo 'tunnel variable doc names the wrong OpenBao path.' >&2; exit 1; }
+grep -q 'tunnel_secret = var.cloudflare_tunnel_secret' infra/terraform/main.tf || { echo 'tunnel config does not consume the tunnel var.' >&2; exit 1; }
+grep -q 'TUNNEL_SECRET_PATH:?' scripts/ensure-tunnel.sh || { echo 'ensure-tunnel omits the per-target path requirement.' >&2; exit 1; }
+if grep -rn 'bao kv \(get\|put\).*COOLIFY_TUNNEL_TOKEN' scripts/*.sh scripts/lib/*.sh 2>/dev/null | grep -v 'rehearse-fresh-environment.sh' | grep -q .; then echo 'automation reads the cold recovery escrow COOLIFY_TUNNEL_TOKEN.' >&2; exit 1; fi
+grep -q "tunnel_token.*secret_path\|secret_path.*tunnel_token" scripts/ensure-tunnel.sh || { echo 'ensure-tunnel does not bind tunnel_token to the per-target path.' >&2; exit 1; }
+log 'tunnel contract proven: preserved loader path, cold recovery untouched, per-target fresh entries.'
 grep -q 'OVH_API' scripts/tf-env-from-openbao.sh || { echo 'loader omits the OVH_API escrow.' >&2; exit 1; }
 grep -q 'export OVH_APPLICATION_KEY' scripts/tf-env-from-openbao.sh scripts/run-remote-provision.sh || { echo 'OVH_* env emission missing.' >&2; exit 1; }
 # Executed OVH channel proof (stubbed ovhcloud, no network): without

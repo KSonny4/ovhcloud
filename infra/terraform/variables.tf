@@ -12,7 +12,7 @@ variable "cloudflare_account_id" {
 }
 
 variable "cloudflare_tunnel_secret" {
-  description = "Base64-encoded Cloudflare Tunnel secret, supplied ONLY from OpenBao secret/projects/ovhcloud/COOLIFY_TUNNEL_<NAME> (tunnel_secret) via TF_VAR env (memory-only, never files)."
+  description = "Base64-encoded Cloudflare Tunnel secret for the PRESERVED tunnel, supplied ONLY from OpenBao secret/projects/ovhcloud/COOLIFY_TUNNEL_SECRET (field tunnel_secret) via TF_VAR_cloudflare_tunnel_secret env (memory-only, never files). Fresh per-target tunnels use COOLIFY_TUNNEL_<NAME> and never touch this variable."
   type        = string
   sensitive   = true
 }

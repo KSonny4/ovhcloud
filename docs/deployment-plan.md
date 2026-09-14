@@ -51,7 +51,7 @@ The default configuration is non-live: `provision_ovh_vps = false` and there is 
 
 1. confirming the approved domain and Cloudflare zone;
 2. configuring an encrypted remote Terraform state backend with locking;
-3. authenticating the OVH CLI/provider and Cloudflare provider out of band;
+3. loading provider authorization EXCLUSIVELY from OpenBao: two-step eval of `scripts/tf-env-from-openbao.sh` (`loader_out="$(...)" || exit 2`, then `eval "$loader_out"`) for `TF_VAR_*` + `OVH_*` env; the OVH CLI runs only via the explicit HOME-redirected channel (`ovh_cli`), the Cloudflare provider only via explicit `api_token = var...` args — ambient profiles, `~/.ovh.conf`, and credential files are never read (rehearsal gates fail any script that references them);
 4. supplying the existing OVH service name and using the read-only `data.ovh_vps.existing` check if it is the intended host;
 5. reviewing the plan for replacement, reinstall, DNS, tunnel, Access and R2 changes;
 6. verifying KVM/rescue access and current R2/OVH backups;

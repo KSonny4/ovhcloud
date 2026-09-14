@@ -931,3 +931,23 @@
   create/rotate + escrow), R2 reader token (bao mint + stdin placement),
   workload DB password (recreate-workload generate + escrow). R2 S3 +
   OmniRoute app secrets are operator-supplied prerequisites by objective.
+
+## 2026-09-14 — auditor 16:08 round (tunnel contract, out-of-band step, ambient gates)
+
+- Tunnel secret contract unified to three disjoint entries (verified live:
+  `COOLIFY_TUNNEL_SECRET.{tunnel_secret}` feeds the loader →
+  `TF_VAR_cloudflare_tunnel_secret` → preserved tunnel config and the live
+  plan stays empty; `COOLIFY_TUNNEL_TOKEN.{tunnel_token}` exists with no
+  automation reader — cold recovery escrow only; `COOLIFY_TUNNEL_<NAME>.
+  {tunnel_id,tunnel_token}` owned by ensure-tunnel, consumed by the
+  runner): `variables.tf` now names the preserved path (was the fresh
+  pattern), `ensure-tunnel.sh` header corrected (was claiming the
+  preserved singleton wins), `iac-interfaces.md` rows name each entry +
+  its exactly-one consumer.
+- `deployment-plan.md` human-apply step 3 rewritten: OpenBao loader
+  two-step eval + `ovh_cli` channel, ambient profiles/files never read —
+  no "out of band" step remains (repo-wide grep clean).
+- Ambient gates extended to Cloudflare (executed in rehearsal): no
+  `~/.cloudflared`, no ambient token-env reads (hygiene `unset` + comments
+  excluded); provider blocks take explicit `api_token = var...` /
+  `endpoint = var...` so ambient cannot leak even if set.

@@ -2,11 +2,16 @@
 # Tunnel lifecycle (operator side, OpenBao-complete): ensure a DEDICATED
 # Cloudflare Tunnel exists per fresh target, escrow its connector token at a
 # per-target secret path BEFORE any consumer reads it, and stay a no-op when
-# that path already holds one. The preserved tunnel's COOLIFY_TUNNEL_TOKEN is
-# NEVER read or written here: a fresh target attaching to the preserved
-# tunnel would inherit its routes, which the preservation boundary forbids.
+# that path already holds one. OpenBao tunnel ontology (three entries,
+# distinct roles, never mixed): COOLIFY_TUNNEL_SECRET.tunnel_secret feeds
+# the preserved Terraform tunnel config via the loader; COOLIFY_TUNNEL_TOKEN.
+# tunnel_token is the preserved connector's cold recovery escrow (no
+# automation reads it); COOLIFY_TUNNEL_<NAME>.{tunnel_id,tunnel_token} is
+# the per-target entry this script owns. The preserved entries are NEVER
+# read or written here: a fresh target attaching to the preserved tunnel
+# would inherit its routes, which the preservation boundary forbids.
 #
-# - Idempotent: existing OpenBao COOLIFY_TUNNEL_TOKEN (tunnel_token) wins.
+# - Idempotent: an existing per-target tunnel_token wins (no-op).
 # - Creation uses the OpenBao-escrowed ADMIN_CLOUDFLARE token via the
 #   Cloudflare API (create returns id + token); both are escrowed as
 #   {tunnel_id, tunnel_token} before the runner consumes them.

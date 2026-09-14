@@ -30,8 +30,13 @@ failure:
   itself is the preserved VPS.
 - Retrieves from OpenBao by name only: `COOLIFY_SSH_PUBLIC_KEY.value`,
   per-target tunnel entry `COOLIFY_TUNNEL_<NAME>.{tunnel_id,tunnel_token}`
-  (derived from `TUNNEL_NAME`; the preserved `COOLIFY_TUNNEL_TOKEN` singleton
-  is never consumed on the fresh path, and `coolify-admin` is refused),
+  (derived from `TUNNEL_NAME`; `coolify-admin` is refused). Tunnel-entry
+  roles are disjoint by design: `COOLIFY_TUNNEL_SECRET.tunnel_secret`
+  feeds ONLY the preserved Terraform tunnel config via the loader;
+  `COOLIFY_TUNNEL_TOKEN.tunnel_token` is the preserved connector's cold
+  recovery escrow (break-glass only, read by no automation — the live
+  connector owns its `--token-file` and rotation goes through the API);
+  per-target entries serve fresh connectors only,
   `COOLIFY_ACCESS_SERVICE_TOKEN.{client_id,client_secret,token_id}`,
   `OVH_API.{application_key,application_secret,consumer_key,endpoint}`
   (R2 keys are deliberately NEVER retrieved operator-side: the target pulls
@@ -105,7 +110,9 @@ Generated values are written to OpenBao under stable paths and are referenced by
 | Logical value | OpenBao path/fields | Consumers |
 | --- | --- | --- |
 | Coolify SSH key | `secret/projects/ovhcloud/COOLIFY_SSH_PRIVATE_KEY` / `COOLIFY_SSH_PUBLIC_KEY` | guest bootstrap, Coolify machine connection |
-| Tunnel connector credential (per fresh target) | `secret/projects/ovhcloud/COOLIFY_TUNNEL_<NAME>` / `tunnel_id`, `tunnel_token` (preserved singleton `COOLIFY_TUNNEL_TOKEN` untouched by provisioning) | cloudflared service installation |
+| Tunnel config secret (preserved tunnel) | `secret/projects/ovhcloud/COOLIFY_TUNNEL_SECRET` / `tunnel_secret` | Terraform loader → `TF_VAR_cloudflare_tunnel_secret` → preserved tunnel config (only consumer) |
+| Tunnel connector token (preserved, cold recovery) | `secret/projects/ovhcloud/COOLIFY_TUNNEL_TOKEN` / `tunnel_token` | break-glass connector reinstall ONLY; read by no automation (live connector owns its `--token-file`; rotation via API) |
+| Tunnel connector credential (per fresh target) | `secret/projects/ovhcloud/COOLIFY_TUNNEL_<NAME>` / `tunnel_id`, `tunnel_token` | `ensure-tunnel.sh` creates + escrows; runner consumes; cloudflared service installation |
 | Cloudflare machine Access credential | `secret/projects/ovhcloud/COOLIFY_ACCESS_SERVICE_TOKEN` / `client_id`, `client_secret` | noninteractive verification and automation |
 | Coolify application key/admin bootstrap | `secret/projects/ovhcloud/COOLIFY_ADMIN` / `app_key`, `email`, `password` | Coolify bootstrap and recovery |
 | R2 backup credential | `secret/projects/ovhcloud/COOLIFY_R2` / `access_key_id`, `secret_access_key`, `bucket`, `endpoint` (four fields; every consumer fails closed on any missing field) | host-timer backup plane + restore probe (the Coolify in-app S3 destination was deleted; no credentials in Coolify) |
