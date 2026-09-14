@@ -91,3 +91,28 @@
 - The pg_dump/restore proof earlier in this file stands as the verified
   recovery path until the credential lands; the probe script
   (`scripts/backup-r2-probe.sh`) remains the live acceptance test.
+
+## 2026-09-14 — live automated backup schedule (preserved VPS + R2)
+
+- OpenBao `secret/projects/ovhcloud/COOLIFY_R2` v1 now holds
+  `access_key_id` (32), `secret_access_key` (64), `bucket=ovh-coolify-backups`
+  (dashboard-minted Account API token, Object Read & Write, wizard-escrowed).
+- Fixed `scripts/backup-r2-probe.sh`: R2's S3 API rejects the default
+  `eu-west-1` region (`InvalidRegionName`); the script now defaults
+  `AWS_DEFAULT_REGION=auto`. Live probe passes:
+  `probe ok: write/head/restore/delete succeeded; probe object removed.`
+- New `scripts/schedule-coolify-backup.sh` (dry-run capable): installs
+  awscli if missing, `/root/coolify-backup/backup-to-r2.sh` (pg_dump -Fc of
+  `coolify-db` piped through gzip to a dated R2 key, head-object verify,
+  prune keys older than 14 days), plus `coolify-backup.service` +
+  `coolify-backup.timer` (daily 02:00 UTC, Persistent=true).
+- Deployed live on the preserved VPS (no reboot/reinstall): credential env
+  provisioned from OpenBao via stdin pipe to `/root/coolify-backup/r2.env`
+  (mode 600, dir/script 700; secret values never on a command line or disk
+  elsewhere). Timer `enabled`, next run 2026-09-15 02:00 UTC.
+- First scheduled backup ran immediately and verified:
+  `backup ok: coolify-db-20260914T072213Z.dump.gz` (70163 bytes in R2).
+- Coolify dashboard destination registered: `s3_storages` row id 1
+  (`R2 ovh-coolify-backups`, region `auto`, team 0, usable) inserted with
+  dollar-quoted SQL over SSH stdin; per-database/per-volume schedules attach
+  to it once application databases exist (none on this fresh install).
