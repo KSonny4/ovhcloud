@@ -654,3 +654,14 @@
 - `docs/deployment-plan.md` reconciled to the implemented reality (status
   complete + converged, env-only authorization, no tfvars, operator-scoped
   apply rule); inventory item 2 marked RESOLVED.
+
+## 2026-09-14 — element-faithful runtime + plan/deployment docs (audit round)
+
+- Entrypoint/cmd/health arrays travel element-per-line (no word-splitting);
+  exec healthchecks map via shlex.join; `on-failure:N` restored exactly.
+- Live proof on destroyed `rt2-app` (entrypoint, spaced args, on-failure:5,
+  exec healthcheck): recreated entry/cmd/restart/health exact, volume data
+  exact. Combined with the earlier `runtime-app` proof (user, workdir, env,
+  ports, DB rows), the full runtime contract restores faithfully.
+- `docs/deployment-plan.md` reconciled (status complete, env-only auth, no
+  tfvars, operator-scoped apply rule); live plan converges with no changes.
