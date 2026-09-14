@@ -23,15 +23,52 @@
 set -euo pipefail
 
 dry_run=0
+self_test_input=''
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --dry-run) dry_run=1; shift ;;
-    -h|--help) echo 'usage: backup-app-workloads.sh [--dry-run]'; exit 0 ;;
+    --self-test-topology) self_test_input="$2"; shift 2 ;;
+    -h|--help) echo 'usage: backup-app-workloads.sh [--dry-run] [--self-test-topology JSONFILE]'; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
 
 log() { printf '%s\n' "$*"; }
+
+# Topology extraction (heredoc-quoted python, zero shell interpolation) is
+# defined here so --self-test-topology can run it before any root or
+# credential checks, and the rehearsal can unit-test the exact live code.
+# Takes the docker-inspect JSON FILE as $1 (never stdin: the heredoc owns
+# python's stdin, so piping would feed the script itself to json.load).
+topology_entry() {
+python3 - "$1" <<'TOPO_PY'
+import json,sys
+c = json.load(open(sys.argv[1]))[0]
+cfg, host, net = c["Config"], c["HostConfig"], c["NetworkSettings"]
+env, redacted = {}, []
+for e in cfg.get("Env", []) or []:
+    k, _, v = e.partition("=")
+    ku = k.upper()
+    if any(s in ku for s in ("PASS", "SECRET", "TOKEN", "KEY", "CREDENTIAL")):
+        env[k] = "REDACTED"; redacted.append(k)
+    else:
+        env[k] = v
+ports = []
+for cport, bindings in (host.get("PortBindings", {}) or {}).items():
+    for b in bindings or []:
+        hip = b.get("HostIp", "")
+        hport = b.get("HostPort", "")
+        ports.append((hip + ":" + hport + ":" + cport).lstrip(":"))
+# Runtime mounts live TOP-LEVEL (c["Mounts"]), not under HostConfig: reading
+# HostConfig.Mounts silently records nothing (always empty there).
+mounts = [{"type": m.get("Type"), "source": m.get("Source"), "target": m.get("Destination"), "ro": m.get("Mode","").find("ro") >= 0} for m in (c.get("Mounts", []) or []) if m.get("Type") in ("volume", "bind")]
+print(json.dumps({"name": c["Name"].lstrip("/"), "image": cfg.get("Image"), "env": env, "env_redacted": redacted, "ports": ports, "networks": list((net.get("Networks", {}) or {}).keys()), "labels": cfg.get("Labels", {}) or {}, "mounts": mounts}))
+TOPO_PY
+}
+if [ -n "$self_test_input" ]; then
+  topology_entry "$self_test_input"
+  exit $?
+fi
 
 if [ "$(id -u)" -ne 0 ] && [ "$dry_run" -eq 0 ]; then
   echo 'must run as root.' >&2
@@ -46,6 +83,7 @@ if [ "$dry_run" -eq 1 ]; then
   log 'DRY-RUN: discover postgres containers (pg_dump each non-template DB to R2 app-databases/, record tables+rows)'
   log 'DRY-RUN: snapshot each non-excluded Docker volume to R2 app-volumes/ (record files+bytes)'
   log 'DRY-RUN: snapshot APP_BIND_PATHS host dirs to R2 app-binds/'
+  log 'DRY-RUN: record full container topology (image, env sanitized, ports, networks, labels, mounts) into the manifest'
   log 'DRY-RUN: upload JSON manifest to R2 app-manifests/, prune all prefixes older than 14 days (fail closed)'
   exit 0
 fi
@@ -65,6 +103,7 @@ trap 'rm -rf "$workdir"' EXIT
 manifest_db='[]'
 manifest_vol='[]'
 manifest_binds='[]'
+manifest_containers='[]'
 FAILED=0
 
 # --- workload coverage contract (fail closed on gaps) ---
@@ -100,7 +139,7 @@ for cname in $(docker ps --format '{{.Names}}' 2>/dev/null || true); do
 done
 if [ -n "$gaps" ]; then
   echo "WORKLOAD COVERAGE GAP (fail closed): ${gaps}" >&2
-  printf '{"stamp":"%s","databases":[],"volumes":[],"binds":[],"gaps":%s}\n' "$(date -u +%Y%m%dT%H%M%SZ)" "$(printf '%s' "$gaps" | python3 -c 'import json,sys; print(json.dumps([g for g in sys.stdin.read().split(";") if g]))')" >"$workdir/gaps.json"
+  printf '{"stamp":"%s","databases":[],"volumes":[],"binds":[],"containers":[],"gaps":%s}\n' "$(date -u +%Y%m%dT%H%M%SZ)" "$(printf '%s' "$gaps" | python3 -c 'import json,sys; print(json.dumps([g for g in sys.stdin.read().split(";") if g]))')" >"$workdir/gaps.json"
   s3 put-object --bucket "$R2_BUCKET" --key "app-manifests/gaps-$(date -u +%Y%m%dT%H%M%SZ).json" --body "$workdir/gaps.json" || true
   exit 2
 fi
@@ -200,9 +239,28 @@ for bpath in ${APP_BIND_PATHS:-}; do
   fi
 done
 
+# --- container topology (for faithful service recreation) ---
+# Records every non-platform container's full topology. Env VALUES are
+# recorded except sensitive-looking keys (*PASS*, *SECRET*, *TOKEN*, *KEY*,
+# *CREDENTIAL*), which are stored as REDACTED with names listed: recreation
+# restores topology + data, and reports exactly which secrets to re-inject.
+# Topology entries are produced by topology_entry() (defined near the top).
+for cname in $(docker ps --format '{{.Names}}' 2>/dev/null || true); do
+  case "$cname" in coolify*|rollback-app-probe-db) continue ;; esac
+  [ -n "$cname" ] || continue
+  cspec="$(docker inspect "$cname" 2>/dev/null || true)"
+  [ -n "$cspec" ] || { echo "FAILED inspect ${cname}." >&2; FAILED=1; continue; }
+  printf '%s' "$cspec" >"$workdir/inspect.json"
+  centry="$(topology_entry "$workdir/inspect.json" || true)"
+  rm -f "$workdir/inspect.json"
+  [ -n "$centry" ] || { echo "FAILED topology ${cname}." >&2; FAILED=1; continue; }
+  manifest_containers="$(printf '%s' "$manifest_containers" | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin) + [json.loads(sys.argv[1])]))' "$centry")"
+  log "topology recorded: ${cname}"
+done
+
 # --- manifest + retention ---
 manifest_key="app-manifests/${stamp}.json"
-printf '{"stamp":"%s","databases":%s,"volumes":%s,"binds":%s,"gaps":[]}\n' "$stamp" "$manifest_db" "$manifest_vol" "$manifest_binds" >"$workdir/manifest.json"
+printf '{"stamp":"%s","databases":%s,"volumes":%s,"binds":%s,"containers":%s,"gaps":[]}\n' "$stamp" "$manifest_db" "$manifest_vol" "$manifest_binds" "$manifest_containers" >"$workdir/manifest.json"
 s3 put-object --bucket "$R2_BUCKET" --key "$manifest_key" --body "$workdir/manifest.json"
 prune_prefix 'app-databases/' 14
 prune_prefix 'app-volumes/' 14

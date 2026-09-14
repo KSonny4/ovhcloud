@@ -234,7 +234,7 @@ if [ "$dry_run" -eq 1 ]; then
   log 'DRY-RUN: modes: --generate-key-only (mint+escrow+print pubkey, exit); --reinstall-with-key --i-confirm-host-is-fresh (OVH reinstall with key injected, DESTRUCTIVE); default probes SSH first and fails closed with deterministic guidance on miss'
   log 'DRY-RUN: verify SSH connectivity (ssh -BatchMode user@host true)'
   log 'DRY-RUN: prepare credentials (generate + escrow SSH keypair when absent, register OVH account key, retrieve OpenBao fields by name); generate + escrow bootstrap password when ROOT_USER_PASSWORD absent (fail closed)'
-  log 'DRY-RUN: run ensure-tunnel.sh (existing escrow no-op, else create via API + escrow) before credential retrieval'
+  log 'DRY-RUN: run ensure-tunnel.sh on the per-target secret path (existing escrow no-op, else create dedicated tunnel via API + escrow; preserved tunnel never touched) before credential retrieval'
   log 'DRY-RUN: run ensure-service-token.sh --ensure-only (create/escrow, verify deferred until post-wiring) before retrieval; full lifecycle with HTTP 200 verify after wiring'
   log 'DRY-RUN: scp stage scripts (only) to /tmp/ovh-provision; credentials travel as a base64 env blob inside each SSH command (memory-only both ends)'
   want_stage bootstrap && log 'DRY-RUN: remote sudo BOOTSTRAP_TARGET_HOST/BOOTSTRAP_SSH_PUBLIC_KEY bash bootstrap-vps.sh + verify docker hello-world'
@@ -338,9 +338,19 @@ fi
 # secrets. R2 keys stay dashboard-gated (API issuance 403/404, documented).
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 tunnel_slug="$(printf '%s' "$host" | tr -c 'a-zA-Z0-9-' '-' | tr '[:upper:]' '[:lower:]')"
+# Dedicated tunnel identity per fresh target: the name defaults per-host and
+# the secret path derives from it, so a fresh target can NEVER consume the
+# preserved tunnel's singleton escrow. The preserved tunnel name is refused.
+tunnel_name="${TUNNEL_NAME:-coolify-${tunnel_slug}}"
+if [ "$tunnel_name" = 'coolify-admin' ]; then
+  echo 'Refusing: coolify-admin is the preserved tunnel; fresh targets get a dedicated tunnel.' >&2
+  exit 2
+fi
+tunnel_secret_path="${TUNNEL_SECRET_PATH:-COOLIFY_TUNNEL_$(printf '%s' "$tunnel_name" | tr 'a-z-' 'A-Z_')}"
+log "tunnel identity: ${tunnel_name} @ OpenBao ${tunnel_secret_path}"
 log '== tunnel lifecycle (operator side) =='
 run env BAO_ADDR="$bao_addr" CLOUDFLARE_ACCOUNT_ID="$cf_account" \
-  TUNNEL_NAME="${TUNNEL_NAME:-coolify-${tunnel_slug}}" \
+  TUNNEL_NAME="$tunnel_name" TUNNEL_SECRET_PATH="$tunnel_secret_path" \
   bash "$repo_root/scripts/ensure-tunnel.sh"
 
 # First-time service-token flow: creation/escrow MUST precede any step that
@@ -353,7 +363,7 @@ run env BAO_ADDR="$bao_addr" CLOUDFLARE_ACCOUNT_ID="$cf_account" \
 
 log 'retrieving stage credentials from OpenBao (names only, values never printed)...'
 ssh_pub="$(bao_get COOLIFY_SSH_PUBLIC_KEY value)"
-tunnel_token="$(bao_get COOLIFY_TUNNEL_TOKEN tunnel_token)"
+tunnel_token="$(bao kv get -field=tunnel_token "secret/projects/ovhcloud/${tunnel_secret_path}")"
 svc_id="$(bao_get COOLIFY_ACCESS_SERVICE_TOKEN client_id)"
 svc_secret="$(bao_get COOLIFY_ACCESS_SERVICE_TOKEN client_secret)"
 # R2 keys are deliberately NOT retrieved: the target pulls them memory-only
@@ -362,6 +372,24 @@ for v in ssh_pub tunnel_token svc_id svc_secret; do
   if [ -z "${!v}" ]; then echo "OpenBao escrow missing for ${v}; refusing to continue." >&2; exit 2; fi
 done
 log 'OpenBao retrieval ok (all required fields present).'
+
+# Preflight: fail FAST before any mutation when the single dashboard-gated
+# prerequisite is missing. R2 S3 key issuance has no Cloudflare API route
+# (verified: every r2/api_tokens path returns 10015; bucket management
+# itself works), so COOLIFY_R2 must be escrowed from a dashboard-minted key.
+# Presence is checked by name only; values never leave OpenBao here.
+if want_stage backup; then
+  for f in access_key_id secret_access_key bucket endpoint; do
+    if [ -z "$(bao kv get -field="$f" secret/projects/ovhcloud/COOLIFY_R2 2>/dev/null || true)" ]; then
+      echo "preflight: OpenBao COOLIFY_R2.${f} missing (fail closed before mutating anything)." >&2
+      echo 'R2 S3 keys cannot be minted via API (no route); mint in the dashboard:' >&2
+      echo '  R2 -> Manage R2 API Tokens -> Object Read & Write scoped to the bucket,' >&2
+      echo '  then escrow: bao kv put -mount=secret projects/ovhcloud/COOLIFY_R2 access_key_id=... secret_access_key=... bucket=... endpoint=...' >&2
+      exit 2
+    fi
+  done
+  log 'preflight ok: COOLIFY_R2 escrow present (values never retrieved here).'
+fi
 
 # NOTE: the single EXIT trap installed near the top covers generated keys +
 # remote material on every path; do NOT install another here.
@@ -449,7 +477,7 @@ if want_stage edge; then
   # runs, then gate on HTTP 200. Without this a fresh tunnel has no route.
   # Tunnel identity: dedicated field when present (fresh ensure path), else
   # the "t" claim inside the JSON connector token (legacy escrow layout).
-  tunnel_id="$(bao kv get -field=tunnel_id secret/projects/ovhcloud/COOLIFY_TUNNEL_TOKEN 2>/dev/null || true)"
+  tunnel_id="$(bao kv get -field=tunnel_id "secret/projects/ovhcloud/${tunnel_secret_path}" 2>/dev/null || true)"
   if [ -z "$tunnel_id" ]; then
     tunnel_id="$(printf '%s' "$tunnel_token" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("t",""))' 2>/dev/null || true)"
   fi

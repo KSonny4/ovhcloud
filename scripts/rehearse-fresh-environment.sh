@@ -47,8 +47,33 @@ phase_ok origin_identity | tee -a "$artifact_dir/phases.log"
 
 log '== terraform_gates =='
 terraform -chdir=infra/terraform fmt -check -recursive
-terraform -chdir=infra/terraform init -backend=false -input=false >/tmp/rehearsal-terraform-init.log 2>&1
+# Provider downloads are retried (transient registry failures); throwaway
+# dirs below seed from this installation so the rehearsal stays hermetic
+# offline afterwards (auditor sandboxes included).
+inited=0
+for attempt in 1 2 3; do
+  if terraform -chdir=infra/terraform init -backend=false -input=false >/tmp/rehearsal-terraform-init.log 2>&1; then inited=1; break; fi
+  log "init attempt ${attempt} failed; retrying..."
+  sleep 10
+done
+if [ "$inited" -eq 0 ]; then
+  if [ -d infra/terraform/.terraform/providers ]; then
+    log 'init unreachable (offline?); validating against the installed providers.'
+  else
+    echo 'terraform init failed after 3 attempts and no providers are installed.' >&2
+    exit 1
+  fi
+fi
 terraform -chdir=infra/terraform validate
+seed_providers() {
+  local dest="$1"
+  if [ -d infra/terraform/.terraform/providers ] && [ -f infra/terraform/.terraform.lock.hcl ]; then
+    mkdir -p "${dest}/.terraform"
+    cp -r infra/terraform/.terraform/providers "${dest}/.terraform/" 2>/dev/null || true
+    cp infra/terraform/.terraform.lock.hcl "${dest}/" 2>/dev/null || true
+    log "seeded provider installation into ${dest} (offline-safe init)."
+  fi
+}
 python3 scripts/validate-iac.py
 log '== admin policy regression gate (omission must fail) =='
 # Plan requires an initialized backend, which the credential-free rehearsal
@@ -63,7 +88,13 @@ t = open(p).read()
 t = re.sub(r'\n  backend "s3" \{\}', '', t)
 open(p, 'w').write(t)
 PY
-terraform -chdir="$gate_dir" init -backend=false -input=false >/tmp/rehearsal-gate-init.log 2>&1
+seed_providers "$gate_dir"
+# Hermetic by construction: providers + lock are seeded from the main
+# installation, so validation never depends on registry reachability.
+# init is best-effort (online refresh); validate is mandatory and offline-safe.
+if ! terraform -chdir="$gate_dir" init -backend=false -input=false >/tmp/rehearsal-gate-init.log 2>&1; then
+  log 'gate init unreachable (offline?); validating against seeded providers.'
+fi
 # NOTE: the export builtin (unlike a command env-prefix) accepts a quoted
 # NAME=value argument, which the JSON list value requires.
 export TF_VAR_cloudflare_api_token=rehearsal
@@ -149,6 +180,12 @@ grep -q 'fetch-r2-env.sh' scripts/schedule-coolify-backup.sh || { echo 'schedule
 if grep -rnE '(tee|>)[^|]*r2\.env' scripts/*.sh | grep -v test-clean-target-install >/dev/null; then echo 'a script still writes r2.env.' >&2; exit 1; fi
 if grep -q 'EnvironmentFile=.*r2' scripts/schedule-coolify-backup.sh; then echo 'unit still consumes a credential EnvironmentFile.' >&2; exit 1; fi
 grep -q 'wire-fresh-edge.sh' scripts/run-remote-provision.sh || { echo 'runner omits fresh-edge wiring.' >&2; exit 1; }
+# Dedicated tunnel identity: per-target secret path, preserved name refused,
+# preserved singleton escrow never consumed on the fresh path.
+grep -q 'TUNNEL_SECRET_PATH=' scripts/run-remote-provision.sh || { echo 'runner omits per-target tunnel secret path.' >&2; exit 1; }
+grep -q "coolify-admin'" scripts/run-remote-provision.sh || { echo 'runner omits preserved-tunnel-name refusal.' >&2; exit 1; }
+if grep -n 'bao_get COOLIFY_TUNNEL_TOKEN' scripts/run-remote-provision.sh | grep -q .; then echo 'runner still consumes the preserved tunnel singleton.' >&2; exit 1; fi
+grep -q 'TUNNEL_SECRET_PATH' scripts/ensure-tunnel.sh || { echo 'ensure-tunnel omits per-target secret path.' >&2; exit 1; }
 # OVH authorization boundary: no script may read the local OVH credential file; OVH_* must come
 # from the OpenBao OVH_API escrow.
 if grep -rn '\.ovh\.conf' scripts/*.sh scripts/lib/*.sh 2>/dev/null | grep -v 'rehearse-fresh-environment.sh' | grep -q .; then echo 'a script still depends on the local OVH credential file.' >&2; exit 1; fi
@@ -212,7 +249,10 @@ CLOUDFLARE_ACCOUNT_ID=rehearsal CLOUDFLARE_ZONE_ID=rehearsal \
 grep -q 'non_identity' /tmp/rehearsal-fresh-out/main.tf || { echo 'generated apps diverge from the nested non_identity convention.' >&2; exit 1; }
 if command -v terraform >/dev/null 2>&1; then
   cp infra/terraform-fresh/versions.tf infra/terraform-fresh/variables.tf /tmp/rehearsal-fresh-out/
-  terraform -chdir=/tmp/rehearsal-fresh-out init -backend=false -input=false >/dev/null 2>&1
+  seed_providers /tmp/rehearsal-fresh-out
+  if ! terraform -chdir=/tmp/rehearsal-fresh-out init -backend=false -input=false >/dev/null 2>&1; then
+    log 'fresh-out init unreachable (offline?); validating against seeded providers.'
+  fi
   terraform -chdir=/tmp/rehearsal-fresh-out validate >/dev/null 2>&1 || { echo 'generated fresh config does not validate.' >&2; exit 1; }
   log 'generated fresh config validates (terraform validate).'
 fi
@@ -237,6 +277,16 @@ bash scripts/backup-r2-probe.sh --dry-run
 bash scripts/rollback-coolify-backup.sh --dry-run
 bash scripts/rollback-app-workloads.sh --dry-run
 bash scripts/rollback-app-workloads.sh --dry-run --recreate demo --db-password dry-run-only
+# Topology unit test: the EXACT live extractor against synthetic inspect JSON.
+cat > /tmp/rehearsal-inspect.json <<'INSPECT_EOF'
+[{"Name": "/webshop-web", "Config": {"Image": "nginx:alpine", "Env": ["APP_ENV=proof", "DB_PASSWORD=s3cret"], "Labels": {"proof": "webshop"}}, "HostConfig": {"PortBindings": {"80/tcp": [{"HostIp": "", "HostPort": "18080"}]}}, "Mounts": [{"Type": "volume", "Source": "webshop-web", "Destination": "/usr/share/nginx/html", "Mode": "rw"}], "NetworkSettings": {"Networks": {"bridge": {}}}}]
+INSPECT_EOF
+topo_out="$(bash scripts/backup-app-workloads.sh --self-test-topology /tmp/rehearsal-inspect.json 2>/dev/null || true)"
+rm -f /tmp/rehearsal-inspect.json
+for want in '"ports": ["18080:80/tcp"]' '"DB_PASSWORD": "REDACTED"' '"APP_ENV": "proof"' '"source": "webshop-web"' '"target": "/usr/share/nginx/html"'; do
+  printf '%s' "$topo_out" | grep -qF "$want" || { echo "topology extractor broken (missing ${want})." >&2; exit 1; }
+done
+log 'topology extractor proven on synthetic inspect JSON (ports, redaction, mounts).'
 bash scripts/ensure-service-token.sh --dry-run
 bash scripts/ensure-service-token.sh --dry-run --ensure-only
 bash scripts/tf-env-from-openbao.sh --dry-run

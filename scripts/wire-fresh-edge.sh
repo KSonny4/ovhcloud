@@ -29,10 +29,12 @@
 set -euo pipefail
 
 dry_run=0
+self_test=0
 handoff_file=''
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --dry-run) dry_run=1; shift ;;
+    --self-test-merge) self_test=1; shift ;;
     --handoff-file) handoff_file="$2"; shift 2 ;;
     --handoff-file=*) handoff_file="${1#--handoff-file=}"; shift ;;
     -h|--help) echo 'usage: wire-fresh-edge.sh [--dry-run] [--handoff-file PATH]'; exit 0 ;;
@@ -41,6 +43,50 @@ while [ "$#" -gt 0 ]; do
 done
 
 log() { printf '%s\n' "$*"; }
+# Ingress reconciliation as testable functions (same code serves the live
+# path and --self-test-merge, so the preservation proof cannot drift from
+# the implementation).
+ingress_covers() {
+  printf '%s' "$1" | python3 -c '
+import json,sys
+rules = json.load(sys.stdin)
+want = dict(a.split("=",1) for a in sys.argv[1:])
+sys.exit(0 if all(any(r.get("hostname")==h and r.get("service")==s for r in rules) for h,s in want.items()) else 1)' "${@:2}"
+}
+merge_ingress() {
+  printf '%s' "$1" | python3 -c '
+import json,sys
+rules = [r for r in json.load(sys.stdin) if "hostname" in r]
+want = dict(a.split("=",1) for a in sys.argv[1:])
+have = {r["hostname"] for r in rules}
+for h,s in want.items():
+    if h not in have:
+        rules.append({"hostname": h, "service": s})
+if not any("hostname" not in r for r in rules):
+    rules.append({"service": "http_status:404"})
+print(json.dumps({"config": {"ingress": rules}}))' "${@:2}"
+}
+if [ "$self_test" -eq 1 ]; then
+  pre='[{"hostname": "other.example.com", "service": "http://localhost:9000"}]'
+  if printf '%s' "$pre" | python3 -c 'import json,sys; json.load(sys.stdin)' 2>/dev/null; then :; else echo 'self-test fixture invalid.' >&2; exit 2; fi
+  if ingress_covers "$pre" 'other.example.com=http://localhost:9000'; then
+    log 'self-test: no-drift detected on pre-existing route.'
+  else
+    echo 'self-test FAILED: covered route reported as drift.' >&2; exit 1
+  fi
+  if ingress_covers "$pre" 'coolify.fresh.invalid=http://localhost:8000'; then
+    echo 'self-test FAILED: missing route reported as covered.' >&2; exit 1
+  else
+    log 'self-test: drift detected on missing route.'
+  fi
+  merged="$(merge_ingress "$pre" 'coolify.fresh.invalid=http://localhost:8000' 'ssh.fresh.invalid=ssh://localhost:22')"
+  if printf '%s' "$merged" | python3 -c 'import json,sys; h=[r.get("hostname") for r in json.load(sys.stdin)["config"]["ingress"]]; sys.exit(0 if {"other.example.com","coolify.fresh.invalid","ssh.fresh.invalid"} <= set(h) else 1)'; then
+    log 'self-test: merge preserves unrelated routes. MERGE_OK'
+  else
+    echo 'self-test FAILED: merge discarded a route.' >&2; exit 1
+  fi
+  exit 0
+fi
 for cmd in curl python3; do command -v "$cmd" >/dev/null 2>&1 || { echo "$cmd is required." >&2; exit 2; }; done
 [ -n "${CLOUDFLARE_ACCOUNT_ID:-}" ] || { echo 'CLOUDFLARE_ACCOUNT_ID must be set.' >&2; exit 2; }
 [ -n "${CLOUDFLARE_ZONE_ID:-}" ] || { echo 'CLOUDFLARE_ZONE_ID must be set.' >&2; exit 2; }
@@ -83,27 +129,15 @@ otp_uid="$(api "https://api.cloudflare.com/client/v4/accounts/${acct}/access/ide
 [ -n "$otp_uid" ] || { echo 'OTP identity provider not found in account (fail closed).' >&2; exit 2; }
 
 # --- 1. tunnel ingress, all routes at once (idempotent) ---
-wanted="$(for host in $hostnames; do printf '%s=%s\n' "$host" "$(service_for "$host")"; done)"
-current_ingress="$(api "https://api.cloudflare.com/client/v4/accounts/${acct}/cfd_tunnel/${tid}/configurations" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(json.dumps(d.get("result",{}).get("config",{}).get("ingress",[]))))' 2>/dev/null || echo '[]')"
-if printf '%s\n%s' "$current_ingress" "$wanted" | python3 -c '
-import json,sys
-raw = sys.stdin.read().rsplit("\n[",1)
-rules = json.loads("[" + raw[1]) if len(raw) > 1 else []
-want = dict(l.split("=",1) for l in raw[0].strip().split("\n") if "=" in l)
-sys.exit(0 if all(any(r.get("hostname")==h and r.get("service")==s for r in rules) for h,s in want.items()) else 1)'; then
+# Wanted pairs travel as argv (clean JSON throughout; no string surgery on
+# the fetched config, so unrelated existing routes are never discarded).
+wanted_args=()
+for host in $hostnames; do wanted_args+=("${host}=$(service_for "$host")"); done
+current_ingress="$(api "https://api.cloudflare.com/client/v4/accounts/${acct}/cfd_tunnel/${tid}/configurations" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(json.dumps(d.get("result",{}).get("config",{}).get("ingress",[])))' 2>/dev/null || echo '[]')"
+if ingress_covers "$current_ingress" "${wanted_args[@]}"; then
   log 'ingress already routes all hostnames; no PUT.'
 else
-  new_ingress="$(printf '%s\n%s' "$current_ingress" "$wanted" | python3 -c '
-import json,sys
-raw = sys.stdin.read().rsplit("\n[",1)
-rules = [r for r in (json.loads("[" + raw[1]) if len(raw) > 1 else []) if "hostname" in r]
-want = dict(l.split("=",1) for l in raw[0].strip().split("\n") if "=" in l)
-have = {r["hostname"] for r in rules}
-for h,s in want.items():
-    if h not in have:
-        rules.append({"hostname": h, "service": s})
-rules.append({"service": "http_status:404"})
-print(json.dumps({"config": {"ingress": rules}}))')"
+  new_ingress="$(merge_ingress "$current_ingress" "${wanted_args[@]}")"
   code="$(curl -sS --max-time 30 -o /dev/null -w '%{http_code}' -X PUT -H "Authorization: Bearer ${admin}" -H 'Content-Type: application/json' -d "$new_ingress" "https://api.cloudflare.com/client/v4/accounts/${acct}/cfd_tunnel/${tid}/configurations")"
   [ "$code" = '200' ] || { echo "ingress PUT failed: HTTP ${code} (fail closed)." >&2; exit 2; }
   log 'ingress updated for all hostnames (existing rules preserved).'

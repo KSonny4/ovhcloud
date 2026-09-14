@@ -17,6 +17,13 @@ authorization), and every derived secret is escrowed back to OpenBao.
 - `ovhcloud` CLI (authorization comes from the OpenBao `OVH_API` entry via `OVH_*` env; no credential file) for VPS discovery.
 - An SSH client. No pre-existing keypair is required (the runner generates +
   escrows one when absent); no Terraform values need hand-editing.
+- The SOLE dashboard prerequisite: R2 S3 keys escrowed at OpenBao
+  `COOLIFY_R2` (`access_key_id`, `secret_access_key`, `bucket`, `endpoint`).
+  R2 key issuance has no Cloudflare API route (verified 10015 on every
+  candidate path), so mint once in the dashboard (R2 -> Manage R2 API
+  Tokens -> Object Read & Write, bucket-scoped) and escrow; everything else
+  (tunnel, service token, Access, DNS, OVH registration) is API-automated.
+  The runner preflights this escrow and fails fast with this procedure.
 
 ## Step 1 — Order the VPS
 

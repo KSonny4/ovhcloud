@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
-# Tunnel lifecycle (operator side, OpenBao-complete): ensure a Cloudflare
-# Tunnel exists for fresh provisioning, escrow its connector token BEFORE any
-# consumer reads it, and stay a no-op when the escrow already holds one.
+# Tunnel lifecycle (operator side, OpenBao-complete): ensure a DEDICATED
+# Cloudflare Tunnel exists per fresh target, escrow its connector token at a
+# per-target secret path BEFORE any consumer reads it, and stay a no-op when
+# that path already holds one. The preserved tunnel's COOLIFY_TUNNEL_TOKEN is
+# NEVER read or written here: a fresh target attaching to the preserved
+# tunnel would inherit its routes, which the preservation boundary forbids.
 #
 # - Idempotent: existing OpenBao COOLIFY_TUNNEL_TOKEN (tunnel_token) wins.
 # - Creation uses the OpenBao-escrowed ADMIN_CLOUDFLARE token via the
@@ -14,7 +17,8 @@
 #
 # Usage (operator machine):
 #   BAO_ADDR=https://secrets.pkubelka.cz CLOUDFLARE_ACCOUNT_ID=<acct> \
-#     TUNNEL_NAME=<name> bash scripts/ensure-tunnel.sh [--dry-run]
+#     TUNNEL_NAME=<name> TUNNEL_SECRET_PATH=<per-target-entry> \
+#     bash scripts/ensure-tunnel.sh [--dry-run]
 set -euo pipefail
 
 dry_run=0
@@ -28,7 +32,7 @@ done
 
 log() { printf '%s\n' "$*"; }
 if [ "$dry_run" -eq 1 ]; then
-  log "DRY-RUN: read tunnel_token from OpenBao COOLIFY_TUNNEL_TOKEN; create tunnel ${TUNNEL_NAME:-<unset>} via API + escrow {tunnel_id,tunnel_token} only when absent; fail closed otherwise"
+  log "DRY-RUN: read tunnel_token from OpenBao ${TUNNEL_SECRET_PATH:-<unset>}; create tunnel ${TUNNEL_NAME:-<unset>} via API + escrow {tunnel_id,tunnel_token} only when absent; fail closed otherwise"
   exit 0
 fi
 command -v bao >/dev/null 2>&1 || { echo 'bao CLI is required.' >&2; exit 2; }
@@ -38,9 +42,10 @@ command -v python3 >/dev/null 2>&1 || { echo 'python3 is required.' >&2; exit 2;
 [ -n "${CLOUDFLARE_ACCOUNT_ID:-}" ] || { echo 'CLOUDFLARE_ACCOUNT_ID must be set.' >&2; exit 2; }
 [ -n "${TUNNEL_NAME:-}" ] || { echo 'TUNNEL_NAME must be set.' >&2; exit 2; }
 
-existing="$(bao kv get -field=tunnel_token secret/projects/ovhcloud/COOLIFY_TUNNEL_TOKEN 2>/dev/null || true)"
+secret_path="${TUNNEL_SECRET_PATH:?TUNNEL_SECRET_PATH (per-target OpenBao entry) must be set.}"
+existing="$(bao kv get -field=tunnel_token "secret/projects/ovhcloud/${secret_path}" 2>/dev/null || true)"
 if [ -n "$existing" ]; then
-  log 'tunnel token already escrowed in OpenBao; no-op (value never printed).'
+  log "tunnel token already escrowed at ${secret_path}; no-op (value never printed)."
   exit 0
 fi
 
@@ -66,9 +71,9 @@ if [ -z "$tunnel_id" ] || [ -z "$tunnel_token" ]; then
   echo 'tunnel creation returned no id/token (fail closed).' >&2
   exit 2
 fi
-if bao kv put -mount=secret projects/ovhcloud/COOLIFY_TUNNEL_TOKEN \
+if bao kv put -mount=secret "projects/ovhcloud/${secret_path}" \
     "tunnel_id=${tunnel_id}" "tunnel_token=${tunnel_token}" >/dev/null 2>&1; then
-  log 'tunnel created + escrowed to OpenBao COOLIFY_TUNNEL_TOKEN (values never printed).'
+  log "tunnel created + escrowed to OpenBao ${secret_path} (values never printed)."
 else
   echo 'tunnel created but escrow failed; DELETE the orphan tunnel before retrying (fail closed).' >&2
   echo "orphan tunnel id: ${tunnel_id}" >&2

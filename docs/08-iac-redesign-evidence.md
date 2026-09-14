@@ -600,3 +600,26 @@
   planted `probe-old-20200101T000000Z` pruned on the next run. Bucket fully
   purged of test objects (51 deleted with full keys); only genuine scheduled
   root backups remain.
+
+## 2026-09-14 — hermetic rehearsal + ingress preservation + per-target tunnels (audit round)
+
+- Ingress reconciliation fixed (was silently discarding unrelated routes on
+  every PUT, masked by `|| echo '[]'` on a paren-count SyntaxError):
+  clean argv-based JSON merge, no string surgery. Proven by
+  `wire-fresh-edge.sh --self-test-merge` executing the REAL merge functions
+  (no-drift detected, drift detected, unrelated route preserved: MERGE_OK),
+  gated in rehearsal.
+- Dedicated tunnel identity per fresh target: `ensure-tunnel.sh` works a
+  per-target `TUNNEL_SECRET_PATH` (never the preserved singleton), the runner
+  derives it from the target name and refuses `coolify-admin`, retrieval +
+  wiring consume only that path. Rehearsal gates all three.
+- Rehearsal is hermetic: provider installations seed throwaway dirs from the
+  main installation (offline-safe), registry init retried then degraded to
+  validate-only, admin gate proven end-to-end with the registry blocked
+  (retention error still enforced). Current 11/11 report retained at
+  `docs/rehearsal-report.latest.json`.
+- Topology extractor fixed twice live: f-string quote SyntaxError (heredoc
+  unit-testable function now, rehearsal asserts ports/redaction/mounts) and
+  HostConfig-vs-top-level Mounts (mounts were silently empty). Live proof:
+  destroyed nginx+postgres service recreated with exact content
+  (`webshop-proof-ok`, HTTP 200), env, and DB rows; full cleanup after.

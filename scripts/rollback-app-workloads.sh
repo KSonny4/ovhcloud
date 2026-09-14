@@ -106,10 +106,18 @@ if [ -n "$recreate" ]; then
     s3get "$vkey" "$workdir/v.tar.gz" || { echo "FAILED download ${vkey}." >&2; FAILED=1; continue; }
     if docker run --rm -v "${vname}:/data" -v "${workdir}:/backup" alpine:3 tar xzf /backup/v.tar.gz -C /data >/dev/null 2>&1; then
       got="$(docker run --rm -v "${vname}:/data:ro" alpine:3 sh -c 'find /data -type f | wc -l' 2>/dev/null || echo 0)"
-      if [ "${got:-0}" -eq "${vfiles:-0}" ]; then
-        log "RESTORED-INTO-SERVICE volume: ${vname} (files=${got})"
+      # Never-short invariant: a hot volume snapshot races running writers
+      # (count and tar are seconds apart), so restored may legitimately
+      # EXCEED the manifest count; falling short means data loss. The dump
+      # restore (exact tables/rows) is the consistency point, not the tar.
+      if [ "${got:-0}" -ge "${vfiles:-0}" ]; then
+        if [ "${got:-0}" -eq "${vfiles:-0}" ]; then
+          log "RESTORED-INTO-SERVICE volume: ${vname} (files=${got})"
+        else
+          log "RESTORED-INTO-SERVICE volume: ${vname} (files=${got}, manifest had ${vfiles}: hot-copy growth, dump parity authoritative)"
+        fi
       else
-        echo "FAILED parity ${vname}: manifest files=${vfiles}, restored=${got}." >&2; FAILED=1
+        echo "FAILED parity ${vname}: manifest files=${vfiles}, restored=${got} (short)." >&2; FAILED=1
       fi
     else
       echo "FAILED untar ${vkey} into ${vname}." >&2; FAILED=1
@@ -148,6 +156,76 @@ if [ -n "$recreate" ]; then
       echo "FAILED health: ${cname} not running." >&2; FAILED=1
     fi
   done
+  # Application (non-database) containers: full topology recreation.
+  db_containers="$(python3 -c 'import json,sys; print(" ".join(sorted({d["container"] for d in json.load(open(sys.argv[1])).get("databases",[])})))' "$manifest_json")"
+  needs_secrets=''
+  for cname in $(python3 -c 'import json,sys; print(" ".join(sorted({c["name"] for c in json.load(open(sys.argv[1])).get("containers",[])})))' "$manifest_json"); do
+    case " $db_containers " in *" $cname "*) continue ;; esac
+    case "$cname" in "${recreate}-"*) ;; *) continue ;; esac
+    cspec="$(python3 -c 'import json,sys; print(json.dumps(next(c for c in json.load(open(sys.argv[1])).get("containers",[]) if c["name"]==sys.argv[2])))' "$manifest_json" "$cname")"
+    cimage="$(printf '%s' "$cspec" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("image",""))')"
+    [ -n "$cimage" ] || { echo "FAILED topology ${cname}: no image recorded." >&2; FAILED=1; continue; }
+    run_args=()
+    while IFS= read -r kv; do
+      [ -n "$kv" ] || continue
+      k="${kv%%=*}"; v="${kv#*=}"
+      if [ "$v" = 'REDACTED' ]; then needs_secrets="${needs_secrets} ${cname}:${k}"; continue; fi
+      run_args+=(-e "${k}=${v}")
+    done <<<"$(printf '%s' "$cspec" | python3 -c 'import json,sys; [print(f"{k}={v}") for k,v in json.load(sys.stdin).get("env",{}).items()]')"
+    while IFS= read -r pm; do
+      [ -n "$pm" ] || continue
+      run_args+=(-p "$pm")
+    done <<<"$(printf '%s' "$cspec" | python3 -c 'import json,sys; [print(p) for p in json.load(sys.stdin).get("ports",[])]')"
+    while IFS= read -r lb; do
+      [ -n "$lb" ] || continue
+      run_args+=(-l "$lb")
+    done <<<"$(printf '%s' "$cspec" | python3 -c 'import json,sys; [print(f"{k}={v}") for k,v in json.load(sys.stdin).get("labels",{}).items()]')"
+    first_net="$(printf '%s' "$cspec" | python3 -c 'import json,sys; n=json.load(sys.stdin).get("networks",[]); print(n[0] if n else "")')"
+    extra_nets="$(printf '%s' "$cspec" | python3 -c 'import json,sys; [print(n) for n in json.load(sys.stdin).get("networks",[])[1:]]')"
+    for net in $first_net $extra_nets; do
+      [ -n "$net" ] || continue
+      docker network inspect "$net" >/dev/null 2>&1 || docker network create "$net" >/dev/null 2>&1 || { echo "FAILED network ${net}." >&2; FAILED=1; continue 2; }
+    done
+    [ -n "$first_net" ] && run_args+=(--network "$first_net")
+    while IFS= read -r mnt; do
+      [ -n "$mnt" ] || continue
+      mtype="${mnt%%|*}"; rest="${mnt#*|}"; msrc="${rest%%|*}"; rest2="${rest#*|}"; mdst="${rest2%%|*}"; mro="${rest2#*|}"
+      if [ "$mtype" = 'volume' ]; then
+        # docker inspect reports named-volume sources as host paths
+        # (/var/lib/docker/volumes/<name>/_data): normalize to the name.
+        case "$msrc" in
+          /var/lib/docker/volumes/*/_data) msrc="$(printf '%s' "$msrc" | sed 's|^/var/lib/docker/volumes/||; s|/_data$||')" ;;
+        esac
+        if ! docker volume inspect "$msrc" >/dev/null 2>&1; then
+          vsnap="$(python3 -c 'import json,sys; print(next((v["key"] for v in json.load(open(sys.argv[1])).get("volumes",[]) if v["volume"]==sys.argv[2]),""))' "$manifest_json" "$msrc")"
+          [ -n "$vsnap" ] || { echo "FAILED mount ${msrc}: volume missing and no snapshot recorded." >&2; FAILED=1; continue 2; }
+          docker volume create "$msrc" >/dev/null || { echo "FAILED create volume ${msrc}." >&2; FAILED=1; continue 2; }
+          s3get "$vsnap" "$workdir/m.tar.gz" || { echo "FAILED download ${vsnap}." >&2; FAILED=1; continue 2; }
+          docker run --rm -v "${msrc}:/data" -v "${workdir}:/backup" alpine:3 tar xzf /backup/m.tar.gz -C /data >/dev/null 2>&1 || { echo "FAILED untar into ${msrc}." >&2; FAILED=1; continue 2; }
+          rm -f "$workdir/m.tar.gz"
+          log "mount volume restored: ${msrc}"
+        fi
+        if [ "$mro" = 'True' ]; then run_args+=(-v "${msrc}:${mdst}:ro"); else run_args+=(-v "${msrc}:${mdst}"); fi
+      elif [ "$mtype" = 'bind' ]; then
+        mkdir -p "$msrc" || { echo "FAILED bind dir ${msrc}." >&2; FAILED=1; continue 2; }
+        run_args+=(-v "${msrc}:${mdst}")
+      fi
+    done <<<"$(printf '%s' "$cspec" | python3 -c 'import json,sys; [print(str(m.get("type","")) + "|" + str(m.get("source","")) + "|" + str(m.get("target","")) + "|" + str(m.get("ro",False))) for m in json.load(sys.stdin).get("mounts",[])]')"
+    if docker run -d --name "$cname" "${run_args[@]}" "$cimage" >/dev/null 2>&1; then
+      for net in $extra_nets; do
+        [ -n "$net" ] && docker network connect "$net" "$cname" >/dev/null 2>&1 || true
+      done
+      sleep 5
+      if docker inspect "$cname" --format '{{.State.Running}}' 2>/dev/null | grep -q true; then
+        log "RESTORED-INTO-SERVICE app container: ${cname} (${cimage})"
+      else
+        echo "FAILED health: ${cname} not running." >&2; FAILED=1
+      fi
+    else
+      echo "FAILED start app container ${cname}." >&2; FAILED=1
+    fi
+  done
+  [ -z "$needs_secrets" ] || log "WARNING: recreated containers need secret re-injection:${needs_secrets}"
   # Declared bind paths (e.g. SQLite directories): recreate the directory
   # and untar the snapshot into it. Refuses non-empty targets (fail closed).
   for bkey in $(python3 -c 'import json,sys; print(" ".join(b["key"] for b in json.load(open(sys.argv[1])).get("binds",[])))' "$manifest_json"); do

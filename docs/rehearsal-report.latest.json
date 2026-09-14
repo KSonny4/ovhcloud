@@ -1,0 +1,49 @@
+{
+  "rehearsal": "ovh-coolify-fresh-environment",
+  "phases": [
+    {
+      "phase": "provider_access",
+      "status": "pass"
+    },
+    {
+      "phase": "origin_identity",
+      "status": "pass"
+    },
+    {
+      "phase": "terraform_gates",
+      "status": "pass"
+    },
+    {
+      "phase": "guest_ready",
+      "status": "pass"
+    },
+    {
+      "phase": "coolify_ready",
+      "status": "pass"
+    },
+    {
+      "phase": "edge_ready",
+      "status": "pass"
+    },
+    {
+      "phase": "runner_channel",
+      "status": "pass"
+    },
+    {
+      "phase": "backup_ready",
+      "status": "pass"
+    },
+    {
+      "phase": "ephemeral_cleanup",
+      "status": "pass"
+    },
+    {
+      "phase": "no_plaintext_secrets",
+      "status": "pass"
+    },
+    {
+      "phase": "context_graph",
+      "status": "pass"
+    }
+  ]
+}
