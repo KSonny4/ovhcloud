@@ -174,10 +174,10 @@ else
   # Fail closed only when skipping strands a freshly generated key (nothing
   # else could have distributed it). A supplied key stays operator-owned.
   if [ "$key_generated" -eq 1 ]; then
-    echo '~/.ovh.conf absent; cannot register the generated key at OVH (fail closed).' >&2
+    echo "OVH credentials file absent ($HOME/.ovh.conf); cannot register the generated key at OVH (fail closed)." >&2
     exit 2
   fi
-  echo 'WARNING: ~/.ovh.conf absent; OVH account key registration skipped (supplied key stays operator-distributed).' >&2
+  echo "WARNING: OVH credentials file absent ($HOME/.ovh.conf); key registration skipped (supplied key stays operator-distributed)." >&2
 fi
 } # prepare_operator_credentials
 log "target host: ${host} (user ${ssh_user})"
