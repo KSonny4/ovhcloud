@@ -8,7 +8,7 @@
 - Canonical dashboard: `coolify.pkubelka.cz`.
 - Human dashboard policy: `ksonny4@gmail.com`.
 - Provider authorization is retrieved from the existing OpenBao instance at `https://secrets.pkubelka.cz`.
-- The current deployment credential is escrowed under `secret/projects/ovhcloud/CF_DEPLOY_TOKEN` (field name: `CF_DEPLOY_TOKEN`). The repository must not depend on that field name; the automation contract should normalize provider inputs at its OpenBao boundary.
+- The current deployment credential is escrowed under `secret/projects/ovhcloud/ADMIN_CLOUDFLARE` (field name: `ADMIN_CLOUDFLARE`, Zone-DNS + Account Tunnel/Access/R2 + IdP grants). Historical note: an earlier `CF_DEPLOY_TOKEN` field was superseded during rotation the same day and revoked; the automation contract normalizes provider inputs at its OpenBao boundary and reads only `ADMIN_CLOUDFLARE`.
 - Derived values, including SSH, Tunnel, service-token, Coolify, and backup credentials, are generated or escrowed in OpenBao and are never committed.
 
 ## OVH origin (validated 2026-09-13, read-only CLI)
