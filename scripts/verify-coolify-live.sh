@@ -44,6 +44,16 @@ if [ -n "$AID" ]; then
   [ -n "$code" ] || code='curl-failed'
   check 'edge realtime WS upgrade' 101 "$code"
 fi
+APITOKEN="$(bao kv get -field=token secret/projects/ovhcloud/COOLIFY_API 2>/dev/null || true)"
+[ -n "$APITOKEN" ] || { echo 'FAIL Coolify API token unreadable from OpenBao'; fail=1; }
+if [ -n "$APITOKEN" ]; then
+  code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 25 -H "CF-Access-Client-Id: $CID" -H "CF-Access-Client-Secret: $CS" -H "Authorization: Bearer $APITOKEN" 'https://coolify.pkubelka.cz/api/v1/applications' || true)"
+  [ -n "$code" ] || code='curl-failed'
+  # Guards tunnel path-rule hijacks: /applications* must reach Laravel,
+  # never Soketi (which answers 404 with an empty body).
+  check 'edge API /applications' 200 "$code"
+fi
+APITOKEN=''
 CID=''; CS=''; AID=''
 
 running="$(ssh_run "docker inspect coolify-proxy --format '{{.Config.Image}}' 2>/dev/null" || true)"

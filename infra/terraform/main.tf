@@ -179,8 +179,12 @@ resource "cloudflare_zero_trust_tunnel_cloudflared_config" "admin" {
         # the matching PathPrefix routes for direct-origin access), so
         # these paths must fan out to the realtime ports here. Path rules
         # MUST precede the bare-hostname rule (first match wins).
+        # cloudflared matches path as a PREFIX: "/app/" (trailing slash)
+        # covers /app/<key> but must NOT steal /applications* (API) — a
+        # "/app/*" pattern was proven live to hijack every /app*-prefixed
+        # path (API 404s from Soketi instead of Laravel).
         hostname = "coolify.${var.domain}"
-        path     = "/app/*"
+        path     = "/app/"
         service  = "http://localhost:6001"
       },
       {
