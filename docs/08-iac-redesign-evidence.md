@@ -537,3 +537,26 @@
   identical to Terraform; dashboard service aligned to `http://localhost:8000`.
 - Runner no longer references the removed `.imports.tf.txt` flow; `.gitignore`
   covers generated fresh files + handoff JSON.
+
+## 2026-09-14 — service-token reorder + app rollback automation (audit round)
+
+- Handoff `NameError` fixed (`import json,sys` on the file-write line);
+  rehearsal now executes the exact serialization statements with synthetic
+  values and asserts valid JSON with required keys (route append + file write).
+- First-time service-token flow reordered: `ensure-service-token.sh
+  --ensure-only` (create + escrow, no verification, no DASHBOARD_LOGIN_URL)
+  runs BEFORE credential retrieval; retrieval and wire consume the escrow;
+  the full lifecycle runs AFTER wiring (route exists); the runner re-reads
+  the pair before remote verification. Rehearsal gates the line order
+  (ensure-only < retrieval < wire < verify).
+- New `scripts/rollback-app-workloads.sh`: manifest-driven (latest stamp by
+  default) automated restore of every app-database dump (createdb-first
+  pg_restore `--no-owner --no-acl` into a disposable probe container, tables
+  verified, probe dropped) and every app-volume snapshot (untar to temp,
+  files verified, temp removed). Rollback contract now covers the full backup
+  scope; run by hand via `fetch-r2-env.sh -- bash rollback-app-workloads.sh`.
+- Live proof on a destroyed seeded workload (2 known rows + 2 known files):
+  backup ok -> workload DESTROYED -> automated rollback 5/5 RESTORE_OK
+  (shopdb tables=1, coolify tables=63, volumes incl. 2 known files) ->
+  probes dropped, host + R2 test artifacts removed. Debugged live:
+  prefix-stripped download keys, missing `coolify` role (no-owner/no-acl).

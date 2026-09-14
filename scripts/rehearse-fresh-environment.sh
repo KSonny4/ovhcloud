@@ -172,6 +172,19 @@ done
 for gate in 'SSH_HOSTNAME' 'ssh://localhost:22' 'access_app_id' 'emit-fresh-imports'; do
   grep -q -- "$gate" scripts/wire-fresh-edge.sh || { echo "wire script omits SSH/Access/handoff: ${gate}." >&2; exit 1; }
 done
+# First-time service-token ordering: creation/escrow (ensure-only) must
+# precede every consumer (retrieval, wire); verification runs post-wiring.
+ensure_line="$(grep -n 'ensure-service-token.sh. --ensure-only' scripts/run-remote-provision.sh | cut -d: -f1)"
+retrieval_line="$(grep -n 'retrieving stage credentials' scripts/run-remote-provision.sh | cut -d: -f1)"
+wire_line="$(grep -n 'wire-fresh-edge.sh. --handoff-file' scripts/run-remote-provision.sh | cut -d: -f1)"
+verify_line="$(grep -n 'DASHBOARD_LOGIN_URL=' scripts/run-remote-provision.sh | cut -d: -f1)"
+for l in "$ensure_line" "$retrieval_line" "$wire_line" "$verify_line"; do
+  [ -n "$l" ] || { echo 'service-token flow ordering unresolvable.' >&2; exit 1; }
+done
+if [ "$ensure_line" -ge "$retrieval_line" ] || [ "$retrieval_line" -ge "$wire_line" ] || [ "$wire_line" -ge "$verify_line" ]; then
+  echo 'service-token flow out of order (need ensure-only < retrieval < wire < verify).' >&2; exit 1;
+fi
+log 'service-token flow ordered: ensure-only, retrieval, wire, verify.'
 log '== edge_routes (dry-run, zero network) =='
 CLOUDFLARE_ACCOUNT_ID=rehearsal CLOUDFLARE_ZONE_ID=rehearsal TUNNEL_ID=rehearsal-tunnel \
   EDGE_HOSTNAME=coolify.rehearsal.invalid SSH_HOSTNAME=ssh.rehearsal.invalid \
@@ -196,14 +209,29 @@ if command -v terraform >/dev/null 2>&1; then
   log 'generated fresh config validates (terraform validate).'
 fi
 rm -rf /tmp/rehearsal-handoff.json /tmp/rehearsal-fresh-out
+# Handoff serialization test: executes the EXACT non-dry-run serialization
+# statements from wire-fresh-edge.sh (route append + file write) with
+# synthetic values and asserts valid JSON with the required keys — the
+# missing-import-sys class of defect fails here, not in production.
+python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin) + [{"hostname": "h", "service": "s", "dns_record_id": "d", "access_app_id": "a", "policy_ids": json.loads(sys.argv[1])}]))' '["p"]' <<< '[]' > /tmp/rehearsal-route.json 2>/dev/null \
+  || { echo 'handoff route serialization broken.' >&2; exit 1; }
+python3 -c 'import json,sys; d=json.dumps({"tunnel_id": sys.argv[1], "tunnel_name": sys.argv[2], "routes": json.loads(sys.argv[3])}); h=json.loads(d); assert h["tunnel_id"] and h["tunnel_name"] and isinstance(h["routes"], list) and h["routes"][0]["dns_record_id"]' "tid" "tname" "$(cat /tmp/rehearsal-route.json)" > /tmp/rehearsal-handoff.json 2>/dev/null \
+  || { echo 'handoff file serialization broken.' >&2; exit 1; }
+log 'handoff serialization proven: route append + file write produce valid JSON with required keys.'
+rm -f /tmp/rehearsal-route.json
 log 'edge routes proven in dry-run: dashboard + ssh ingress/DNS/Access planned, handoff import blocks emit.'
 log 'runner dry-run idempotent across two passes; all four stages present; backup companion staged + scheduled; fileless R2 delivery enforced; fresh edge wired; no network touched.'
 phase_ok runner_channel | tee -a "$artifact_dir/phases.log"
 
 log '== backup_ready (dry-run) =='
-bash scripts/backup-r2-probe.sh --dry-run >/tmp/rehearsal-backup.log 2>&1
-bash scripts/rollback-coolify-backup.sh --dry-run >>/tmp/rehearsal-backup.log 2>&1
-bash scripts/tf-env-from-openbao.sh --dry-run >>/tmp/rehearsal-backup.log 2>&1
+{
+bash scripts/backup-r2-probe.sh --dry-run
+bash scripts/rollback-coolify-backup.sh --dry-run
+bash scripts/rollback-app-workloads.sh --dry-run
+bash scripts/ensure-service-token.sh --dry-run
+bash scripts/ensure-service-token.sh --dry-run --ensure-only
+bash scripts/tf-env-from-openbao.sh --dry-run
+} >/tmp/rehearsal-backup.log 2>&1 || { echo 'a backup/lifecycle dry-run failed.' >&2; exit 1; }
 phase_ok backup_ready | tee -a "$artifact_dir/phases.log"
 
 log '== ephemeral_cleanup (no credential files; memory-only transport) =='

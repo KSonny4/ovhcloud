@@ -20,11 +20,13 @@ set -euo pipefail
 
 dry_run=0
 rotate=0
+ensure_only=0
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --dry-run) dry_run=1; shift ;;
     --rotate) rotate=1; shift ;;
-    -h|--help) echo 'usage: ensure-service-token.sh [--dry-run] [--rotate]'; exit 0 ;;
+    --ensure-only) ensure_only=1; shift ;;
+    -h|--help) echo 'usage: ensure-service-token.sh [--dry-run] [--rotate] [--ensure-only]'; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -36,7 +38,10 @@ duration="${SERVICE_TOKEN_DURATION:-8760h}"
 account="${CLOUDFLARE_ACCOUNT_ID:-5eb3ea3a84b37564cfd8739f32ffb559}"
 login_url="${DASHBOARD_LOGIN_URL:-}"
 bao_addr="${BAO_ADDR:-https://secrets.pkubelka.cz}"
-if [ -z "$login_url" ] && [ "$dry_run" -eq 0 ]; then
+# Ensure-only mode (first-time flow): create + escrow WITHOUT verification,
+# so downstream steps can consume the escrow before any route exists to verify
+# against. DASHBOARD_LOGIN_URL is required only when verifying.
+if [ -z "$login_url" ] && [ "$dry_run" -eq 0 ] && [ "$ensure_only" -eq 0 ]; then
   echo 'DASHBOARD_LOGIN_URL must be set (proves the escrowed pair is accepted).' >&2
   exit 2
 fi
@@ -62,7 +67,7 @@ log 'admin token retrieved from OpenBao (value never printed).'
 # All Cloudflare + OpenBao interaction happens in one python step so secret
 # values never touch shell variables, command arguments, or disk.
 export CF_ADMIN_TOKEN="$admin_token" CF_ACCOUNT="$account" CF_TOKEN_NAME="$token_name"
-export CF_DURATION="$duration" CF_LOGIN_URL="$login_url" CF_ROTATE="$rotate"
+export CF_DURATION="$duration" CF_LOGIN_URL="$login_url" CF_ROTATE="$rotate" CF_ENSURE_ONLY="$ensure_only"
 python3 - <<'PY'
 import json, os, subprocess, urllib.request, urllib.error, sys
 
@@ -141,7 +146,14 @@ else:
         if cur.returncode != 0 or not cur.stdout.strip():
             sys.exit('OpenBao escrow missing client_secret for the existing token; refusing to continue.')
         sec = cur.stdout.strip()
-verify(cid, sec)
+if os.environ['CF_ENSURE_ONLY'] == '1':
+    print('ensure-only: created/exists + escrowed; verification deferred until the route exists.')
+else:
+    verify(cid, sec)
 PY
 
-log 'service-token lifecycle complete: ensured, escrowed in OpenBao, verified with HTTP 200.'
+if [ "$ensure_only" -eq 1 ]; then
+  log 'service-token ensure-only complete: exists + escrowed in OpenBao (verification deferred).'
+else
+  log 'service-token lifecycle complete: ensured, escrowed in OpenBao, verified with HTTP 200.'
+fi

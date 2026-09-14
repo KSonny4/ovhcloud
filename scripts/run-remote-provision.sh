@@ -343,6 +343,14 @@ run env BAO_ADDR="$bao_addr" CLOUDFLARE_ACCOUNT_ID="$cf_account" \
   TUNNEL_NAME="${TUNNEL_NAME:-coolify-${tunnel_slug}}" \
   bash "$repo_root/scripts/ensure-tunnel.sh"
 
+# First-time service-token flow: creation/escrow MUST precede any step that
+# requires the pair (retrieval below, wire-fresh-edge.sh). Verification is
+# deferred until the Access application and DNS route exist (full
+# ensure-service-token.sh runs after wiring in the edge stage).
+log '== service-token ensure-only (operator side, before any consumer) =='
+run env BAO_ADDR="$bao_addr" CLOUDFLARE_ACCOUNT_ID="$cf_account" \
+  bash "$repo_root/scripts/ensure-service-token.sh" --ensure-only
+
 log 'retrieving stage credentials from OpenBao (names only, values never printed)...'
 ssh_pub="$(bao_get COOLIFY_SSH_PUBLIC_KEY value)"
 tunnel_token="$(bao_get COOLIFY_TUNNEL_TOKEN tunnel_token)"
@@ -455,12 +463,17 @@ if want_stage edge; then
   run env CLOUDFLARE_ACCOUNT_ID="$cf_account" CLOUDFLARE_ZONE_ID="$cf_zone" \
     bash "$repo_root/scripts/emit-fresh-imports.sh" --handoff "$handoff_file"
   log 'fresh IaC generated in infra/terraform-fresh (main.tf + imports.tf); adopt with scripts/adopt-fresh-edge.sh --handoff.'
-  # Complete service-token lifecycle first (operator side, OpenBao-complete):
-  # ensures the token exists, escrows the pair, and proves HTTP 200.
-  log '== service-token lifecycle (operator side) =='
+  # Complete service-token lifecycle AFTER wiring (operator side): the token
+  # was created/escrowed before retrieval (ensure-only); now that the Access
+  # application and DNS route exist, the full run proves HTTP 200.
+  log '== service-token lifecycle (operator side, post-wiring verification) =='
   run env BAO_ADDR="$bao_addr" CLOUDFLARE_ACCOUNT_ID="$cf_account" \
     DASHBOARD_LOGIN_URL="https://${dashboard_host}/login" \
     bash "$repo_root/scripts/ensure-service-token.sh"
+  # Re-read the escrowed pair (post-wiring truth) before remote verification.
+  svc_id="$(bao kv get -field=client_id secret/projects/ovhcloud/COOLIFY_ACCESS_SERVICE_TOKEN)"
+  svc_secret="$(bao kv get -field=client_secret secret/projects/ovhcloud/COOLIFY_ACCESS_SERVICE_TOKEN)"
+  if [ -z "$svc_id" ] || [ -z "$svc_secret" ]; then echo 'service-token escrow unreadable post-wiring (fail closed).' >&2; exit 2; fi
   remote_stage edge configure-tunnel-access.sh
   smoke_code="$(curl -sS -o /dev/null -w '%{http_code}' --cookie-jar /dev/null --max-time 30 \
     -H "CF-Access-Client-Id: ${svc_id}" -H "CF-Access-Client-Secret: ${svc_secret}" \

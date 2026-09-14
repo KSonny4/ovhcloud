@@ -38,6 +38,7 @@ bash -n scripts/lib/preserved-guard.sh
 bash -n scripts/ensure-service-token.sh
 bash -n scripts/tf-env-from-openbao.sh
 bash -n scripts/rollback-coolify-backup.sh
+bash -n scripts/rollback-app-workloads.sh
 bash -n scripts/backup-app-workloads.sh
 bash -n scripts/ensure-tunnel.sh
 bash -n scripts/test-clean-target-install.sh
@@ -45,7 +46,7 @@ bash -n scripts/wire-fresh-edge.sh
 bash -n scripts/fetch-r2-env.sh
 bash -n scripts/emit-fresh-imports.sh
 bash -n scripts/adopt-fresh-edge.sh
-shellcheck scripts/bootstrap-vps.sh scripts/provision-coolify.sh scripts/configure-tunnel-access.sh scripts/backup-r2-probe.sh scripts/rehearse-fresh-environment.sh scripts/healthcheck.sh scripts/validate-repository.sh scripts/run-remote-provision.sh scripts/schedule-coolify-backup.sh scripts/lib/preserved-guard.sh scripts/ensure-service-token.sh scripts/tf-env-from-openbao.sh scripts/rollback-coolify-backup.sh scripts/backup-app-workloads.sh scripts/ensure-tunnel.sh scripts/test-clean-target-install.sh scripts/wire-fresh-edge.sh scripts/fetch-r2-env.sh scripts/emit-fresh-imports.sh scripts/adopt-fresh-edge.sh
+shellcheck scripts/bootstrap-vps.sh scripts/provision-coolify.sh scripts/configure-tunnel-access.sh scripts/backup-r2-probe.sh scripts/rehearse-fresh-environment.sh scripts/healthcheck.sh scripts/validate-repository.sh scripts/run-remote-provision.sh scripts/schedule-coolify-backup.sh scripts/lib/preserved-guard.sh scripts/ensure-service-token.sh scripts/tf-env-from-openbao.sh scripts/rollback-coolify-backup.sh scripts/rollback-app-workloads.sh scripts/backup-app-workloads.sh scripts/ensure-tunnel.sh scripts/test-clean-target-install.sh scripts/wire-fresh-edge.sh scripts/fetch-r2-env.sh scripts/emit-fresh-imports.sh scripts/adopt-fresh-edge.sh
 
 git diff --check
 

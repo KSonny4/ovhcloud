@@ -189,7 +189,7 @@ fi
 if [ -n "$handoff_file" ]; then
   tunnel_name="${TUNNEL_NAME:-$(api "https://api.cloudflare.com/client/v4/accounts/${acct}/cfd_tunnel/${tid}" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("result",{}).get("name",""))')}"
   [ -n "$tunnel_name" ] || { echo 'tunnel name unresolvable for handoff (fail closed).' >&2; exit 2; }
-  python3 -c 'import json; print(json.dumps({"tunnel_id": sys.argv[1], "tunnel_name": sys.argv[2], "routes": json.loads(sys.argv[3])}))' "$tid" "$tunnel_name" "$handoff_routes" >"$handoff_file"
+  python3 -c 'import json,sys; print(json.dumps({"tunnel_id": sys.argv[1], "tunnel_name": sys.argv[2], "routes": json.loads(sys.argv[3])}))' "$tid" "$tunnel_name" "$handoff_routes" >"$handoff_file"
   log "handoff written to ${handoff_file} (feed to scripts/emit-fresh-imports.sh)."
 fi
 log 'wire complete: ingress + DNS + Access + verification for all hostnames.'
