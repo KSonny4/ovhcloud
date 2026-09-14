@@ -10,9 +10,10 @@
 # - Proves write/read/delete on a disposable probe object, then reports the
 #   retention/rollback expectations for Coolify and OVH layers.
 #
-# Usage:
-#   eval "$(BAO_ADDR=https://secrets.pkubelka.cz bash scripts/tf-env-from-openbao.sh)" &&
-#   bash scripts/backup-r2-probe.sh [--dry-run]
+# Usage (two-step: a bare eval "$(...)" masks loader failure and falls back
+# to ambient credentials — capture first, then eval):
+#   loader_out="$(BAO_ADDR=https://secrets.pkubelka.cz bash scripts/tf-env-from-openbao.sh)" || exit 2
+#   eval "$loader_out" && bash scripts/backup-r2-probe.sh [--dry-run]
 # (the loader supplies R2_ENDPOINT, R2_BUCKET, AWS_ACCESS_KEY_ID and
 # AWS_SECRET_ACCESS_KEY from the escrowed COOLIFY_R2 entry).
 set -euo pipefail

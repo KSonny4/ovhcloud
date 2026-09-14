@@ -84,9 +84,14 @@ R2-backed encrypted Terraform state. For any new plan/apply, load
 authorization noninteractively (never write a tfvars file):
 
 ```bash
-eval "$(BAO_ADDR=https://secrets.pkubelka.cz bash scripts/tf-env-from-openbao.sh)"
-terraform -chdir=infra/terraform init -backend-config=backend.hcl
-terraform -chdir=infra/terraform plan
+loader_out="$(BAO_ADDR=https://secrets.pkubelka.cz bash scripts/tf-env-from-openbao.sh)" || exit 2  # never bare eval: masks loader failure
+
+eval "$loader_out"
+# Plan from a disposable copy: initializing the live dir binds backend state
+# into it and breaks later credential-free gate runs.
+work="$(mktemp -d)"; cp infra/terraform/*.tf infra/terraform/backend.hcl "$work/"
+(cd "$work" && terraform init -backend-config=backend.hcl && terraform plan -input=false)
+rm -rf "$work"
 ```
 
 A human must authorize any `terraform apply`.

@@ -90,8 +90,9 @@ Why dashboard: R2 token routes return 404 under the deployment token.
      backup plane, and a new row would reintroduce an at-rest credential.
    - Host: nothing to rewrite — the timer pulls memory-only via
      `fetch-r2-env.sh` on every run, so new keys take effect automatically.
-   - `eval "$(BAO_ADDR=https://secrets.pkubelka.cz bash scripts/tf-env-from-openbao.sh)"`
-     then `bash scripts/backup-r2-probe.sh` must print `probe ok`. The
+   - `loader_out="$(BAO_ADDR=https://secrets.pkubelka.cz bash scripts/tf-env-from-openbao.sh)" || exit 2`
+     then `eval "$loader_out"` and `bash scripts/backup-r2-probe.sh` must
+     print `probe ok`. The
      loader exports the endpoint/bucket plus the keypair from the escrowed
      entry, so the probe verifies the full four-field rotation at once.
 

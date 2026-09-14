@@ -68,7 +68,7 @@ The canonical domain is resolved: `pkubelka.cz`. Dashboard `coolify.pkubelka.cz`
 - `*.<approved-domain>` — optional application wildcard
 - `omniroute.<approved-domain>` — OmniRoute public API hostname when deployed
 
-The authorized operator must provide a Cloudflare-managed zone and decide whether the wildcard and OmniRoute hostname are enabled. The plan is reviewed with values supplied via `eval "$(bash scripts/tf-env-from-openbao.sh)"` (env-only; no tfvars file is ever written).
+The authorized operator must provide a Cloudflare-managed zone and decide whether the wildcard and OmniRoute hostname are enabled. The plan is reviewed with values supplied via the two-step loader form (`loader_out="$(...)" || exit 2`, then `eval "$loader_out"`; env-only, no tfvars file is ever written).
 
 ## Secret and state lifecycle
 
@@ -115,7 +115,9 @@ Provider-aware operators additionally run, from `infra/terraform/`:
 terraform fmt -check -recursive
 terraform init -backend=false -input=false
 terraform validate
-eval "$(BAO_ADDR=https://secrets.pkubelka.cz bash scripts/tf-env-from-openbao.sh)"
+loader_out="$(BAO_ADDR=https://secrets.pkubelka.cz bash scripts/tf-env-from-openbao.sh)" || exit 2  # never bare eval: masks loader failure
+
+eval "$loader_out"
 terraform plan -input=false
 ```
 

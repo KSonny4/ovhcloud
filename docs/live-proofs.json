@@ -1,0 +1,132 @@
+{
+  "collected_utc": "2026-09-14T14:03:23Z",
+  "tunnels": [
+    {
+      "id": "ded07117-a966-4a97-abc3-a93aa3f433b4",
+      "name": "agentsfight",
+      "status": "healthy"
+    },
+    {
+      "id": "b145382e-d1cc-4e60-b910-3de56fa9ce2c",
+      "name": "coolify-admin",
+      "status": "healthy"
+    },
+    {
+      "id": "ef0c9d31-793f-440d-a81b-dc9f701e5517",
+      "name": "dark-newsletter",
+      "status": "healthy"
+    },
+    {
+      "id": "062627d8-fbb6-4581-b07b-830922fd312d",
+      "name": "evaluator-dashboard",
+      "status": "down"
+    },
+    {
+      "id": "ba03b942-d4fb-4a26-9ea7-c9f6fecfa56e",
+      "name": "omni-pi",
+      "status": "healthy"
+    },
+    {
+      "id": "af70d442-66a0-499a-8b4e-2c877c94e64b",
+      "name": "recorder",
+      "status": "healthy"
+    },
+    {
+      "id": "612f43c0-780c-4b97-9c28-dcbfc7bdf997",
+      "name": "secrets-openbao",
+      "status": "healthy"
+    },
+    {
+      "id": "81acd76f-29d7-4340-8855-6048b6c3ceb2",
+      "name": "sniper",
+      "status": "inactive"
+    }
+  ],
+  "dns_coolify": [
+    {
+      "id": "58868454961d85e57717086fdf216c79",
+      "name": "coolify.pkubelka.cz",
+      "type": "CNAME",
+      "content": "b145382e-d1cc-4e60-b910-3de56fa9ce2c.cfargotunnel.com",
+      "proxied": true
+    }
+  ],
+  "dns_ssh": [
+    {
+      "id": "effc11e53375bb39e74189714d769b72",
+      "name": "ssh.pkubelka.cz",
+      "type": "CNAME",
+      "content": "b145382e-d1cc-4e60-b910-3de56fa9ce2c.cfargotunnel.com",
+      "proxied": true
+    }
+  ],
+  "access_apps": [
+    {
+      "id": "bef416e5-b012-49d0-b7e2-a32f2bf9768e",
+      "name": "Fabric API",
+      "domain": "fabric.pkubelka.cz"
+    },
+    {
+      "id": "5cf0b3ec-8fdd-4596-b04d-7c83c06e10eb",
+      "name": "llm-quota",
+      "domain": "llm-quota.pkubelka.cz"
+    },
+    {
+      "id": "86c438e8-1919-4c39-aaef-6978ded13716",
+      "name": "Coolify SSH Administration",
+      "domain": "ssh.pkubelka.cz"
+    },
+    {
+      "id": "aeb1cd92-c4bc-4b7e-a810-8628b0244d08",
+      "name": "Coolify Dashboard",
+      "domain": "coolify.pkubelka.cz"
+    },
+    {
+      "id": "68b8b766-3066-4a74-865d-f72f1cb925d7",
+      "name": "Release Radar",
+      "domain": "radar.pkubelka.cz"
+    },
+    {
+      "id": "9d6e5166-a385-43a7-b636-05d83c1b9973",
+      "name": "Release Radar Health",
+      "domain": "radar.pkubelka.cz/healthz"
+    },
+    {
+      "id": "08feb811-f24d-4c2d-af92-0c06253e0d9a",
+      "name": "Release Radar Movies Feed",
+      "domain": "radar.pkubelka.cz/calendar/movies.ics"
+    },
+    {
+      "id": "903e38cb-7cdb-48ac-a813-9797ee417714",
+      "name": "Release Radar Series Feed",
+      "domain": "radar.pkubelka.cz/calendar/series.ics"
+    },
+    {
+      "id": "088eca1b-6e07-437a-969a-abc3fccb02b4",
+      "name": "dark",
+      "domain": "dark.pkubelka.cz"
+    },
+    {
+      "id": "eb09c03a-01eb-4397-88cb-8a7c0b9d20ec",
+      "name": "trading",
+      "domain": "trading.pkubelka.cz"
+    },
+    {
+      "id": "06f568f7-9ec0-47ff-a863-1c50db2dde72",
+      "name": "recorder",
+      "domain": "recorder.pkubelka.cz"
+    }
+  ],
+  "r2_bucket_objects": {
+    "count": 12,
+    "sample_keys": [
+      "app-databases/coolify-db-coolify-20260914T125219Z.dump.gz",
+      "app-manifests/20260914T125219Z.json",
+      "app-volumes/134ceb201725467971b4315336c18e727ece68117d28cb61245eab618a6e0fb2-20260914T125219Z.tar.gz",
+      "app-volumes/3d79da30149bc9b37e92b95f9c24c8482f6550418ebce09f2e439a633c946804-20260914T125219Z.tar.gz",
+      "app-volumes/4d49f307e47dcbf71db355936d28ee12b7c7ed349b92841e6acc6d5d3e2c4b33-20260914T125219Z.tar.gz"
+    ]
+  },
+  "vps_containers_running": "9",
+  "host_units": "active active "
+}

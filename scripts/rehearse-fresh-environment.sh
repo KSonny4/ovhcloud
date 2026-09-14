@@ -20,7 +20,9 @@ mkdir -p "$artifact_dir"
 report="$artifact_dir/rehearsal-report.json"
 : > "$artifact_dir/phases.log"
 
-phase_ok() { printf '{"phase":"%s","status":"pass"}\n' "$1"; }
+phase_ok() { printf '{"phase":"%s","status":"pass","utc":"%s"}\n' "$1" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"; }
+note_evidence() { printf '%s %s\n' "$1" "$2" >> "$artifact_dir/evidence.lines"; }
+: > "$artifact_dir/evidence.lines"
 log() { printf '%s\n' "$*"; }
 
 log '== provider_access (dry-run) =='
@@ -176,6 +178,14 @@ PROVISION_HOST=runner-rehearsal.invalid PROVISION_ZONE=rehearsal.invalid PROVISI
 grep -q 'was removed' /tmp/rehearsal-override.log || { echo 'override refusal message missing.' >&2; exit 1; }
 rm -f /tmp/rehearsal-override.log
 log 'dashboard-host override refused fail-closed (single domain contract).'
+# Loader-failure masking: a bare eval "$(...)" returns eval's own status,
+# silently falling back to ambient credentials. Only the two-step form
+# (capture, check, then eval) may appear outside comments.
+# shellcheck disable=SC2016 # patterns are intentional literals (searching for unexpanded eval)
+if grep -rn 'eval "$(' scripts/*.sh | grep -v 'base64 -d' | grep -v '^[^:]*:[0-9]*:#' | grep -v 'grep -rn' | grep -q .; then echo 'bare loader eval present (masks failure).' >&2; exit 1; fi
+# shellcheck disable=SC2016 # intentional literal, see above
+if grep -rn 'eval "$(' docs/*.md | grep -v '```' | grep -q .; then echo 'bare loader eval in docs.' >&2; exit 1; fi
+log 'loader eval unmasked: two-step capture-then-eval only.'
 # Adoption failure mode, executed: --apply without an encrypted remote
 # backend must fail closed before any mutation (sandbox work dir, no network).
 rm -rf /tmp/rehearsal-adopt && mkdir -p /tmp/rehearsal-adopt
@@ -330,8 +340,11 @@ ssh_keys_match /tmp/rehearsal-k1.pub "$(cat /tmp/rehearsal-k2.pub)" && { echo 's
 ssh_keys_match /tmp/rehearsal-k1.pub 'not-a-key' && { echo 'ssh_keys_match accepts garbage.' >&2; exit 1; } || true
 rm -f /tmp/rehearsal-sshfn.sh /tmp/rehearsal-k1 /tmp/rehearsal-k1.pub /tmp/rehearsal-k2 /tmp/rehearsal-k2.pub
 log 'ssh key identity gate proven: identical accepted, different/garbage rejected.'
+note_evidence edge_ready dryrun_hostnames=2
 log 'edge routes proven in dry-run: dashboard + ssh ingress/DNS/Access planned, handoff import blocks emit.'
 log 'runner dry-run idempotent across two passes; all four stages present; backup companion staged + scheduled; fileless R2 delivery enforced; fresh edge wired; no network touched.'
+note_evidence runner_channel dryrun_lines="$(wc -l < /tmp/rehearsal-runner-1.log | tr -d " ")"
+note_evidence runner_channel dryrun_sha256="$(sha256sum /tmp/rehearsal-runner-1.log 2>/dev/null | cut -d" " -f1 || shasum -a 256 /tmp/rehearsal-runner-1.log | cut -d" " -f1)"
 phase_ok runner_channel | tee -a "$artifact_dir/phases.log"
 
 log '== backup_ready (dry-run) =='
@@ -349,6 +362,7 @@ rm -f /tmp/rehearsal-inspect.json
 for want in '"ports": ["18081:8080/tcp"]' '"DB_PASSWORD": "REDACTED"' '"APP_MODE": "proof"' '"source": "/var/lib/docker/volumes/runtime-www/_data"' '"target": "/srv/www"' '"cmd": ["python3", "-m", "http.server", "8080"]' '"entrypoint": ["/entry.sh", "--verbose-flag"]' '"workdir": "/srv/www"' '"user": "65534"' '"restart": "on-failure"' '"restart_max": 5' '"CMD", "wget"' '"Interval": 30000000000' '"Timeout": 5000000000' '"Retries": 3'; do
   printf '%s' "$topo_out" | grep -qF "$want" || { echo "topology extractor broken (missing ${want})." >&2; exit 1; }
 done
+note_evidence backup_ready topology_assertions=15
 log 'topology extractor proven on synthetic inspect JSON (ports, redaction, mounts, full runtime contract).'
 dbflags_out="$(bash scripts/rollback-app-workloads.sh --self-test-db-flags 2>/dev/null || true)"
 for want in '--network' 'dbnet' '-p' '5433:5432/tcp' '--restart' 'on-failure:3' '--health-cmd' 'pg_isready -U dbowner' '--health-retries' '3' '-e' 'PGDATA=/var/lib/postgresql/data' '-l' 'proof=dbflags' '-u' 'postgres'; do
@@ -357,6 +371,8 @@ done
 for absent in 'POSTGRES_USER' 'POSTGRES_PASSWORD' 'REDACTED' 'dbproof-data:/var/lib/postgresql/data'; do
   printf '%s' "$dbflags_out" | grep -qF -- "$absent" && { echo "db flag builder leaks ${absent}." >&2; exit 1; } || true
 done
+note_evidence backup_ready dbflags_present=16
+note_evidence backup_ready dbflags_absent=4
 log 'database flag builder proven offline (topology restored; fresh credential + pgdata mount omitted).'
 bash scripts/ensure-service-token.sh --dry-run
 bash scripts/ensure-service-token.sh --dry-run --ensure-only
@@ -404,19 +420,36 @@ else
 fi
 phase_ok context_graph | tee -a "$artifact_dir/phases.log"
 
-python3 - "$artifact_dir/phases.log" "$report" <<'PY'
+git_head="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
+started_utc="$(head -n1 "$artifact_dir/phases.log" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("utc",""))')"
+finished_utc="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+python3 - "$artifact_dir/phases.log" "$artifact_dir/evidence.lines" "$report" "$git_head" "$started_utc" "$finished_utc" <<'PY'
 import json
 import sys
 
-phases_path, report_path = sys.argv[1:3]
+phases_path, evidence_path, report_path, git_head, started_utc, finished_utc = sys.argv[1:7]
+evidence = {}
+try:
+    with open(evidence_path) as handle:
+        for line in handle:
+            parts = line.strip().split(None, 1)
+            if len(parts) == 2:
+                phase, kv = parts
+                k, _, v = kv.partition('=')
+                evidence.setdefault(phase, {})[k] = v
+except FileNotFoundError:
+    pass
 phases = []
 with open(phases_path) as handle:
     for line in handle:
         line = line.strip()
         if line:
-            phases.append(json.loads(line))
+            entry = json.loads(line)
+            entry['evidence'] = evidence.get(entry['phase'], {})
+            phases.append(entry)
 with open(report_path, 'w') as handle:
-    json.dump({'rehearsal': 'ovh-coolify-fresh-environment', 'phases': phases}, handle, indent=2)
+    json.dump({'rehearsal': 'ovh-coolify-fresh-environment', 'dry_run': True,
+               'git_head': git_head, "started_utc": started_utc, "finished_utc": finished_utc, 'phases': phases}, handle, indent=2)
 PY
 
 log "rehearsal_ready: report written to ${report}"

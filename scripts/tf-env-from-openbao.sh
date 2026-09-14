@@ -19,8 +19,10 @@
 # Emits to stdout: TF_VAR_* for every Terraform variable + AWS_* for the R2
 # state backend. Everything else (progress) goes to stderr.
 #
-# Usage:
-#   eval "$(BAO_ADDR=https://secrets.pkubelka.cz bash scripts/tf-env-from-openbao.sh)"
+# Usage (two-step: a bare eval "$(...)" masks loader failure and falls back
+# to ambient credentials — capture first, then eval):
+#   loader_out="$(BAO_ADDR=https://secrets.pkubelka.cz bash scripts/tf-env-from-openbao.sh)" || exit 2
+#   eval "$loader_out"
 set -euo pipefail
 
 dry_run=0

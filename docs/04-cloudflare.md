@@ -1,306 +1,96 @@
 # 04. Configure Cloudflare
 
-The canonical domain is an authorized operator input, not a repository default. Replace the `example.com` documentation placeholders only after the domain blocker in `docs/deployment-plan.md` is resolved; never apply them literally.
+Cloudflare is the exclusive public DNS/edge provider. The automated path
+owns the full edge: per-target Tunnel (`scripts/ensure-tunnel.sh`), ingress
++ DNS + Access wiring (`scripts/wire-fresh-edge.sh`, two-phase:
+API wiring first, readiness verification after the connector runs),
+generated imports (`scripts/emit-fresh-imports.sh`), and state adoption
+with a zero-change assertion (`scripts/adopt-fresh-edge.sh --apply`) —
+all invoked by the provisioner (`--stages edge`, see
+[00. Quickstart](00-quickstart.md)) and modeled in
+`infra/terraform/main.tf`. There are intentionally **no origin A records**:
+dashboard and SSH hostnames are CNAMEs to the Tunnel; the fallback is
+`http_status:404`.
 
-Cloudflare is the exclusive public DNS/edge provider in this deployment. It has three roles in this setup:
+## 1. Automated path (primary)
 
-1. DNS / reverse proxy in front of public web applications.
-2. Tunnel + Access for human administration, especially SSH.
-3. R2 as off-machine S3-compatible backup storage.
+What the edge stage creates and verifies (idempotent, fail closed):
 
-The VPS itself remains at OVHcloud.
+- Tunnel ingress: `coolify.<zone>` → `http://localhost:8000`,
+  `ssh.<zone>` → `ssh://localhost:22`, unrelated existing routes preserved.
+- DNS CNAMEs (proxied) for both hostnames; refuses to overwrite unrelated
+  records.
+- Access apps `Coolify Dashboard` / `Coolify SSH Administration` with the
+  machine service-token policy (precedence 1) and the `ksonny4@gmail.com`
+  email policy (precedence 2); app-level IDPs stay empty per the converged
+  Terraform shape.
+- Readiness: dashboard `/login` exactly HTTP 200 via service token,
+  SSH route policy-gated (301/302/401/403) — only after `cloudflared`
+  runs on the target.
+- Handoff → generated Terraform → import + apply with a zero-change
+  second plan (encrypted R2 backend required; backendless mode refuses
+  `--apply`).
 
-## 1. DNS layout
-
-A simple layout for one domain is:
-
-```text
-coolify.example.com   -> Coolify dashboard
-ssh.example.com       -> Cloudflare Tunnel -> localhost:22
-*.example.com         -> generated/experimental application subdomains
-example.com           -> optional application/root site
-```
-
-For normal Coolify web traffic, create:
-
-```text
-Type  Name      Value
-A     coolify   <VPS_IPV4>
-A     *         <VPS_IPV4>
-```
-
-Add an apex record only if you actually want the root domain on this VPS:
-
-```text
-A     @         <VPS_IPV4>
-```
-
-The SSH hostname is created as a Cloudflare Tunnel route and should not point directly to the VPS IP.
-
-Do not create an `AAAA` record until you have deliberately tested IPv6 end to end. A broken IPv6 path can cause domain/certificate problems even when IPv4 is healthy.
-
-## 2. Public web proxying
-
-During the first Coolify/domain setup, using Cloudflare **DNS only** is the easiest path to debug:
-
-```text
-client -> DNS -> OVH VPS -> Coolify proxy
-```
-
-Once origin HTTPS works, turn Cloudflare proxying on:
-
-```text
-client -> Cloudflare -> OVH VPS -> Coolify proxy
-```
-
-Use:
-
-```text
-SSL/TLS mode: Full (strict)
-```
-
-Do not use Flexible SSL.
-
-For important public web applications, proxying through Cloudflare gives you Cloudflare's edge protections while Coolify continues to route the application on the origin.
-
-## 3. Create the administrative Cloudflare Tunnel
-
-In Cloudflare:
-
-1. go to `Networking -> Tunnels`;
-2. create a tunnel for the OVH VPS;
-3. select the Linux connector;
-4. run the generated `cloudflared` installation command on the VPS;
-5. verify the connector becomes **Healthy**.
-
-Cloudflare Tunnel establishes outbound-only connections from `cloudflared` to Cloudflare. The administrative tunnel therefore does not require opening a new inbound port on the VPS.
-
-On the VPS:
+## 2. Daily use: SSH through the tunnel (workstation)
 
 ```bash
-systemctl status cloudflared --no-pager
-journalctl -u cloudflared -n 50 --no-pager
+brew install cloudflared  # or your package manager
 ```
 
-Treat the tunnel token as a secret. Do not commit it.
-
-## 4. Publish SSH through the tunnel
-
-Add a published application route:
-
-```text
-Hostname: ssh.example.com
-Service:  SSH
-Target:   localhost:22
-```
-
-Then create a Cloudflare Access self-hosted application for `ssh.example.com` and require your chosen identity/account.
-
-Do not expose the SSH tunnel hostname without an Access policy.
-
-On the workstation, install `cloudflared` and configure OpenSSH:
-
-```bash
-brew install cloudflared
-command -v cloudflared
-```
-
-Example `~/.ssh/config`:
+`~/.ssh/config` (adjust the `cloudflared` path from `command -v`):
 
 ```sshconfig
 Host ovh-cloudflare
-    HostName ssh.example.com
-    User root
-    IdentityFile ~/.ssh/ovh_vps_ed25519
+    HostName ssh.pkubelka.cz
+    User ubuntu
+    IdentityFile ~/.ssh/ovh_coolify_ed25519
     ProxyCommand /opt/homebrew/bin/cloudflared access ssh --hostname %h
 ```
 
-Replace the `cloudflared` path with the path returned by `command -v cloudflared` if needed.
+Access authenticates you, then the native SSH session establishes. Public
+TCP 22 stays closed; the daemon listens locally for Coolify and the tunnel.
 
-Test:
+## 3. R2 backup storage (the single dashboard exception)
 
-```bash
-ssh ovh-cloudflare
-```
+The bucket is Terraform-owned (`cloudflare_r2_bucket.backups`,
+`ovh-coolify-backups`, EEUR, private). R2 S3 keys have **no Cloudflare API
+route** (verified: every issuance path returns `10015`), so the one
+operator dashboard action in the whole platform is minting the keypair
+(R2 → bucket → Object Read & Write) and escrowing all four fields at
+`secret/projects/ovhcloud/COOLIFY_R2` (`access_key_id`,
+`secret_access_key`, `bucket`, `endpoint`). Rotation procedure:
+[secret-rotation.md](secret-rotation.md). Keys travel memory-only on every
+run; nothing R2 touches disk. There is deliberately **no Coolify S3
+destination** (row deleted 2026-09-14; do not re-create it).
 
-Cloudflare Access should authenticate you before the SSH session is established.
+## 4. Wildcard applications (opt-in)
 
-After this works and OVH KVM/rescue access is understood, remove unrestricted public TCP 22 at the provider firewall. Keep the local SSH daemon running because both Coolify and the tunnel still use it.
-
-## 5. Coolify dashboard
-
-After creating:
-
-```text
-A coolify <VPS_IPV4>
-```
-
-configure the Coolify instance URL as:
-
-```text
-https://coolify.example.com
-```
-
-Verify public DNS:
-
-```bash
-dig +short coolify.example.com A
-```
-
-Verify HTTPS:
-
-```bash
-curl -I https://coolify.example.com
-```
-
-Only after this works should direct public Coolify ports 8000/6001/6002 be closed.
-
-For extra protection, put a Cloudflare Access policy in front of `coolify.example.com` as well. Keep the Access policy limited to the dashboard/admin hostname. Do not accidentally apply it to public application wildcard domains.
-
-## 6. Wildcard application domains
-
-For many small apps, a wildcard record avoids adding DNS manually for every experiment:
-
-```text
-A * <VPS_IPV4>
-```
-
-In Coolify:
-
-`Servers -> localhost -> General -> Wildcard Domain`
-
-set:
-
-```text
-https://example.com
-```
-
-Coolify can then generate application domains such as:
-
-```text
-https://<application-id>.example.com
-```
-
-The wildcard DNS record does **not** cover the apex `example.com`, so create a separate `@` record if the apex should resolve to this host.
-
-For important public applications, explicit names such as `radar.example.com` are easier to understand than generated IDs even if the wildcard record already resolves them.
-
-## 7. Why the baseline does not tunnel every web application
-
-Cloudflare Tunnel can publish HTTP/HTTPS services and supports wildcard hostname ingress rules. A fully tunnelled architecture can therefore hide the origin and remove direct inbound 80/443 as well.
-
-This runbook deliberately starts simpler:
-
-```text
-public apps: Cloudflare proxy -> public 80/443 -> Coolify proxy
-administration: Cloudflare Access -> Tunnel -> localhost services
-```
-
-Reasons:
-
-- Coolify's normal domain/TLS/proxy flow remains straightforward;
-- wildcard application domains require less tunnel-specific configuration;
-- recovery/debugging is simpler;
-- the highest-value administrative surface, SSH, no longer needs a public inbound port.
-
-Moving public applications behind Tunnel later is a valid hardening step, but do it deliberately and test wildcard routing, WebSockets, uploads, callbacks and certificate behaviour first.
-
-## 8. Create the R2 backup bucket
-
-In Cloudflare:
-
-`R2 -> Create bucket`
-
-Suggested bucket name:
-
-```text
-ovh-coolify-backups
-```
-
-The bucket should be private.
-
-Do not enable public access for backups.
-
-## 9. Create an R2 token
-
-Create an R2 API token with **Object Read & Write** access, scoped only to the backup bucket if possible.
-
-Cloudflare will show:
-
-- Access Key ID
-- Secret Access Key
-- S3 endpoint
-
-Copy them immediately into your password/secrets manager.
-
-Never commit them here.
-
-## 10. Add R2 to Coolify
-
-In Coolify:
-
-`S3 Storages -> Add`
-
-Enter:
-
-```text
-Name:       cloudflare-r2-backups
-Bucket:     ovh-coolify-backups
-Endpoint:   <R2 S3 endpoint from Cloudflare>
-Access key: <R2 Access Key ID>
-Secret key: <R2 Secret Access Key>
-Region:     leave/default according to Coolify's R2 guide
-```
-
-Select **Validate Connection & Continue**.
-
-Coolify validates the storage by making an S3-compatible object-list request.
-
-Do not continue to the backup section until validation succeeds.
-
-## 11. R2 free-tier expectations
-
-Cloudflare R2 Standard currently includes a monthly free tier. Treat it as a useful allowance rather than a backup-retention guarantee.
-
-For a small OmniRoute deployment, daily compressed `/app/data` archives with roughly 30-copy retention are expected to be small enough to fit comfortably unless the application state grows substantially.
-
-Do not rely on assumptions. Watch actual bucket size in Cloudflare and keep retention limits configured in Coolify.
-
-The repository owner also has a separate pricing watch configured to flag future R2 free-tier/pricing changes.
-
-## 12. Backup bucket separation
-
-If this server starts hosting important data, prefer either:
-
-- a dedicated bucket for this VPS; or
-- a dedicated prefix/layout per server/app.
-
-Do not reuse application object-storage credentials as backup credentials. Separate credentials reduce the blast radius of a compromised application.
+`manage_application_wildcard=false` by default. Enabling it is an explicit
+Terraform + operator decision (A-record wildcard to the origin), not a
+dashboard click.
 
 ## Done when
 
-- [ ] `coolify.example.com` resolves to the VPS
-- [ ] dashboard works over HTTPS
-- [ ] wildcard DNS exists if wanted
-- [ ] Cloudflare proxy mode is deliberate
-- [ ] SSL mode is Full (strict) when proxied
-- [ ] Cloudflare Tunnel connector is healthy
-- [ ] `ssh.example.com` routes through the tunnel to `localhost:22`
-- [ ] Cloudflare Access protects the SSH hostname
-- [ ] SSH through Cloudflare works from the workstation
-- [ ] unrestricted public TCP 22 has been removed/restricted
-- [ ] private R2 backup bucket exists
-- [ ] R2 token is scoped and stored outside Git
-- [ ] Coolify validates R2 successfully
+- [x] Tunnel connector healthy (`systemctl is-active cloudflared`)
+- [x] CNAMEs resolve to the Tunnel; Access gates both hostnames
+- [x] dashboard 200 via service token; SSH route gated
+- [x] generated IaC adopted with zero-change plan
+- [x] no origin A records; no Coolify S3 destination
+- [x] workstation SSH via tunnel works
 
 Next: [05. Backups and recovery](05-backup-recovery.md)
 
+## Appendix: break-glass (automation unavailable)
+
+If the API path is down, the dashboard equivalents are: Tunnels → create +
+install `cloudflared` with the token (`--token-file`, 0600, never argv);
+DNS → CNAME to `<tunnel-id>.cfargotunnel.com`, proxied; Access → self-hosted
+apps with the two policies above. Reconcile into Terraform immediately after
+(`adopt-fresh-edge.sh --handoff`), because hand-made edge drifts on the next
+plan. Never point dashboard/SSH hostnames at origin A records, and never
+create a Coolify S3 destination.
+
 ## References
 
-- Coolify DNS: https://coolify.io/docs/core/networking/dns
-- Coolify domains: https://coolify.io/docs/core/networking/domains
-- Coolify R2: https://coolify.io/docs/core/s3-storage/r2
-- Coolify Cloudflare protection: https://coolify.io/docs/integrations/security/cloudflare/ddos-protection
 - Cloudflare Tunnel: https://developers.cloudflare.com/tunnel/
-- Cloudflare Tunnel routing: https://developers.cloudflare.com/tunnel/concepts/routing/
 - Cloudflare SSH through Access: https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/use-cases/ssh/ssh-cloudflared-authentication/
