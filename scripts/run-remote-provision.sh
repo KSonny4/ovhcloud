@@ -235,7 +235,7 @@ if [ "$dry_run" -eq 1 ]; then
   log 'DRY-RUN: verify SSH connectivity (ssh -BatchMode user@host true)'
   log 'DRY-RUN: prepare credentials (generate + escrow SSH keypair when absent, register OVH account key, retrieve OpenBao fields by name); generate + escrow bootstrap password when ROOT_USER_PASSWORD absent (fail closed)'
   log 'DRY-RUN: run ensure-tunnel.sh (existing escrow no-op, else create via API + escrow) before credential retrieval'
-  log 'DRY-RUN: run ensure-service-token.sh (ensure/create/escrow/verify HTTP 200) before the edge stage'
+  log 'DRY-RUN: run ensure-service-token.sh --ensure-only (create/escrow, verify deferred until post-wiring) before retrieval; full lifecycle with HTTP 200 verify after wiring'
   log 'DRY-RUN: scp stage scripts (only) to /tmp/ovh-provision; credentials travel as a base64 env blob inside each SSH command (memory-only both ends)'
   want_stage bootstrap && log 'DRY-RUN: remote sudo BOOTSTRAP_TARGET_HOST/BOOTSTRAP_SSH_PUBLIC_KEY bash bootstrap-vps.sh + verify docker hello-world'
   want_stage coolify && log "DRY-RUN: remote sudo COOLIFY_TARGET_HOST/COOLIFY_DOMAIN/COOLIFY_VERSION/ROOT_* bash provision-coolify.sh (FQDN + firewall + origin smoke) + verify origin login + fetch APP_KEY over SSH and escrow operator-side (fail closed)"
