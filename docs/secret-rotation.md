@@ -78,14 +78,20 @@ Why dashboard: R2 token routes return 404 under the deployment token.
 
 1. Dashboard: R2 -> bucket `ovh-coolify-backups` -> Manage API Tokens ->
    delete the old key, create Object Read & Write scoped to the bucket.
-2. Escrow: `bao kv put -mount=secret projects/ovhcloud/COOLIFY_R2
-   access_key_id=<id> secret_access_key=<secret> bucket=ovh-coolify-backups`
+2. Escrow (all four fields — preflight and `fetch-r2-env.sh` fail closed
+   when `endpoint` is absent):
+   `bao kv put -mount=secret projects/ovhcloud/COOLIFY_R2
+   access_key_id=<id> secret_access_key=<secret> bucket=ovh-coolify-backups
+   endpoint=https://<account-id>.r2.cloudflarestorage.com`
 3. Rewire downstream and verify:
-   - Coolify destination: update `s3_storages` row id 1 (`key`, `secret`).
+   - Coolify destination: update `s3_storages` row id 1 (`key`, `secret`;
+     `endpoint` is account-scoped and unchanged by rotation).
    - Host: nothing to rewrite — the timer pulls memory-only via
      `fetch-r2-env.sh` on every run, so new keys take effect automatically.
-   - `R2_ENDPOINT=... R2_BUCKET=ovh-coolify-backups bash scripts/backup-r2-probe.sh`
-     must print `probe ok`.
+   - `eval "$(BAO_ADDR=https://secrets.pkubelka.cz bash scripts/tf-env-from-openbao.sh)"`
+     then `bash scripts/backup-r2-probe.sh` must print `probe ok`. The
+     loader exports the endpoint/bucket plus the keypair from the escrowed
+     entry, so the probe verifies the full four-field rotation at once.
 
 ### OpenBao R2-reader accessor (host-side secret at rest)
 

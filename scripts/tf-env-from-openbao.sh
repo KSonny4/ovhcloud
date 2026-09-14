@@ -56,11 +56,13 @@ cf_token="$(bao kv get -field=ADMIN_CLOUDFLARE secret/projects/ovhcloud/ADMIN_CL
 tunnel_secret="$(bao kv get -field=tunnel_secret secret/projects/ovhcloud/COOLIFY_TUNNEL_SECRET)"
 r2_ak="$(bao kv get -field=access_key_id secret/projects/ovhcloud/COOLIFY_R2)"
 r2_sk="$(bao kv get -field=secret_access_key secret/projects/ovhcloud/COOLIFY_R2)"
+r2_endpoint="$(bao kv get -field=endpoint secret/projects/ovhcloud/COOLIFY_R2)"
+r2_bucket="$(bao kv get -field=bucket secret/projects/ovhcloud/COOLIFY_R2)"
 ovh_ak="$(bao kv get -field=application_key secret/projects/ovhcloud/OVH_API)"
 ovh_as="$(bao kv get -field=application_secret secret/projects/ovhcloud/OVH_API)"
 ovh_ck="$(bao kv get -field=consumer_key secret/projects/ovhcloud/OVH_API)"
 ovh_ep="$(bao kv get -field=endpoint secret/projects/ovhcloud/OVH_API)"
-for v in cf_token tunnel_secret r2_ak r2_sk ovh_ak ovh_as ovh_ck ovh_ep; do
+for v in cf_token tunnel_secret r2_ak r2_sk r2_endpoint r2_bucket ovh_ak ovh_as ovh_ck ovh_ep; do
   if [ -z "${!v}" ]; then echo "OpenBao escrow missing for ${v}; refusing to continue." >&2; exit 2; fi
 done
 
@@ -96,4 +98,8 @@ printf 'export OVH_APPLICATION_SECRET=%s\n' "$(q "$ovh_as")"
 printf 'export OVH_CONSUMER_KEY=%s\n' "$(q "$ovh_ck")"
 printf 'export AWS_ACCESS_KEY_ID=%s\n' "$(printf '%s' "$r2_ak" | sed "s/'/'\\\\''/g; s/^/'/; s/$/'/")"
 printf 'export AWS_SECRET_ACCESS_KEY=%s\n' "$(printf '%s' "$r2_sk" | sed "s/'/'\\\\''/g; s/^/'/; s/$/'/")"
+# R2 endpoint/bucket are non-secret but required: preflight and fetch fail
+# closed when the `endpoint` field is absent from OpenBao.
+printf 'export R2_ENDPOINT=%s\n' "$(q "$r2_endpoint")"
+printf 'export R2_BUCKET=%s\n' "$(q "$r2_bucket")"
 log 'exports emitted (eval this output); no credential file was written.'

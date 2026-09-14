@@ -4,16 +4,17 @@
 # Contract:
 # - Bucket itself is owned by Terraform (cloudflare_r2_bucket.backups).
 # - Scoped R2 credentials are generated out-of-band and escrowed in OpenBao at
-#   secret/projects/ovhcloud/COOLIFY_R2 (access_key_id, secret_access_key, bucket).
+#   secret/projects/ovhcloud/COOLIFY_R2
+#   (access_key_id, secret_access_key, bucket, endpoint — all four required).
 # - This script never prints secret values; it reports redacted status only.
 # - Proves write/read/delete on a disposable probe object, then reports the
 #   retention/rollback expectations for Coolify and OVH layers.
 #
 # Usage:
-#   R2_ENDPOINT='https://<account>.r2.cloudflarestorage.com' \
-#   R2_BUCKET='ovh-coolify-backups' \
-#   AWS_ACCESS_KEY_ID='<from OpenBao>' AWS_SECRET_ACCESS_KEY='<from OpenBao>' \
+#   eval "$(BAO_ADDR=https://secrets.pkubelka.cz bash scripts/tf-env-from-openbao.sh)" &&
 #   bash scripts/backup-r2-probe.sh [--dry-run]
+# (the loader supplies R2_ENDPOINT, R2_BUCKET, AWS_ACCESS_KEY_ID and
+# AWS_SECRET_ACCESS_KEY from the escrowed COOLIFY_R2 entry).
 set -euo pipefail
 
 dry_run=0

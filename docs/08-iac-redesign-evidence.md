@@ -682,3 +682,16 @@
   Tunnel-only edge; UI works via polling), no SMTP configured (password reset
   via UI unavailable — DB reset path documented here), no notification channel
   set, sponsorship/nag banners dismissible.
+
+## 2026-09-14 — R2 endpoint escrow + verification (audit round)
+
+- `scripts/tf-env-from-openbao.sh` now retrieves and exports the escrowed
+  `endpoint`/`bucket` alongside the keypair (`R2_ENDPOINT`, `R2_BUCKET`),
+  failing closed when any of the four `COOLIFY_R2` fields is absent.
+- `scripts/backup-r2-probe.sh` usage rewritten to the loader path; header
+  lists all four required escrow fields.
+- `docs/secret-rotation.md` R2 procedure now escrows
+  `access_key_id/secret_access_key/bucket/endpoint` and verifies with
+  loader + probe in one step.
+- Live proof: loader exported `R2_ENDPOINT` + `R2_BUCKET=ovh-coolify-backups`,
+  probe printed `probe ok` (write/head/restore/delete, object removed).
