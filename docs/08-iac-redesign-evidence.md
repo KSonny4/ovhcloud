@@ -585,3 +585,18 @@
 - Docs reconciled: `iac-interfaces.md` runner contract rewritten to the
   memory-only reality (no env file, R2 absent from blob, tunnel_id + OVH_API
   fields); quickstart documents invocations + workload contract.
+
+## 2026-09-14 — in-service recreate + prune-key fix (audit round)
+
+- `--recreate` proven live on destroyed `shop` workload: volumes + DB
+  restored with manifest parity, container healthy, exact values verified
+  (4 SKUs + 3 files byte-identical), then full cleanup. Binds path proven
+  separately (`/srv/bindproof` 2 files exact). `--db-password` required
+  (fail closed); live targets refused; binds restored wholesale (host-global).
+- Empty maintenance databases are skipped at backup (no user tables).
+- Retention bug fixed: `prune_prefix` reattaches the prefix before delete
+  (bare-name deletes succeed vacuously — the same bug had silently voided all
+  earlier cleanup "deleted" lines and all production pruning). Proven live:
+  planted `probe-old-20200101T000000Z` pruned on the next run. Bucket fully
+  purged of test objects (51 deleted with full keys); only genuine scheduled
+  root backups remain.

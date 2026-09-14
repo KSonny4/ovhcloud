@@ -108,13 +108,17 @@ log 'workload coverage ok: no unbackupable stateful mounts or databases detected
 
 s3() { aws --endpoint-url "$R2_ENDPOINT" s3api "$@" >/dev/null; }
 
+# NOTE: s3 ls returns bare filenames; delete-object needs the FULL key
+# (prefix + name). Deleting a bare name succeeds vacuously (S3 returns
+# success for nonexistent keys) while deleting nothing — a silent retention
+# failure. Always reattach the prefix.
 prune_prefix() {
   local prefix="$1" cutoff="$2" k day
   cutoff="$(date -u -d '14 days ago' +%Y%m%d)"
   for k in $(aws --endpoint-url "$R2_ENDPOINT" s3 ls "s3://${R2_BUCKET}/${prefix}" 2>/dev/null | awk '{print $4}'); do
     day="$(printf '%s' "$k" | grep -oE '[0-9]{8}T' | tr -d 'T' || true)"
     if [ -n "$day" ] && [ "$day" \< "$cutoff" ]; then
-      s3 delete-object --bucket "$R2_BUCKET" --key "$k" && log "pruned ${k} (older than 14 days)"
+      s3 delete-object --bucket "$R2_BUCKET" --key "${prefix}${k}" && log "pruned ${prefix}${k} (older than 14 days)"
     fi
   done
 }

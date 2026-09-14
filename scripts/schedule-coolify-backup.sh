@@ -3,14 +3,14 @@
 #
 # Contract:
 # - Runs as root ON the target host (preserved VPS or a fresh provision).
-# - R2 credentials arrive via an env file (0600, root-only) provisioned from
-#   OpenBao by the orchestrator; this script never prints secret values.
-# - Installs: awscli (if missing), /root/coolify-backup/backup-to-r2.sh,
+# - R2 credentials are memory-only: the timer execs every backup through
+#   fetch-r2-env.sh (OpenBao pull per run); no credential file is used, ever.
+#   This script never prints secret values.
+# - Installs: awscli + bao CLI (if missing), /root/coolify-backup/ scripts
+#   (instance backup, workload backup, fetch wrapper, both rollback
+#   procedures — a rollback-less schedule is refused),
 #   a systemd oneshot service + daily timer (02:00 UTC), 14-day retention.
 # - Runs the first backup immediately and verifies the object in R2.
-# - Coolify-native per-database/per-volume schedules attach later to the
-#   registered S3 storage once application databases exist (none yet on a
-#   fresh install); this host-level job protects the instance DB itself.
 #
 # Usage (on the host, as root):
 #   bash scripts/schedule-coolify-backup.sh [--dry-run] [--install-only]

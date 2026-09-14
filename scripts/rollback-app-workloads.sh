@@ -47,9 +47,9 @@ done
 
 if [ "$dry_run" -eq 1 ]; then
   log 'DRY-RUN: resolve stamp (latest manifest when omitted)'
-  log 'DRY-RUN: --recreate NAME brings the workload back into service (volumes recreated + snapshots restored, containers recreated from recorded images, dumps restored, counts verified, health checked)'
+  log 'DRY-RUN: --recreate NAME brings the workload back into service (volumes + binds recreated with parity, containers recreated from recorded images, dumps restored with parity, health checked; refuses live targets)'
   log 'DRY-RUN: default probe mode restores each app-database dump into a disposable probe container (createdb-first pg_restore, verify tables + rows, drop probe)'
-  log 'DRY-RUN: restore each app-volume snapshot into temp dir (verify files present, remove temp)'
+  log 'DRY-RUN: restore each app-volume and app-bind snapshot into temp dir (verify files present, remove temp)'
   log 'DRY-RUN: report RESTORE_OK per item, fail closed on any miss'
   exit 0
 fi
@@ -148,6 +148,29 @@ if [ -n "$recreate" ]; then
       echo "FAILED health: ${cname} not running." >&2; FAILED=1
     fi
   done
+  # Declared bind paths (e.g. SQLite directories): recreate the directory
+  # and untar the snapshot into it. Refuses non-empty targets (fail closed).
+  for bkey in $(python3 -c 'import json,sys; print(" ".join(b["key"] for b in json.load(open(sys.argv[1])).get("binds",[])))' "$manifest_json"); do
+    bpath="$(python3 -c 'import json,sys; print(next(b["path"] for b in json.load(open(sys.argv[1])).get("binds",[]) if b["key"]==sys.argv[2]))' "$manifest_json" "$bkey")"
+    bfiles="$(python3 -c 'import json,sys; print(next(b.get("files",0) for b in json.load(open(sys.argv[1])).get("binds",[]) if b["key"]==sys.argv[2]))' "$manifest_json" "$bkey")"
+    if [ -e "$bpath" ] && [ -n "$(ls -A "$bpath" 2>/dev/null)" ]; then
+      echo "refusing: bind target ${bpath} exists and is non-empty." >&2; FAILED=1; continue
+    fi
+    mkdir -p "$bpath" || { echo "FAILED mkdir ${bpath}." >&2; FAILED=1; continue; }
+    s3get "$bkey" "$workdir/b.tar.gz" || { echo "FAILED download ${bkey}." >&2; FAILED=1; continue; }
+    # Strip the leading slash recorded at backup (tar -C / path-without-slash).
+    if tar xzf "$workdir/b.tar.gz" -C / >/dev/null 2>&1; then
+      got="$(find "$bpath" -type f 2>/dev/null | wc -l)"
+      if [ "${got:-0}" -eq "${bfiles:-0}" ]; then
+        log "RESTORED-INTO-SERVICE bind: ${bpath} (files=${got})"
+      else
+        echo "FAILED parity ${bpath}: manifest files=${bfiles}, restored=${got}." >&2; FAILED=1
+      fi
+    else
+      echo "FAILED untar ${bkey} into ${bpath}." >&2; FAILED=1
+    fi
+    rm -f "$workdir/b.tar.gz"
+  done
   trap - EXIT
   rm -rf "$workdir"
   if [ "$FAILED" -ne 0 ]; then echo 'recreate incomplete (fail closed; partial state left for inspection).' >&2; exit 2; fi
@@ -202,6 +225,26 @@ for key in $vols; do
     echo "FAILED untar ${key}." >&2; FAILED=1
   fi
   rm -f "$workdir/v.tar.gz"; rm -rf "$vdir"
+done
+
+# --- binds: restore each stamp snapshot into temp dir, verify files ---
+binds="$(s3ls 'app-binds/' | grep -F "$stamp" || true)"
+[ -n "$binds" ] || log 'no app-bind snapshots for this stamp.'
+for key in $binds; do
+  [ -n "$key" ] || continue
+  bdir="$workdir/bind"; rm -rf "$bdir"; mkdir -p "$bdir"
+  s3get "$key" "$workdir/b.tar.gz" || { echo "FAILED download ${key}." >&2; FAILED=1; continue; }
+  if tar xzf "$workdir/b.tar.gz" -C "$bdir" 2>/dev/null; then
+    files="$(find "$bdir" -type f | wc -l)"
+    if [ "$files" -gt 0 ]; then
+      log "RESTORE_OK bind: ${key} (files=${files})"
+    else
+      echo "FAILED verify ${key} (empty snapshot)." >&2; FAILED=1
+    fi
+  else
+    echo "FAILED untar ${key}." >&2; FAILED=1
+  fi
+  rm -f "$workdir/b.tar.gz"; rm -rf "$bdir"
 done
 
 trap - EXIT
