@@ -108,6 +108,18 @@ resource "cloudflare_dns_record" "ssh" {
   comment = "Cloudflare Tunnel hostname for Access-protected SSH."
 }
 
+resource "cloudflare_dns_record" "omniroute" {
+  # OmniRoute staging hostname (Pi migration; serves the Coolify deployment).
+  # No Access app fronts it: the gateway API must stay machine-accessible.
+  zone_id = data.cloudflare_zone.canonical.id
+  name    = "omniroute.${var.domain}"
+  type    = "CNAME"
+  content = "${cloudflare_zero_trust_tunnel_cloudflared.admin.id}.cfargotunnel.com"
+  ttl     = 1
+  proxied = true
+  comment = "OmniRoute Coolify staging (Pi migration 20260914)"
+}
+
 resource "cloudflare_dns_record" "fabric" {
   # Operator-added application hostname (adopted 2026-09-14 alongside the
   # tunnel route above; live record had no comment).
@@ -160,6 +172,23 @@ resource "cloudflare_zero_trust_tunnel_cloudflared_config" "admin" {
   config = {
     ingress = [
       {
+        # Dashboard realtime websocket (Soketi): the dashboard page dials
+        # wss://<host>/app/<key> (same-origin 443 — getRealtime() returns
+        # null for port-less URLs), and the web terminal dials
+        # wss://<host>/terminal/ws. The tunnel bypasses Traefik (which has
+        # the matching PathPrefix routes for direct-origin access), so
+        # these paths must fan out to the realtime ports here. Path rules
+        # MUST precede the bare-hostname rule (first match wins).
+        hostname = "coolify.${var.domain}"
+        path     = "/app/*"
+        service  = "http://localhost:6001"
+      },
+      {
+        hostname = "coolify.${var.domain}"
+        path     = "/terminal/ws/*"
+        service  = "http://localhost:6002"
+      },
+      {
         hostname = "coolify.${var.domain}"
         service  = "http://localhost:8000"
       },
@@ -171,6 +200,13 @@ resource "cloudflare_zero_trust_tunnel_cloudflared_config" "admin" {
         # Operator-added application route (adopted 2026-09-14 after live
         # drift; serves the user app through the origin proxy on :80).
         hostname = "fabric.${var.domain}"
+        service  = "http://localhost:80"
+      },
+      {
+        # OmniRoute staging (Pi migration 20260914): same origin-proxy
+        # pattern as fabric; traefik routes by Host to the app. No Access
+        # policy here — the gateway API stays machine-accessible.
+        hostname = "omniroute.${var.domain}"
         service  = "http://localhost:80"
       },
       {

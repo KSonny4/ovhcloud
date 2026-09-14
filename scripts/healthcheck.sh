@@ -99,6 +99,34 @@ else
 fi
 
 echo
+echo '== coolify realtime websocket =='
+# The dashboard dials wss://<host>/app/<key> (same-origin 443); the tunnel
+# fans /app/* to :6001 and /terminal/ws* to :6002 (see infra ingress).
+# A 101 here proves the realtime container answers WS handshakes.
+AID=''
+if command -v docker >/dev/null 2>&1; then
+  AID=$(docker exec coolify-realtime printenv SOKETI_DEFAULT_APP_ID 2>/dev/null || true)
+fi
+if [ -n "$AID" ]; then
+  printf 'WS upgrade /app/<key> on :6001 => '
+  curl -s -o /dev/null -w '%{http_code}\n' --max-time 8 --http1.1 \
+    -H 'Connection: Upgrade' -H 'Upgrade: websocket' \
+    -H 'Sec-WebSocket-Version: 13' -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' \
+    "http://127.0.0.1:6001/app/$AID?protocol=7&client=js&version=8&flash=false" || echo 'FAILED'
+else
+  echo 'WARNING: could not read Soketi app id (realtime container down?)'
+fi
+AID=''
+
+echo '== coolify proxy version =='
+# Coolify manages the proxy image; the dashboard warns on newer minor
+# branches (traefik_outdated_info). Drift here means a pending upgrade.
+if command -v docker >/dev/null 2>&1; then
+  docker inspect coolify-proxy --format 'proxy image: {{.Config.Image}}' 2>/dev/null || echo 'WARNING: coolify-proxy not found'
+else
+  echo 'docker unavailable'
+fi
+
 echo '== recent OOM indicators =='
 if [ "$(id -u)" -eq 0 ]; then
   journalctl -k --since '24 hours ago' --no-pager 2>/dev/null | grep -i -E 'oom|out of memory|killed process' || echo 'none found'

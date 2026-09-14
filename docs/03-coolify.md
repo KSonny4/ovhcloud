@@ -36,6 +36,35 @@ Access OTP as `ksonny4@gmail.com`): create projects, deploy from images or
 GitHub (smallest practical scope, secrets in Coolify environment config,
 never personal keys on the VPS), set CPU/memory limits on small hosts.
 
+## Dashboard realtime over the tunnel
+
+The dashboard page dials `wss://<host>/app/<key>` (same-origin 443:
+`getRealtime()` returns null for port-less URLs) and the web terminal
+dials `wss://<host>/terminal/ws`. The tunnel bypasses Traefik — which owns
+the matching `PathPrefix` routes for direct-origin access — so the tunnel
+ingress fans out explicitly (`infra/terraform/main.tf`, path rules BEFORE
+the bare-hostname rule; first match wins): `/app/*` → `localhost:6001`,
+`/terminal/ws/*` → `localhost:6002`, rest → `localhost:8000`. If the
+dashboard ever shows "Cannot connect to real-time service" again, check
+in order: realtime container healthy → tunnel ingress path rules present
+and ordered → edge WS upgrade returns 101 (never open public 6001/6002;
+Cloudflare would not serve them anyway). `scripts/healthcheck.sh` covers
+the origin-side WS handshake plus the proxy image.
+
+## Proxy (Traefik) minor upgrades
+
+Coolify tracks `traefik_outdated_info` and banners newer minor branches.
+Supported path (used for v3.6 → v3.7 on 2026-09-14): review the Traefik
+migration guide for the target branch (v3.7 notes touch only
+k8s-providers/wildcard-host/TLS-options — none apply to our file +
+docker provider usage), then via the API: `GET` the server proxy
+configuration, change only the `traefik:` image tag, `PUT`
+`/servers/{uuid}/proxy/configuration` (base64), `POST`
+`/servers/{uuid}/proxy/restart`, and verify dashboard + apps + WS 101.
+Rollback is the same path with the previous tag (proxy compose backups
+live under `/data/coolify/proxy/backups/`). Never edit the proxy image
+by hand on the host — Coolify reconciles it and the change would drift.
+
 ## Done when
 
 - [x] Coolify containers running, `localhost` validated
