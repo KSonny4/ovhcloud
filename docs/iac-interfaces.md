@@ -110,9 +110,9 @@ Generated values are written to OpenBao under stable paths and are referenced by
 | Logical value | OpenBao path/fields | Consumers |
 | --- | --- | --- |
 | Coolify SSH key | `secret/projects/ovhcloud/COOLIFY_SSH_PRIVATE_KEY` / `COOLIFY_SSH_PUBLIC_KEY` | guest bootstrap, Coolify machine connection |
-| Tunnel config secret (preserved tunnel) | `secret/projects/ovhcloud/COOLIFY_TUNNEL_SECRET` / `tunnel_secret` | Terraform loader → `TF_VAR_cloudflare_tunnel_secret` → preserved tunnel config (only consumer) |
-| Tunnel connector token (preserved, cold recovery) | `secret/projects/ovhcloud/COOLIFY_TUNNEL_TOKEN` / `tunnel_token` | break-glass connector reinstall ONLY; read by no automation (live connector owns its `--token-file`; rotation via API) |
-| Tunnel connector credential (per fresh target) | `secret/projects/ovhcloud/COOLIFY_TUNNEL_<NAME>` / `tunnel_id`, `tunnel_token` | `ensure-tunnel.sh` creates + escrows; runner consumes; cloudflared service installation |
+| Tunnel config secret (preserved tunnel) | `secret/projects/ovhcloud/COOLIFY_TUNNEL_SECRET` / `tunnel_secret` | single consumer: Terraform loader (`TF_VAR_cloudflare_tunnel_secret`) |
+| Tunnel connector token (preserved, cold recovery) | `secret/projects/ovhcloud/COOLIFY_TUNNEL_TOKEN` / `tunnel_token` | single consumer: break-glass human reinstall (no automation reads it; rotation via API) |
+| Tunnel connector credential (per fresh target) | `secret/projects/ovhcloud/COOLIFY_TUNNEL_<NAME>` / `tunnel_id`, `tunnel_token` | single consumer chain: runner (`ensure-tunnel.sh` stage creates + escrows, provisioner consumes for exactly one target) |
 | Cloudflare machine Access credential | `secret/projects/ovhcloud/COOLIFY_ACCESS_SERVICE_TOKEN` / `client_id`, `client_secret` | noninteractive verification and automation |
 | Coolify application key/admin bootstrap | `secret/projects/ovhcloud/COOLIFY_ADMIN` / `app_key`, `email`, `password` | Coolify bootstrap and recovery |
 | R2 backup credential | `secret/projects/ovhcloud/COOLIFY_R2` / `access_key_id`, `secret_access_key`, `bucket`, `endpoint` (four fields; every consumer fails closed on any missing field) | host-timer backup plane + restore probe (the Coolify in-app S3 destination was deleted; no credentials in Coolify) |

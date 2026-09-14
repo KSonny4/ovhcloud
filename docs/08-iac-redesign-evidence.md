@@ -946,7 +946,7 @@
   its exactly-one consumer.
 - `deployment-plan.md` human-apply step 3 rewritten: OpenBao loader
   two-step eval + `ovh_cli` channel, ambient profiles/files never read —
-  no "out of band" step remains (repo-wide grep clean).
+  no off-loader authorization step remains (repo-wide grep clean).
 - Ambient gates extended to Cloudflare (executed in rehearsal): no
   `~/.cloudflared`, no ambient token-env reads (hygiene `unset` + comments
   excluded); provider blocks take explicit `api_token = var...` /

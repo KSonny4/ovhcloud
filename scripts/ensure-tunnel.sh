@@ -48,6 +48,18 @@ command -v python3 >/dev/null 2>&1 || { echo 'python3 is required.' >&2; exit 2;
 [ -n "${TUNNEL_NAME:-}" ] || { echo 'TUNNEL_NAME must be set.' >&2; exit 2; }
 
 secret_path="${TUNNEL_SECRET_PATH:?TUNNEL_SECRET_PATH (per-target OpenBao entry) must be set.}"
+# Defense in depth (the runner refuses first): this script itself must never
+# operate on the preserved tunnel or its escrow entries, no matter who
+# invokes it.
+if [ "${TUNNEL_NAME:-}" = 'coolify-admin' ]; then
+  echo 'Refusing: coolify-admin is the preserved tunnel; fresh targets get a dedicated tunnel.' >&2
+  exit 2
+fi
+case "$secret_path" in
+  *coolify-admin*|COOLIFY_TUNNEL_TOKEN|COOLIFY_TUNNEL_SECRET)
+    echo "Refusing: per-target path must not be a preserved entry (got ${secret_path})." >&2
+    exit 2 ;;
+esac
 existing="$(bao kv get -field=tunnel_token "secret/projects/ovhcloud/${secret_path}" 2>/dev/null || true)"
 if [ -n "$existing" ]; then
   log "tunnel token already escrowed at ${secret_path}; no-op (value never printed)."

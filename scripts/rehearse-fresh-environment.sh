@@ -262,6 +262,12 @@ grep -q 'TUNNEL_SECRET_PATH:?' scripts/ensure-tunnel.sh || { echo 'ensure-tunnel
 if grep -rn 'bao kv \(get\|put\).*COOLIFY_TUNNEL_TOKEN' scripts/*.sh scripts/lib/*.sh 2>/dev/null | grep -v 'rehearse-fresh-environment.sh' | grep -q .; then echo 'automation reads the cold recovery escrow COOLIFY_TUNNEL_TOKEN.' >&2; exit 1; fi
 grep -q "tunnel_token.*secret_path\|secret_path.*tunnel_token" scripts/ensure-tunnel.sh || { echo 'ensure-tunnel does not bind tunnel_token to the per-target path.' >&2; exit 1; }
 log 'tunnel contract proven: preserved loader path, cold recovery untouched, per-target fresh entries.'
+# ensure-tunnel self-refusal (executed, hermetic: refusal precedes any API
+# call, so dummy env suffices and no network is touched).
+if BAO_ADDR=https://rehearsal.invalid CLOUDFLARE_ACCOUNT_ID=rehearsal TUNNEL_NAME=coolify-admin TUNNEL_SECRET_PATH=COOLIFY_TUNNEL_X bash scripts/ensure-tunnel.sh >/dev/null 2>&1; then echo 'ensure-tunnel accepts the preserved tunnel name.' >&2; exit 1; fi
+if BAO_ADDR=https://rehearsal.invalid CLOUDFLARE_ACCOUNT_ID=rehearsal TUNNEL_NAME=fresh-test TUNNEL_SECRET_PATH=COOLIFY_TUNNEL_TOKEN bash scripts/ensure-tunnel.sh >/dev/null 2>&1; then echo 'ensure-tunnel accepts the cold recovery entry.' >&2; exit 1; fi
+if BAO_ADDR=https://rehearsal.invalid CLOUDFLARE_ACCOUNT_ID=rehearsal TUNNEL_NAME=fresh-test TUNNEL_SECRET_PATH=COOLIFY_TUNNEL_SECRET bash scripts/ensure-tunnel.sh >/dev/null 2>&1; then echo 'ensure-tunnel accepts the preserved Terraform entry.' >&2; exit 1; fi
+log 'ensure-tunnel preserved-entry refusals proven (name + both singletons).'
 grep -q 'OVH_API' scripts/tf-env-from-openbao.sh || { echo 'loader omits the OVH_API escrow.' >&2; exit 1; }
 grep -q 'export OVH_APPLICATION_KEY' scripts/tf-env-from-openbao.sh scripts/run-remote-provision.sh || { echo 'OVH_* env emission missing.' >&2; exit 1; }
 # Executed OVH channel proof (stubbed ovhcloud, no network): without
