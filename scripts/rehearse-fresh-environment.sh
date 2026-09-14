@@ -28,7 +28,8 @@ log 'No live credentials are required: rehearsal uses example placeholders and d
 phase_ok provider_access | tee -a "$artifact_dir/phases.log"
 
 log '== origin_identity =='
-for script in scripts/bootstrap-vps.sh scripts/provision-coolify.sh scripts/configure-tunnel-access.sh; do
+for script in scripts/bootstrap-vps.sh scripts/provision-coolify.sh scripts/configure-tunnel-access.sh scripts/run-remote-provision.sh; do
+  if [ ! -f "$script" ]; then echo "missing script: $script." >&2; exit 1; fi
   if ! grep -q "vps-1525c977.vps.ovh.net" "$script" || ! grep -q 'Refusing' "$script"; then
     echo "preserved-host guard missing in ${script}." >&2
     exit 1
@@ -73,6 +74,19 @@ done
 cmp -s /tmp/rehearsal-tunnel-1.log /tmp/rehearsal-tunnel-2.log || { echo 'tunnel dry-run is not idempotent.' >&2; exit 1; }
 log 'tunnel/access dry-run idempotent across two passes; machine verification shape checked.'
 phase_ok edge_ready | tee -a "$artifact_dir/phases.log"
+
+log '== runner_channel (dry-run twice) =='
+for pass in 1 2; do
+  PROVISION_HOST=runner-rehearsal.invalid PROVISION_DOMAIN=coolify.invalid PROVISION_SSH_KEY=/dev/null \
+    bash scripts/run-remote-provision.sh --dry-run >/tmp/rehearsal-runner-"$pass".log 2>&1 \
+    || { echo 'runner dry-run unexpectedly requires live access.' >&2; exit 1; }
+done
+cmp -s /tmp/rehearsal-runner-1.log /tmp/rehearsal-runner-2.log || { echo 'runner dry-run is not idempotent.' >&2; exit 1; }
+for stage in bootstrap coolify edge backup; do
+  grep -q "$stage" /tmp/rehearsal-runner-1.log || { echo "runner dry-run omits stage: ${stage}." >&2; exit 1; }
+done
+log 'runner dry-run idempotent across two passes; all four stages present; no network touched.'
+phase_ok runner_channel | tee -a "$artifact_dir/phases.log"
 
 log '== backup_ready (dry-run) =='
 bash scripts/backup-r2-probe.sh --dry-run >/tmp/rehearsal-backup.log 2>&1

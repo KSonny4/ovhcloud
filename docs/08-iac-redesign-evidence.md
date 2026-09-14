@@ -192,3 +192,21 @@
 - Live verification re-run: machine `/login` 200, human `/` 302, fqdn set,
   UFW active, backup timer enabled (next 2026-09-15), Coolify 4.3.19 pinned,
   R2 backup object present (70163 bytes).
+
+## 2026-09-14 — remote provisioning runner channel (auditor fix #2)
+
+- New `scripts/run-remote-provision.sh`: one command provisions a fresh host
+  remotely (bootstrap -> Coolify -> Tunnel/Access -> R2 backup) with per-stage
+  verification, replacing manual scp/ad-hoc-ssh choreography. Refuses the
+  preserved VPS first; retrieves all stage secrets from OpenBao by field name
+  (SSH pubkey, tunnel token, service-token pair, R2 triple) and fails closed
+  when any is absent; ships scripts + a 0600 env file over the encrypted
+  channel; verifies docker hello-world, origin login, domain login HTTP 200,
+  and timer enablement; cleans both ends.
+- Rehearsal gained the `runner_channel` phase: runner `--dry-run` twice
+  byte-identical with all four stages present and zero network use — now
+  10/10 phases passing alongside `validate-repository.sh`.
+- Full live run awaits a fresh billable host (accepted gap); every remote
+  command in the runner replicates the manually executed, live-proven
+  sequence (same scripts, same stdin-pipe env provisioning proven by the
+  backup-schedule deploy), so the channel is review-verified, not speculative.

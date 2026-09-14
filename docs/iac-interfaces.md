@@ -6,6 +6,33 @@ This document defines the small interfaces between provider authorization, Terra
 
 The deployment runner receives only provider authorization and a target declaration. Values are read from OpenBao at `https://secrets.pkubelka.cz` and injected into the process environment or an ephemeral file descriptor. They are never written to `terraform.tfvars`, shell history, CI logs, or repository files.
 
+### Remote provisioning runner (`scripts/run-remote-provision.sh`)
+
+The runner is the noninteractive project channel that provisions a fresh host
+remotely; no stage requires manually running local root scripts on the target.
+One invocation executes bootstrap -> Coolify -> Tunnel/Access -> R2 backup
+schedule over SSH with per-stage verification, failing closed at the first
+failure:
+
+- Inputs: `PROVISION_HOST`, `PROVISION_DOMAIN`, `PROVISION_SSH_USER` (default
+  `ubuntu`), `PROVISION_SSH_KEY`, plus `ROOT_USERNAME/ROOT_USER_EMAIL/ROOT_USER_PASSWORD`
+  for first-admin bootstrap and `R2_ENDPOINT` (defaults to the account endpoint).
+- Refuses the preserved VPS (`vps-1525c977.vps.ovh.net` / `57.129.155.203`)
+  before any network or secret access.
+- Retrieves from OpenBao by name only: `COOLIFY_SSH_PUBLIC_KEY.value`,
+  `COOLIFY_TUNNEL_TOKEN.tunnel_token`,
+  `COOLIFY_ACCESS_SERVICE_TOKEN.{client_id,client_secret}`,
+  `COOLIFY_R2.{access_key_id,secret_access_key,bucket}`; exits when any field
+  is absent.
+- Copies the four stage scripts plus a generated 0600 env file to
+  `/tmp/ovh-provision` on the target, runs each stage with `sudo -E`, verifies
+  (docker hello-world, origin login, domain login HTTP 200 locally, timer
+  enabled), then deletes stage material on both ends.
+- `--dry-run` logs the full plan without touching the network (exercised twice
+  byte-identical by the rehearsal `runner_channel` phase); `--stages` selects
+  a subset. Initial SSH key injection on a fresh OVH VPS (order/reinstall
+  time) is the one explicit operator prerequisite.
+
 ### OVH provider adapter
 
 The adapter supplies the standard OVH provider inputs:
