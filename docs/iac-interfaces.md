@@ -117,6 +117,7 @@ Generated values are written to OpenBao under stable paths and are referenced by
 | Coolify application key/admin bootstrap | `secret/projects/ovhcloud/COOLIFY_ADMIN` / `app_key`, `email`, `password` | Coolify bootstrap and recovery |
 | R2 backup credential | `secret/projects/ovhcloud/COOLIFY_R2` / `access_key_id`, `secret_access_key`, `bucket`, `endpoint` (four fields; every consumer fails closed on any missing field) | host-timer backup plane + restore probe (the Coolify in-app S3 destination was deleted; no credentials in Coolify) |
 | OmniRoute application secrets (derived) | `secret/projects/ovhcloud/OMNIROUTE` / `STORAGE_ENCRYPTION_KEY`, `API_KEY_SECRET`, `JWT_SECRET` (generate-if-absent + escrow via `ensure-omniroute-secrets.sh`; reuse otherwise) | manifests mark them escrow-recoverable (`env_escrowed`); restore re-injects via `fetch-app-secrets.sh` with no human relay |
+| Coolify API token (dashboard-equivalent) | `secret/projects/ovhcloud/COOLIFY_API` / `token` (Sanctum token for root admin, scoped to Root Team id 0; minted server-side mirroring `User::createToken` — plain `createToken` fails on the `team_id` NOT NULL constraint without a session — and piped straight to escrow, never displayed) | API-driven app/resource creation (`Authorization: Bearer`, plus Access service-token headers at the edge) |
 
 Values must be sensitive in Terraform schemas and redacted from command output. If the selected provider cannot safely write a generated value to OpenBao, the apply must fail rather than silently leave it in an untracked local file.
 
