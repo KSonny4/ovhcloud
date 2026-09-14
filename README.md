@@ -51,6 +51,61 @@ The implementation handoff, evidence table, IaC boundaries and authorized-apply 
 
 There is also a read-only [`scripts/healthcheck.sh`](scripts/healthcheck.sh) for routine server checks.
 
+## Deploying workloads
+
+The platform is live: Coolify runs at `https://coolify.pkubelka.cz`
+(sign in with Cloudflare Access OTP as `ksonny4@gmail.com`). There are two
+ways to ship an app; both end up as Docker containers behind the
+Cloudflare Tunnel (the VPS opens no public web ports — the tunnel is the
+sole public edge).
+
+### Path A — dashboard (fastest for one-off services)
+
+Best for: Docker images, databases (Postgres, Redis, MySQL), quick
+experiments. The `fabric` app already on the server was deployed this way.
+
+1. Open the dashboard → pick the `production` environment (inside your
+   project) → **New Resource**.
+2. Choose **Application → Docker Image** (e.g. `nginx:alpine`, or any
+   image), or **Database** for a managed Postgres/Redis/MySQL.
+3. Set the **domain** (e.g. `myapp.pkubelka.cz`), environment variables
+   (in Coolify's environment config — never bake secrets into images),
+   and CPU/memory limits (this is a small host; set limits so one app
+   cannot starve the rest).
+4. Press **Deploy**.
+5. Expose it publicly: add the DNS record and the tunnel ingress route
+   for the new hostname (same pattern as the existing `fabric` route —
+   DNS CNAME plus a tunnel ingress entry pointing at the origin), then
+   verify `https://myapp.pkubelka.cz` serves through Cloudflare.
+
+### Path B — git-connected (best for your own code)
+
+Best for: anything you develop — push to deploy, with rollbacks.
+
+1. Dashboard → `production` → **New Resource → Application → Git
+   Repository** (public repo directly; private repos via the GitHub App
+   or a deploy key — smallest practical scope, never personal keys on
+   the VPS).
+2. Pick the branch and build pack (Nixpacks autodetects most projects;
+   Dockerfile if you have one; static for frontend-only).
+3. Set domain, environment variables, and resource limits as in Path A.
+4. Press **Deploy** once — after that, every `git push` to the tracked
+   branch rebuilds and redeploys automatically. Each deployment is kept,
+   so a bad push rolls back by redeploying the previous one.
+
+### After any deploy
+
+- Confirm the app is reachable at its public URL and healthy in the
+dashboard.
+- Nightly backups cover app volumes/databases automatically (host timer
+→ R2); a brand-new stateful app is covered from its first night — but a
+backup untested by restore is not trusted (see the
+[backup runbook](docs/05-backup-recovery.md)).
+- If the app needs secrets that must survive a rebuild from scratch
+(e.g. encryption keys, not just DB passwords), escrow them in OpenBao
+and follow the lifecycle in [Deploy OmniRoute safely](docs/07-omniroute.md)
+— that is the pattern for app-secret generate/escrow/re-inject.
+
 Do not skip the backup/recovery section. A Coolify instance backup does not contain all application, database and volume data.
 
 ## Recommended baseline
