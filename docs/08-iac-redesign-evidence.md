@@ -880,3 +880,29 @@
   `ADMIN_CLOUDFLARE` (`CF_DEPLOY_TOKEN` marked historical/superseded);
   `iac-inventory.md` plan state is `empty` (vault-escrow paragraph marked
   historical/superseded, escrow owned by ensure-service-token + runner).
+
+## 2026-09-14 — auditor 15:22 round (key-only, backend-before-wire, stage proofs, contracts)
+
+- `--generate-key-only` no longer requires a host/zone (mint-first
+  ordering); executed `--generate-key-only --dry-run` with empty
+  PROVISION_HOST/ZONE exits 0. Live mint intentionally not exercised
+  (it rotates the escrowed SSH pair + registers an OVH account key;
+  operator action, not a test).
+- Fresh backend before first mutation: new `ensure-fresh-backend.sh`
+  generates backend.hcl (names/URLs only, verified secret-free) before
+  wire --skip-verify; refuses preserved/unknown keys; idempotent. Adopt
+  loads S3 auth via memory-only AWS_* env. Backendless --apply refusal
+  retained as defense-in-depth. Clean-checkout partial state impossible
+  by construction (order asserted in rehearsal).
+- Per-stage live proofs: new `collect-stage-proofs.sh` -> 8/8 PASS at
+  15:27Z (preserved-safety refusals, bootstrap docker29/ufw-deny/
+  hello-world, coolify 9 healthy + origin 200, dashboard 200 + ssh 302,
+  reseed stamps, instance RESTORE_OK, 16-line app RESTORE_OK, disposable
+  TXT create+verify+delete with zero residue). Target /tmp clean.
+- Contracts reconciled: interfaces R2 four fields; deployment-plan host
+  timer sole plane (no Coolify in-app destination); terraform README
+  OpenBao-only (no external manager/profile); inventory
+  ADMIN_CLOUDFLARE primary.
+- Report attestation hardened: rehearsal records code_tree_scripts/infra
+  (content hashes); HEAD trees verified MATCH, code diff empty — the
+  artifact attests the audited code regardless of docs-only follow-ups.
