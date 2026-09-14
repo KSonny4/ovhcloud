@@ -1,6 +1,8 @@
 # 04. Configure Cloudflare
 
-Cloudflare has three roles in this setup:
+The canonical domain is an authorized operator input, not a repository default. Replace the `example.com` documentation placeholders only after the domain blocker in `docs/deployment-plan.md` is resolved; never apply them literally.
+
+Cloudflare is the exclusive public DNS/edge provider in this deployment. It has three roles in this setup:
 
 1. DNS / reverse proxy in front of public web applications.
 2. Tunnel + Access for human administration, especially SSH.

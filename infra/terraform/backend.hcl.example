@@ -1,0 +1,12 @@
+# Copy to backend.hcl (ignored) only for an authorized production plan/apply.
+# Do not commit backend.hcl. Disposable rehearsal uses local state instead.
+bucket         = "REPLACE_WITH_TERRAFORM_STATE_BUCKET"
+key            = "ovhcloud-coolify/terraform.tfstate"
+region         = "REPLACE_WITH_STATE_REGION"
+endpoints      = { s3 = "REPLACE_WITH_S3_COMPATIBLE_ENDPOINT" }
+encrypt        = true
+use_lockfile   = true
+skip_credentials_validation = true
+skip_metadata_api_check     = true
+skip_region_validation      = true
+skip_requesting_account_id  = true

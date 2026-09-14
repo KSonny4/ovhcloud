@@ -1,0 +1,71 @@
+# Authorized-import map for the preserved live resources.
+# This file is documentation only: copy each block into a local, ignored
+# imports file after an operator confirms the live identifiers, then remove
+# the block after the import has been recorded in committed state metadata.
+#
+# Example workflow:
+#   cp imports.tf.example imports.tf   # imports.tf is ignored by .gitignore
+#   terraform init -backend-config=backend.hcl
+#   terraform plan -out=tfplan         # reviewer confirms no replacements
+#   terraform apply tfplan              # authorized operator only
+#   terraform state list                # capture imported addresses/IDs
+#   rm imports.tf tfplan
+#
+# import {
+#   # Preserved production VPS as an import-only protected record.
+#   # Import ID is the OVH service name; the resource ignores all changes
+#   # and forbids destruction.
+#   to = ovh_vps.preserved[0]
+#   id = "REPLACE_WITH_OVH_SERVICE_NAME"
+# }
+
+# import {
+#   # Live Tunnel: coolify-admin. Retrieve the canonical ID from Cloudflare
+#   # before use; do not hardcode it. Verified import format (provider v5.25):
+#   # "ACCOUNT_ID/TUNNEL_ID" (no accounts/ prefix).
+#   to = cloudflare_zero_trust_tunnel_cloudflared.admin
+#   id = "REPLACE_WITH_ACCOUNT_ID/REPLACE_WITH_TUNNEL_ID"
+# }
+#
+# import {
+#   # Live DNS: coolify.<domain> CNAME to the Tunnel.
+#   to = cloudflare_dns_record.coolify
+#   id = "REPLACE_WITH_ZONE_ID/REPLACE_WITH_COOLIFY_DNS_RECORD_ID"
+# }
+#
+# import {
+#   # Live DNS: ssh.<domain> CNAME to the Tunnel.
+#   to = cloudflare_dns_record.ssh
+#   id = "REPLACE_WITH_ZONE_ID/REPLACE_WITH_SSH_DNS_RECORD_ID"
+# }
+#
+# import {
+#   # Existing Access apps. Verified import format (provider v5.25):
+#   # "accounts/ACCOUNT_ID/APP_ID" (accounts/ prefix required).
+#   to = cloudflare_zero_trust_access_application.coolify
+#   id = "accounts/REPLACE_WITH_ACCOUNT_ID/REPLACE_WITH_COOLIFY_ACCESS_APP_ID"
+# }
+#
+# import {
+#   to = cloudflare_zero_trust_access_application.ssh
+#   id = "accounts/REPLACE_WITH_ACCOUNT_ID/REPLACE_WITH_SSH_ACCESS_APP_ID"
+# }
+#
+# import {
+#   # OTP identity provider. Verified format: "accounts/ACCOUNT_ID/IDP_ID".
+#   to = cloudflare_zero_trust_access_identity_provider.one_time_pin
+#   id = "accounts/REPLACE_WITH_ACCOUNT_ID/REPLACE_WITH_ONE_TIME_PIN_IDP_ID"
+# }
+#
+# import {
+#   # Machine service token. Verified format: "accounts/ACCOUNT_ID/TOKEN_ID".
+#   to = cloudflare_zero_trust_access_service_token.machine
+#   id = "accounts/REPLACE_WITH_ACCOUNT_ID/REPLACE_WITH_MACHINE_SERVICE_TOKEN_ID"
+# }
+#
+# import {
+#   # Existing private R2 backup bucket, when already created.
+#   # Verified format: "ACCOUNT_ID/BUCKET_NAME/default" (jurisdiction suffix required).
+#   to = cloudflare_r2_bucket.backups
+#   id = "REPLACE_WITH_ACCOUNT_ID/REPLACE_WITH_R2_BUCKET_NAME/default"
+# }
