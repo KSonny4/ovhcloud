@@ -106,7 +106,8 @@ if [ "$dry_run" -eq 1 ]; then
   log 'DRY-RUN: verify origin http://127.0.0.1:8000 responds without printing secrets'
   log 'DRY-RUN: escrow Coolify APP_KEY/admin bootstrap metadata to OpenBao by name only'
   log "DRY-RUN: set instance_settings.fqdn to https://${domain} in coolify-db, restart coolify container, re-verify origin login"
-  log 'DRY-RUN: wait for onboarding state (admin user + reachable localhost) via read-only coolify-db poll, fail closed on timeout'
+  log 'DRY-RUN: reconcile default project + production environment in coolify-db (idempotent INSERT WHERE NOT EXISTS, fail closed on SQL error)'
+  log 'DRY-RUN: wait for onboarding state (admin user + reachable localhost + project + environment) via read-only coolify-db poll, fail closed on timeout'
   log 'DRY-RUN: close bootstrap ports with UFW (allow 22/tcp, deny 80/443/8000/8080/6001/6002, default deny incoming) and verify active'
   log "DRY-RUN: domain smoke deployment check https://${domain}/login via service-token headers, require HTTP 200 (fail closed)"
 else
@@ -163,21 +164,40 @@ if [ "$dry_run" -eq 0 ]; then
   fi
 fi
 
+# Stage: project/environment reconciliation. The dashboard onboarding wizard
+# creates these on first login; a noninteractive install must not depend on
+# that click. Both INSERTs are idempotent (WHERE NOT EXISTS): an operator
+# who already created projects (like the preserved context-fabric) is
+# untouched, while a genuinely fresh database gains the minimum deployable
+# shape (one project, one production environment on the lowest project id).
+# UUIDs are 20-char alphanumerics from md5(random()) — unique per insert,
+# matching the application format closely enough for the UNIQUE constraint.
+if [ "$dry_run" -eq 0 ]; then
+  docker exec coolify-db psql -U coolify -d coolify -v ON_ERROR_STOP=1 -c \
+    "INSERT INTO projects (uuid, name, team_id, created_at, updated_at) SELECT substr(md5(random()::text),1,20), 'default', 0, now(), now() WHERE NOT EXISTS (SELECT 1 FROM projects);" >/dev/null \
+    || { echo 'project reconciliation failed (fail closed).' >&2; exit 1; }
+  docker exec coolify-db psql -U coolify -d coolify -v ON_ERROR_STOP=1 -c \
+    "INSERT INTO environments (uuid, name, project_id, created_at, updated_at) SELECT substr(md5(random()::text),1,20), 'production', (SELECT min(id) FROM projects), now(), now() WHERE NOT EXISTS (SELECT 1 FROM environments WHERE name='production');" >/dev/null \
+    || { echo 'environment reconciliation failed (fail closed).' >&2; exit 1; }
+  log 'project/environment reconciled (idempotent; existing projects untouched).'
+fi
+
 # Stage: onboarding-state gate. A fresh install self-registers the localhost
 # server asynchronously; provisioning is NOT complete until the admin user
-# exists and localhost is registered + reachable. Verified here against
-# coolify-db (read-only SQL, no dashboard session), fail closed on timeout.
+# exists, localhost is registered + reachable, AND at least one project
+# with a production environment exists. Verified here against coolify-db
+# (read-only SQL, no dashboard session), fail closed on timeout.
 if [ "$dry_run" -eq 0 ]; then
   onboard_state=''
   for _ in $(seq 1 30); do
-    onboard_state="$(docker exec coolify-db psql -U coolify -d coolify -tAc "SELECT CASE WHEN (SELECT count(*) FROM users)>=1 AND (SELECT count(*) FROM servers WHERE name='localhost' AND COALESCE(unreachable_count,0)=0)>=1 THEN 'READY' ELSE 'WAIT' END;" 2>/dev/null || true)"
+    onboard_state="$(docker exec coolify-db psql -U coolify -d coolify -tAc "SELECT CASE WHEN (SELECT count(*) FROM users)>=1 AND (SELECT count(*) FROM servers WHERE name='localhost' AND COALESCE(unreachable_count,0)=0)>=1 AND (SELECT count(*) FROM projects)>=1 AND (SELECT count(*) FROM environments WHERE name='production')>=1 THEN 'READY' ELSE 'WAIT' END;" 2>/dev/null || true)"
     [ "$onboard_state" = 'READY' ] && break
     sleep 10
   done
   if [ "$onboard_state" = 'READY' ]; then
-    log 'onboarding state ready: admin user exists, localhost registered + reachable (verified without dashboard).'
+    log 'onboarding state ready: admin user, reachable localhost, project + production environment (verified without dashboard).'
   else
-    echo 'onboarding state not ready after 5 minutes (admin user or reachable localhost missing); refusing to continue.' >&2
+    echo 'onboarding state not ready after 5 minutes (admin user, reachable localhost, project, or production environment missing); refusing to continue.' >&2
     exit 1
   fi
 fi

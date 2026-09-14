@@ -270,7 +270,7 @@ if [ "$dry_run" -eq 1 ]; then
   log 'DRY-RUN: install sudo automation channel (step 0, before any sudo -E stage: static env_keep content, no secrets)'
   log 'DRY-RUN: scp stage scripts (only) to /tmp/ovh-provision; credentials travel as a base64 env blob inside each SSH command (memory-only both ends)'
   want_stage bootstrap && log 'DRY-RUN: remote sudo BOOTSTRAP_TARGET_HOST/BOOTSTRAP_SSH_PUBLIC_KEY bash bootstrap-vps.sh + verify docker hello-world'
-  want_stage coolify && log "DRY-RUN: remote sudo COOLIFY_TARGET_HOST/COOLIFY_DOMAIN/COOLIFY_VERSION/ROOT_* bash provision-coolify.sh (FQDN + firewall + origin smoke) + verify origin login + fetch APP_KEY over SSH and escrow operator-side (fail closed)"
+  want_stage coolify && log "DRY-RUN: remote sudo COOLIFY_TARGET_HOST/COOLIFY_DOMAIN/COOLIFY_VERSION/ROOT_* bash provision-coolify.sh (FQDN + project/env reconcile + onboarding gate + firewall + origin smoke) + verify origin login + fetch APP_KEY over SSH and escrow operator-side (fail closed) + run verify-coolify-onboarding.sh (fail closed, runner cannot finish while onboarding incomplete)"
   if want_stage edge; then
     log 'DRY-RUN edge sequence (two-phase; readiness gates only after the connector runs):'
     log 'DRY-RUN edge 0/5: ensure-fresh-backend (generate backend.hcl: names/URLs only, refuse preserved key, AWS_* via memory-only env)'
@@ -537,6 +537,13 @@ if want_stage coolify; then
     exit 2
   fi
   app_key=''
+  # Onboarding verification (operator side, fail closed): the provisioner
+  # reconciles project/environment itself, and this read-only probe proves
+  # admin + reachable localhost + project/environment with no dashboard
+  # session. The runner cannot finish the coolify stage while onboarding
+  # remains incomplete.
+  run bash "$repo_root/scripts/verify-coolify-onboarding.sh" --ssh-key "$ssh_key" --host "${ssh_user}@${host}" --admin-email "$ROOT_USER_EMAIL"
+  log 'onboarding verified on the target (admin + localhost + project/environment).'
 fi
 
 if want_stage edge; then

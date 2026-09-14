@@ -524,6 +524,25 @@ log 'recreate credential resolution proven: explicit > escrowed reuse > generate
 # success on empty output): refused localhost SSH must exit nonzero.
 if bash scripts/verify-coolify-onboarding.sh --host ubuntu@127.0.0.1 >/dev/null 2>&1; then echo 'onboarding verifier accepts transport failure.' >&2; exit 1; fi
 log 'onboarding verifier proven fail-closed on transport failure.'
+# Onboarding completeness chain (all executed against this repo, no network
+# except the localhost-refused case): the provisioner reconciles project +
+# environment (exact SQL present), the gate requires all four signals, and
+# the runner invokes the read-only verifier before the coolify stage can
+# finish (dry-run order asserted on the runner's own output).
+grep -q 'INSERT INTO projects' scripts/provision-coolify.sh || { echo 'provisioner omits project reconciliation.' >&2; exit 1; }
+grep -q 'INSERT INTO environments' scripts/provision-coolify.sh || { echo 'provisioner omits environment reconciliation.' >&2; exit 1; }
+grep -q "FROM projects)>=1" scripts/provision-coolify.sh || { echo 'onboarding gate ignores projects.' >&2; exit 1; }
+grep -q "FROM environments WHERE name='production')>=1" scripts/provision-coolify.sh || { echo 'onboarding gate ignores the production environment.' >&2; exit 1; }
+grep -q 'verify-coolify-onboarding.sh' scripts/run-remote-provision.sh || { echo 'runner never invokes the onboarding verifier.' >&2; exit 1; }
+python3 - <<'PYEOF' || exit 1
+log = open('/tmp/rehearsal-runner-1.log').read().splitlines()
+cool = [i for i, l in enumerate(log) if 'DRY-RUN: remote sudo COOLIFY' in l]
+assert cool, 'coolify stage missing from runner dry-run'
+assert 'verify-coolify-onboarding' in log[cool[0]], 'verifier missing from coolify stage plan'
+print('runner-verifier chain proven: coolify stage cannot finish without the verifier.')
+PYEOF
+bash scripts/verify-coolify-onboarding.sh --help 2>&1 | grep -q -- '--admin-email' || { echo 'verifier omits the admin-email override.' >&2; exit 1; }
+log 'onboarding chain proven: reconcile + four-signal gate + runner verifier.'
 # Rollback accepts the env credential and reports its source in dry-run.
 env_out="$(APP_DB_PASSWORD=env-test-pw bash scripts/rollback-app-workloads.sh --dry-run 2>&1 || true)"
 printf '%s' "$env_out" | grep -q 'credential source: env' || { echo 'rollback ignores APP_DB_PASSWORD.' >&2; exit 1; }

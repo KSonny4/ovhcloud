@@ -45,7 +45,7 @@ Cloudflare is the exclusive public DNS/edge provider. OVH remains the compute/or
 - Cloudflare Access: human OTP/email policy retained plus a scoped machine service token (`non_identity`) escrowed to OpenBao by `scripts/ensure-service-token.sh` (Terraform owns token identity + policy binding only; no vault provider/resources in the module, so the live plan converges with zero residual adds); no provisioning step depends on browser login.
 - A private Cloudflare R2 bucket for backup destinations.
 - Fresh-host automation (never targets the preserved VPS): `scripts/bootstrap-vps.sh` (Ubuntu packages, key-only SSH, swap, time), `scripts/provision-coolify.sh` (pinned release, health checks), `scripts/configure-tunnel-access.sh` (cloudflared install, service-token verification), `scripts/backup-r2-probe.sh` (R2 write/restore probe). Disposable rehearsal: `scripts/rehearse-fresh-environment.sh` (idempotent twice, no plaintext secrets).
-- No application secrets or tunnel tokens are generated into the repository. Terraform variables marked sensitive must come from the external secret manager or environment.
+- No application secrets or tunnel tokens are generated into the repository. Terraform variables marked sensitive come ONLY from the existing OpenBao instance (`https://secrets.pkubelka.cz`) via `scripts/tf-env-from-openbao.sh` (env-only `TF_VAR_*`, never files). No external secret manager, CLI profile, or credential file participates in provider authorization.
 
 The default configuration is non-live: `provision_ovh_vps = false` and there is no apply workflow. A human may run a reviewed plan/apply only after:
 
@@ -74,12 +74,12 @@ The authorized operator must provide a Cloudflare-managed zone and decide whethe
 
 | Secret / sensitive value | Owner | Storage | Rotation / recovery gate |
 | --- | --- | --- | --- |
-| Cloudflare API token/account ID | platform operator | external secret manager / environment | least-privilege token; revoke and replace after suspected exposure |
-| OVH application credentials | platform operator / `ovhcloud` profile | OVH CLI secure config or secret manager | revoke profile/API keys; never export into Git |
-| Cloudflare Tunnel secret | platform operator | secret manager and encrypted Terraform state | rotate tunnel and Access policy after exposure |
+| Cloudflare API token/account ID | platform operator | OpenBao `secret/projects/ovhcloud/ADMIN_CLOUDFLARE` via `tf-env-from-openbao.sh` (`TF_VAR_cloudflare_api_token`, memory-only) | least-privilege token; revoke and replace after suspected exposure |
+| OVH application credentials | platform operator | OpenBao `secret/projects/ovhcloud/OVH_API` (`application_key`, `application_secret`, `consumer_key`, `endpoint`) via `OVH_*` env into `ovh_cli` (explicit HOME-redirected config; ambient `~/.ovh.conf` never read) | revoke API keys; never export into Git |
+| Cloudflare Tunnel secret | platform operator | OpenBao per-target `secret/projects/ovhcloud/COOLIFY_TUNNEL_<NAME>` (`tunnel_secret`) via `ensure-tunnel.sh` (create + escrow, never the preserved `coolify-admin` singleton) | rotate tunnel and Access policy after exposure |
 | R2 access key/secret | backup owner | host-timer memory-only pull from OpenBao (no credential file, no Coolify in-app destination) | scoped to private backup bucket; test a restore after rotation |
-| Coolify `APP_KEY` | Coolify owner | external escrow | restore test must decrypt a known backup |
-| OmniRoute `STORAGE_ENCRYPTION_KEY`, `API_KEY_SECRET`, `JWT_SECRET` | application owner | external escrow, re-injected post-restore per the manifest re-injection list | restore test must load known configuration |
+| Coolify `APP_KEY` | Coolify owner | OpenBao `secret/projects/ovhcloud/COOLIFY_ADMIN` (`app_key`, `email`): target-side attempt when bao exists, authoritative runner fetch over SSH + escrow (memory-only, fail closed) | restore test must decrypt a known backup |
+| OmniRoute `STORAGE_ENCRYPTION_KEY`, `API_KEY_SECRET`, `JWT_SECRET` | application owner | operator-supplied via OpenBao `secret/projects/ovhcloud/OMNIROUTE_*` convention (placed before deploy, never generated); re-injected post-restore per the manifest re-injection list | restore test must load known configuration |
 | Cloudflare machine service token | Terraform-generated, escrowed in OpenBao | `secret/projects/ovhcloud/COOLIFY_ACCESS_SERVICE_TOKEN` (`client_id`, `client_secret`) | noninteractive verification must pass without browser login |
 | Terraform state | platform owner | encrypted remote backend with locking (`backend.hcl`, ignored; `backend.hcl.example` committed) | never use an unencrypted local state for production apply; rehearsal uses disposable local state only |
 

@@ -8,7 +8,7 @@
 # coolify-db database is never written.
 #
 # Usage:
-#   bash scripts/verify-coolify-onboarding.sh [--ssh-key PATH] [--host USER@HOST]
+#   bash scripts/verify-coolify-onboarding.sh [--ssh-key PATH] [--host USER@HOST] [--admin-email ADDR]
 set -euo pipefail
 
 while [ "$#" -gt 0 ]; do
@@ -17,12 +17,15 @@ while [ "$#" -gt 0 ]; do
     --ssh-key=*) ssh_key="${1#--ssh-key=}"; shift ;;
     --host) host="$2"; shift 2 ;;
     --host=*) host="${1#--host=}"; shift ;;
-    -h|--help) echo 'usage: verify-coolify-onboarding.sh [--ssh-key PATH] [--host USER@HOST]'; exit 0 ;;
+    --admin-email) admin_email="$2"; shift 2 ;;
+    --admin-email=*) admin_email="${1#--admin-email=}"; shift ;;
+    -h|--help) echo 'usage: verify-coolify-onboarding.sh [--ssh-key PATH] [--host USER@HOST] [--admin-email ADDR]'; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
 ssh_key="${ssh_key:-$HOME/.ssh/ovh_coolify_ed25519}"
 host="${host:-ubuntu@57.129.155.203}"
+admin_email="${admin_email:-ksonny4@gmail.com}"
 [ -f "$ssh_key" ] || { echo "SSH key not found: ${ssh_key}." >&2; exit 2; }
 
 probe="$(mktemp /tmp/coolify-onboard-probe.XXXXXX.py)"
@@ -49,8 +52,9 @@ def check(name, cond, detail=""):
         fails.append(name)
 
 
+want_admin = os.environ.get("WANT_ADMIN_EMAIL", "ksonny4@gmail.com")
 admin = q("SELECT email FROM users;")
-check("admin-user", admin == "ksonny4@gmail.com", "users=" + q("SELECT count(*) FROM users;"))
+check("admin-user", admin == want_admin, "users=" + q("SELECT count(*) FROM users;"))
 check("localhost-server", q("SELECT count(*) FROM servers WHERE name='localhost';") == "1", "no localhost row")
 check("localhost-reachable", q("SELECT unreachable_count FROM servers WHERE name='localhost';") == "0", "unreachable")
 projs = [l for l in q("SELECT id || '/' || name FROM projects;").splitlines() if l]
@@ -66,7 +70,7 @@ PYEOF
 remote_probe="/tmp/coolify-onboard-probe-$(date +%s).py"
 scp -i "$ssh_key" -o BatchMode=yes -o ConnectTimeout=20 "$probe" "${host}:${remote_probe}" >/dev/null || { echo 'probe staging failed.' >&2; exit 2; }
 ssh -i "$ssh_key" -o BatchMode=yes -o ConnectTimeout=20 "$host" \
-  "docker inspect coolify --format '{{json .Config.Env}}' 2>/dev/null | python3 '$remote_probe'; rm -f '$remote_probe'" 2>/dev/null > /tmp/coolify-onboard-out.txt || ssh_rc=$?
+  "docker inspect coolify --format '{{json .Config.Env}}' 2>/dev/null | WANT_ADMIN_EMAIL='$admin_email' python3 '$remote_probe'; rm -f '$remote_probe'" 2>/dev/null > /tmp/coolify-onboard-out.txt || ssh_rc=$?
 cat /tmp/coolify-onboard-out.txt
 if [ "${ssh_rc:-0}" -ne 0 ]; then
   echo "onboarding probe transport failed (SSH exit ${ssh_rc}); refusing to report success." >&2

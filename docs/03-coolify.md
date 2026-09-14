@@ -5,8 +5,14 @@ by the provisioner (`scripts/run-remote-provision.sh --stages coolify`, see
 [00. Quickstart](00-quickstart.md)). It installs the pinned Coolify release
 with the official installer, creates the first admin from OpenBao-backed
 `ROOT_*` values, configures the FQDN, tightens the firewall, and runs a
-domain smoke test. Onboarding (server + project) is a one-time UI walkthrough;
-the live instance completed it 2026-09-14.
+domain smoke test. Onboarding is fully noninteractive: the provisioner
+reconciles a default project + production environment in `coolify-db`
+(idempotent SQL, existing projects untouched), gates on admin +
+reachable localhost + project + environment, and the runner then executes
+`scripts/verify-coolify-onboarding.sh` (read-only, fail closed) — the
+coolify stage cannot finish while onboarding remains incomplete. No
+dashboard click participates (the preserved instance's `context-fabric`
+project predates this automation and is preserved as-is).
 
 ## 1. Automated path (primary)
 
@@ -17,7 +23,8 @@ What the Coolify stage does and verifies:
 - First admin (`ksonny4@gmail.com`) via `ROOT_USERNAME/ROOT_USER_EMAIL/
   ROOT_USER_PASSWORD` from OpenBao (generated + escrowed when absent).
 - Instance URL `https://coolify.<zone>`; direct dashboard ports
-  (8000/6001/6002) closed after the domain serves; 80/443 reachable.
+  (8000/6001/6002) closed after the domain serves; origin 80/443 denied
+  (tunnel-only; 80/443 serve at the Cloudflare edge, never at origin).
 - `localhost` server reachable and validated (Coolify manages it over SSH;
   root key login required — provided by the bootstrap stage).
 - `APP_KEY` escrowed to OpenBao (`COOLIFY_ADMIN`); never in Git.

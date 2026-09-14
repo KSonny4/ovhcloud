@@ -1,46 +1,46 @@
 {
   "rehearsal": "ovh-coolify-fresh-environment",
   "dry_run": true,
-  "git_head": "4b70eba",
+  "git_head": "e5accca",
   "code_tree_scripts": "39c9988e2d0a686372e145215f11dba2f8a39d72",
   "code_tree_infra": "1b959157286a141638b89f0cfe5e6b9d0aace55b",
-  "started_utc": "2026-09-14T15:30:07Z",
-  "finished_utc": "2026-09-14T15:30:16Z",
+  "started_utc": "2026-09-14T15:50:24Z",
+  "finished_utc": "2026-09-14T15:50:43Z",
   "phases": [
     {
       "phase": "provider_access",
       "status": "pass",
-      "utc": "2026-09-14T15:30:07Z",
+      "utc": "2026-09-14T15:50:24Z",
       "evidence": {}
     },
     {
       "phase": "origin_identity",
       "status": "pass",
-      "utc": "2026-09-14T15:30:07Z",
+      "utc": "2026-09-14T15:50:25Z",
       "evidence": {}
     },
     {
       "phase": "terraform_gates",
       "status": "pass",
-      "utc": "2026-09-14T15:30:11Z",
+      "utc": "2026-09-14T15:50:33Z",
       "evidence": {}
     },
     {
       "phase": "guest_ready",
       "status": "pass",
-      "utc": "2026-09-14T15:30:11Z",
+      "utc": "2026-09-14T15:50:34Z",
       "evidence": {}
     },
     {
       "phase": "coolify_ready",
       "status": "pass",
-      "utc": "2026-09-14T15:30:11Z",
+      "utc": "2026-09-14T15:50:34Z",
       "evidence": {}
     },
     {
       "phase": "edge_ready",
       "status": "pass",
-      "utc": "2026-09-14T15:30:11Z",
+      "utc": "2026-09-14T15:50:34Z",
       "evidence": {
         "dryrun_hostnames": "2"
       }
@@ -48,16 +48,16 @@
     {
       "phase": "runner_channel",
       "status": "pass",
-      "utc": "2026-09-14T15:30:15Z",
+      "utc": "2026-09-14T15:50:40Z",
       "evidence": {
         "dryrun_lines": "24",
-        "dryrun_sha256": "04212faa15f1547a1e8a366cc0c35a9a767220c53bebd8472217c58911ff6469"
+        "dryrun_sha256": "0c0180635db42ca981519604073e9cfc1866335165ec88646e91aaf06857c607"
       }
     },
     {
       "phase": "backup_ready",
       "status": "pass",
-      "utc": "2026-09-14T15:30:16Z",
+      "utc": "2026-09-14T15:50:42Z",
       "evidence": {
         "topology_assertions": "15",
         "dbflags_present": "16",
@@ -67,19 +67,19 @@
     {
       "phase": "ephemeral_cleanup",
       "status": "pass",
-      "utc": "2026-09-14T15:30:16Z",
+      "utc": "2026-09-14T15:50:42Z",
       "evidence": {}
     },
     {
       "phase": "no_plaintext_secrets",
       "status": "pass",
-      "utc": "2026-09-14T15:30:16Z",
+      "utc": "2026-09-14T15:50:42Z",
       "evidence": {}
     },
     {
       "phase": "context_graph",
       "status": "pass",
-      "utc": "2026-09-14T15:30:16Z",
+      "utc": "2026-09-14T15:50:43Z",
       "evidence": {}
     }
   ]
