@@ -374,6 +374,36 @@ done
 note_evidence backup_ready dbflags_present=16
 note_evidence backup_ready dbflags_absent=4
 log 'database flag builder proven offline (topology restored; fresh credential + pgdata mount omitted).'
+# Recreate credential resolution, executed with stubbed bao (no network,
+# no SSH): explicit flag wins, escrowed entry reused, else generated +
+# escrowed — and the value never reaches stdout in any mode.
+mkdir -p /tmp/rehearsal-bin
+cat > /tmp/rehearsal-bin/bao <<'STUBEOF'
+#!/usr/bin/env bash
+if [ "$1" = 'kv' ] && [ "$2" = 'get' ]; then
+  if [ -n "${STUB_BAO_PW:-}" ]; then printf '%s' "$STUB_BAO_PW"; else exit 1; fi
+elif [ "$1" = 'kv' ] && [ "$2" = 'put' ]; then
+  printf '%s\n' "$*" >> /tmp/rehearsal-bao-puts.log; exit 0
+else exit 1; fi
+STUBEOF
+chmod +x /tmp/rehearsal-bin/bao
+res_out="$(PATH="/tmp/rehearsal-bin:$PATH" bash scripts/recreate-workload.sh demo --db-password explicit-test-pw --resolve-only 2>&1 || true)"
+printf '%s' "$res_out" | grep -q 'explicit-flag' || { echo 'credential resolution ignores explicit flag.' >&2; exit 1; }
+res_out="$(STUB_BAO_PW=reused-test-pw PATH="/tmp/rehearsal-bin:$PATH" bash scripts/recreate-workload.sh demo --resolve-only 2>&1 || true)"
+printf '%s' "$res_out" | grep -q 'reused OpenBao' || { echo 'credential resolution ignores escrowed entry.' >&2; exit 1; }
+rm -f /tmp/rehearsal-bao-puts.log
+res_out="$(STUB_BAO_PW='' PATH="/tmp/rehearsal-bin:$PATH" bash scripts/recreate-workload.sh demo --resolve-only 2>&1 || true)"
+printf '%s' "$res_out" | grep -q 'generated + escrowed' || { echo 'credential generation path broken.' >&2; exit 1; }
+grep -q 'COOLIFY_WORKLOAD_DEMO' /tmp/rehearsal-bao-puts.log || { echo 'generation escrows to wrong path.' >&2; exit 1; }
+[ "$(printf '%s\n' "$res_out" | grep -c .)" -eq 1 ] || { echo 'resolution leaks extra output (possible secret).' >&2; exit 1; }
+rm -rf /tmp/rehearsal-bin /tmp/rehearsal-bao-puts.log
+log 'recreate credential resolution proven: explicit > escrowed reuse > generate+escrow, value never on stdout.'
+# Rollback accepts the env credential and reports its source in dry-run.
+env_out="$(APP_DB_PASSWORD=env-test-pw bash scripts/rollback-app-workloads.sh --dry-run 2>&1 || true)"
+printf '%s' "$env_out" | grep -q 'credential source: env' || { echo 'rollback ignores APP_DB_PASSWORD.' >&2; exit 1; }
+no_out="$(env -u APP_DB_PASSWORD bash scripts/rollback-app-workloads.sh --dry-run 2>&1 || true)"
+printf '%s' "$no_out" | grep -q 'credential source: absent' || { echo 'rollback misreports missing credential.' >&2; exit 1; }
+log 'rollback env credential proven: APP_DB_PASSWORD accepted, source reported.'
 bash scripts/ensure-service-token.sh --dry-run
 bash scripts/ensure-service-token.sh --dry-run --ensure-only
 bash scripts/tf-env-from-openbao.sh --dry-run

@@ -31,7 +31,7 @@ while [ "$#" -gt 0 ]; do
     --recreate) recreate="$2"; shift 2 ;;
     --recreate=*) recreate="${1#--recreate=}"; shift ;;
     --self-test-db-flags) self_test_db=1; shift ;;
-    -h|--help) echo 'usage: rollback-app-workloads.sh [--stamp STAMP] [--dry-run] [--recreate NAME] [--self-test-db-flags]'; exit 0 ;;
+    -h|--help) echo 'usage: rollback-app-workloads.sh [--stamp STAMP] [--dry-run] [--recreate NAME] [--db-password PW] [--self-test-db-flags] (PW may also arrive via APP_DB_PASSWORD env)'; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -46,8 +46,13 @@ for v in R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY R2_ENDPOINT R2_BUCKET; do
   if [ -z "${!v:-}" ] && [ "$dry_run" -eq 0 ] && [ "${self_test_db:-0}" -eq 0 ]; then echo "missing ${v}: run through fetch-r2-env.sh -- <this-script>." >&2; exit 2; fi
 done
 
+# Recreate credential precedence: explicit flag wins, then APP_DB_PASSWORD
+# env (operator wrapper supplies it from OpenBao via stdin, never argv),
+# otherwise fail closed at --recreate time (never invented silently).
+if [ -n "${db_password:-}" ]; then pw_source='flag'; elif [ -n "${APP_DB_PASSWORD:-}" ]; then db_password="$APP_DB_PASSWORD"; pw_source='env'; else pw_source='absent'; fi
 if [ "$dry_run" -eq 1 ]; then
   log 'DRY-RUN: resolve stamp (latest manifest when omitted)'
+  log "DRY-RUN: recreate credential source: ${pw_source} (--db-password flag, APP_DB_PASSWORD env, or fail closed)"
   log 'DRY-RUN: --recreate NAME brings the workload back into service (volumes + binds recreated with parity, containers recreated from recorded images, dumps restored with parity, health checked; refuses live targets)'
   log 'DRY-RUN: default probe mode restores each app-database dump into a disposable probe container (createdb-first pg_restore, verify tables + rows, drop probe)'
   log 'DRY-RUN: restore each app-volume and app-bind snapshot into temp dir (verify files present, remove temp)'
@@ -254,11 +259,13 @@ if [ -n "$recreate" ]; then
   [ -z "$clashes" ] || { echo "refusing: live containers match ${recreate}: ${clashes}." >&2; exit 2; }
   vol_clash="$(docker volume ls -q 2>/dev/null | grep -E "^${recreate}-" || true)"
   [ -z "$vol_clash" ] || { echo "refusing: live volumes match ${recreate}: ${vol_clash}." >&2; exit 2; }
-  # The recreated superuser password is operator-supplied (fail closed when
-  # absent): it becomes the live credential, so it must be known, never
-  # invented silently. Pass via environment-backed argv like other stage
-  # secrets; it lives only in transient process state.
-  [ -n "$db_password" ] || { echo '--recreate requires --db-password (the recreated superuser credential).' >&2; exit 2; }
+  # The recreated superuser password arrives via --db-password or
+  # APP_DB_PASSWORD env (the operator wrapper resolves it from OpenBao:
+  # explicit value, reuse of the escrowed per-workload entry, or fresh
+  # generation + escrow — fail closed when absent). It becomes the live
+  # credential, so it must be known, never invented silently; it lives
+  # only in transient process state (stdin-piped env, never argv/disk).
+  [ -n "$db_password" ] || { echo '--recreate requires --db-password or APP_DB_PASSWORD env (the recreated superuser credential; never invented silently).' >&2; exit 2; }
   newpw="$db_password"; db_password=''
   # Volumes first (containers mount them).
   for vkey in $(python3 -c 'import json,sys; print(" ".join(v["key"] for v in json.load(open(sys.argv[1])).get("volumes",[]) if v.get("volume","").startswith(sys.argv[2]+"-")))' "$manifest_json" "$recreate"); do

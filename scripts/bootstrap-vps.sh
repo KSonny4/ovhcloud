@@ -142,6 +142,22 @@ fi
 run sshd -t
 run systemctl restart ssh
 
+# Managed automation channel: the exact environment variables the
+# provisioning/rollback automation ships via stdin-piped env (never argv)
+# must survive sudo (this image has NOPASSWD without SETENV, so -E is
+# ignored). Additive env_keep only; validated before use.
+run install -m 440 /dev/null /etc/sudoers.d/99-automation-env
+if [ "$dry_run" -eq 1 ]; then
+  log 'DRY-RUN: write sudoers automation-channel drop-in + visudo check'
+else
+  cat >/etc/sudoers.d/99-automation-env <<'EOF'
+# Automation secret channel (stdin-piped env, never argv/disk).
+Defaults env_keep += "APP_DB_PASSWORD BOOTSTRAP_TARGET_HOST BOOTSTRAP_SSH_PUBLIC_KEY COOLIFY_TARGET_HOST COOLIFY_DOMAIN COOLIFY_VERSION ROOT_USERNAME ROOT_USER_EMAIL ROOT_USER_PASSWORD TUNNEL_TARGET_HOST TUNNEL_DOMAIN CLOUDFLARED_TUNNEL_TOKEN CF_ACCESS_CLIENT_ID CF_ACCESS_CLIENT_SECRET COOLIFY_SERVICE_TOKEN_CLIENT_ID COOLIFY_SERVICE_TOKEN_CLIENT_SECRET"
+EOF
+  chmod 440 /etc/sudoers.d/99-automation-env
+  visudo -cf /etc/sudoers.d/99-automation-env || { echo 'sudoers drop-in failed validation (fail closed).' >&2; exit 2; }
+fi
+
 if ! swapon --show 2>/dev/null | grep -q .; then
   run fallocate -l "$swap_size" /swapfile
   run chmod 600 /swapfile

@@ -104,6 +104,16 @@ Coverage gate fails closed on undeclared binds or non-Postgres stateful
 images; platform containers (`coolify*` names, `coollabsio/*` images) are
 excluded by design.
 
+Recreation credentials need no operator relay: `scripts/recreate-workload.sh
+NAME` resolves the database superuser password from OpenBao (explicit
+value, reuse of the escrowed `COOLIFY_WORKLOAD_<NAME>` entry, or fresh
+generation + escrow) and delivers it via stdin-piped environment (never
+argv/disk). Redacted application env values (`REDACTED` in the manifest)
+are by design unknown to the backup plane: the recreate run logs the exact
+`container:VAR` re-injection list, and the operator (or the application
+owner) re-injects those values post-restore. Database data, volumes, binds,
+and all non-secret topology restore byte-exact without intervention.
+
 For every deployed app, explicitly answer:
 
 > If this container and VPS disappear right now, where does its irreplaceable state live and how is that state restored?

@@ -105,6 +105,7 @@ if [ "$dry_run" -eq 1 ]; then
   log 'DRY-RUN: verify coolify containers healthy'
   log 'DRY-RUN: verify origin http://127.0.0.1:8000 responds without printing secrets'
   log 'DRY-RUN: escrow Coolify APP_KEY/admin bootstrap metadata to OpenBao by name only'
+  log 'DRY-RUN: wait for onboarding state (admin user + reachable localhost) via read-only coolify-db poll, fail closed on timeout'
   log "DRY-RUN: set instance_settings.fqdn to https://${domain} in coolify-db, restart coolify container, re-verify origin login"
   log 'DRY-RUN: close bootstrap ports with UFW (allow 22/tcp, deny 80/443/8000/8080/6001/6002, default deny incoming) and verify active'
   log "DRY-RUN: domain smoke deployment check https://${domain}/login via service-token headers, require HTTP 200 (fail closed)"
@@ -159,6 +160,25 @@ if [ "$dry_run" -eq 0 ]; then
       echo 'origin did not recover after FQDN change; refusing to continue.' >&2
       exit 1
     fi
+  fi
+fi
+
+# Stage: onboarding-state gate. A fresh install self-registers the localhost
+# server asynchronously; provisioning is NOT complete until the admin user
+# exists and localhost is registered + reachable. Verified here against
+# coolify-db (read-only SQL, no dashboard session), fail closed on timeout.
+if [ "$dry_run" -eq 0 ]; then
+  onboard_state=''
+  for _ in $(seq 1 30); do
+    onboard_state="$(docker exec coolify-db psql -U coolify -d coolify -tAc "SELECT CASE WHEN (SELECT count(*) FROM users)>=1 AND (SELECT count(*) FROM servers WHERE name='localhost' AND COALESCE(unreachable_count,0)=0)>=1 THEN 'READY' ELSE 'WAIT' END;" 2>/dev/null || true)"
+    [ "$onboard_state" = 'READY' ] && break
+    sleep 10
+  done
+  if [ "$onboard_state" = 'READY' ]; then
+    log 'onboarding state ready: admin user exists, localhost registered + reachable (verified without dashboard).'
+  else
+    echo 'onboarding state not ready after 5 minutes (admin user or reachable localhost missing); refusing to continue.' >&2
+    exit 1
   fi
 fi
 

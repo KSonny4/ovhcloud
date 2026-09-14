@@ -9,7 +9,7 @@ This plan is the machine-readable handoff for the runbooks in this repository. I
 | Requirement / source | Finding | Implemented change | Status / remaining gate |
 | --- | --- | --- | --- |
 | `README.md:19-37`, `docs/00-quickstart.md:7-12` | OVH VPS origin with Ubuntu, Docker and Coolify; Cloudflare DNS/edge, Tunnel/Access and R2 | Terraform models the OVH VPS and Cloudflare resources; runbooks remain the host/application procedure | Live: reconciled, plan converges with no changes |
-| `README.md:61-105`, `docs/02-host-bootstrap.md:76-211` | Steady state is public 80/443, key-only SSH and Cloudflare Tunnel + Access administration | Terraform models the admin tunnel and access policy; host hardening remains an explicit post-bootstrap gate | Ready after tunnel/Access verification |
+| `README.md`, `docs/02-host-bootstrap.md` | Steady state is tunnel-only (no public web ports), key-only SSH and Cloudflare Tunnel + Access administration | Terraform models the admin tunnel and access policy; host hardening remains an explicit post-bootstrap gate | DONE 2026-09-14: UFW denies 80/443, dashboard 200 via Tunnel, no public listeners |
 | `docs/04-cloudflare.md:13-64`, `docs/07-omniroute.md:95-116` | Cloudflare is the public edge; API clients must not be forced through interactive Access | DNS, tunnel, private R2 and admin Access are represented in IaC; application API authentication stays in Coolify/OmniRoute | Ready; API auth is application-owned |
 | `docs/05-backup-recovery.md`, `docs/07-omniroute.md:134-189` | Recovery depends on R2, Coolify `APP_KEY`, application keys and tested restores | Secret inventory, encrypted-state requirement, backup/restore gates and rollback are now explicit | DONE 2026-09-14: probe + three destroyed-and-restored live proofs (`RESTORE_OK`, byte-identical, `CONNECT_OK`); see `docs/08-iac-redesign-evidence.md` |
 | `docs/03-coolify.md:157` vs README and docs 02/04 | One stale Tailscale reference contradicted the Cloudflare admin baseline | The Tailscale reference is replaced with Cloudflare Tunnel + Access | Resolved |
@@ -28,7 +28,7 @@ Cloudflare DNS + proxy/TLS (exclusive public edge)
   └── private R2 bucket   <- Coolify/database/volume backups (Terraform + probe)
 
 OVH VPS vps-1525c977.vps.ovh.net (Ubuntu 26.04 live; fresh bootstrap supports 24.04/26.04)
-  ├── public steady-state ports: 80/443
+  ├── public web ports: none (UFW deny 80/443; all traffic via Cloudflare Tunnel)
   ├── administration: outbound cloudflared + Access
   └── OmniRoute: one replica, private Redis, persistent /app/data, internal :20128
 ```
@@ -93,7 +93,7 @@ The authorized operator must provide a Cloudflare-managed zone and decide whethe
 6. Apply Cloudflare DNS, Tunnel/Access and private R2 resources only after authorization.
 7. Follow the bootstrap runbook: Ubuntu hardening, Cloudflare Tunnel health, dashboard HTTPS, closure of bootstrap ports, Coolify smoke deployment, backups and restore proof.
 8. For risky changes, verify recent R2/DB backups and an OVH recovery path first. Roll back by restoring the prior Terraform state/configuration and DNS records, or by using the tested Coolify/volume restore procedure; use an OVH snapshot only as a temporary pre-change rollback point.
-9. After any apply or recovery, run `bash scripts/healthcheck.sh`, verify 80/443 and the admin Tunnel, and record the evidence in the issue/status table.
+9. After any apply or recovery, run `bash scripts/healthcheck.sh`, verify the admin Tunnel + dashboard 200 + absence of public web listeners, and record the evidence in the issue/status table.
 
 ## Verification commands
 

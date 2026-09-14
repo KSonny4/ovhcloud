@@ -108,10 +108,15 @@ A human must authorize any `terraform apply`.
     `sudo bash /root/coolify-backup/fetch-r2-env.sh -- bash /root/coolify-backup/rollback-coolify-backup.sh`
   - application probe restore:
     `sudo bash /root/coolify-backup/fetch-r2-env.sh -- bash /root/coolify-backup/rollback-app-workloads.sh [--stamp STAMP]`
-  - bring a destroyed workload back into service (refuses live targets):
-    `sudo bash /root/coolify-backup/fetch-r2-env.sh -- bash /root/coolify-backup/rollback-app-workloads.sh --recreate NAME --db-password '...'`
+  - bring a destroyed workload back into service (refuses live targets),
+    operator side with OpenBao-backed credential (explicit value, reuse of
+    the escrowed per-workload entry, or fresh generation + escrow — never
+    operator-relayed secrets, never argv/disk):
+    `bash scripts/recreate-workload.sh [--stamp STAMP] NAME [--db-password PW]`
     (volumes/DBs filter by `NAME-` prefix; declared bind paths are host-global
-    and restore wholesale with parity + non-empty refusal)
+    and restore wholesale with parity + non-empty refusal; direct
+    `rollback-app-workloads.sh --recreate` with `--db-password`/`APP_DB_PASSWORD`
+    remains for advanced use)
 - Supported workload contract: PostgreSQL databases, Docker named volumes,
   and `APP_BIND_PATHS` host directories (e.g. SQLite) are backed up; the
   nightly run fails closed listing anything else stateful as a gap.

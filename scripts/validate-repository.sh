@@ -58,7 +58,13 @@ if command -v terraform >/dev/null 2>&1; then
   gate_dir="$(mktemp -d)"
   trap 'rm -rf "$gate_dir"' EXIT
   cp infra/terraform/*.tf "$gate_dir/"
-  run_bounded 120 terraform -chdir="$gate_dir" init -backend=false -input=false
+  # Provider downloads flap (registry 5xx); retry bounded, still fail closed.
+  init_ok=''
+  for _ in 1 2 3; do
+    if run_bounded 120 terraform -chdir="$gate_dir" init -backend=false -input=false; then init_ok=1; break; fi
+    sleep 15
+  done
+  [ -n "$init_ok" ] || { echo 'provider init failed after 3 attempts.' >&2; exit 1; }
   run_bounded 120 terraform -chdir="$gate_dir" validate
   rm -rf "$gate_dir"
   trap - EXIT

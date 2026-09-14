@@ -805,3 +805,32 @@
 - `verify-live-reconciliation.sh` green again: 13 resources in state
   (fabric address present), default-refresh plan exit 0; evidence AND the
   prior `collect-live-evidence.sh` output retained in docs/.
+
+## 2026-09-14 — auditor 14:19 round (onboarding, recreate secrets, edge docs)
+
+- Noninteractive onboarding verification: new
+  `scripts/verify-coolify-onboarding.sh` (operator-side, read-only) proves
+  admin user + reachable localhost (`unreachable_count=0`) + project with
+  environment from `coolify-db`, no dashboard session. Live: 5/5 ONBOARD_OK
+  (`ksonny4@gmail.com`, localhost, `context-fabric`/`production`).
+  `provision-coolify.sh` gained an onboarding-state gate (read-only DB poll
+  up to 5 min, fail closed) so fresh installs cannot complete unvalidated.
+- OpenBao-backed recreate credentials: `scripts/recreate-workload.sh`
+  resolves explicit flag > escrowed `COOLIFY_WORKLOAD_<NAME>` reuse >
+  generate + escrow, delivering via stdin-piped env (never argv/disk).
+  `rollback-app-workloads.sh` accepts `APP_DB_PASSWORD` env (flag wins) and
+  reports the credential source in dry-run. Live proof on destroyed
+  `pwproof-*` with zero operator-supplied secrets: generated + escrowed,
+  then reused; volume 1568 files, DB tables=1 rows=2, healthy, CONNECT_OK.
+  All test artifacts purged (host, R2 18 keys incl. the 142625Z run set,
+  escrow entry + tombstone). User `fabric-*` data (125219Z set) untouched.
+- Secret channel root-caused: `sudo -E` is ignored on this image (NOPASSWD
+  without SETENV), so stdin-piped env AND the runner's base64 blob were
+  stripped at sudo — proven live (`blob-len=0`). Fix: managed
+  `/etc/sudoers.d/99-automation-env` (`env_keep` for the exact 16 channel
+  vars, `visudo -cf` validated), installed on the preserved host by
+  recorded admin action and added to `bootstrap-vps.sh` for fresh hosts.
+  Channel re-proven end to end (`chain-len=9` through fetch wrapper).
+- Edge docs reconciled to tunnel-only: README port table + principles,
+  deployment-plan topology/verification/evidence rows. 05 documents the
+  wrapper + by-design redacted re-injection list.
