@@ -120,18 +120,24 @@ else
   else
     echo 'WARNING: origin dashboard did not answer on http://127.0.0.1:8000/login.' >&2
   fi
+  # APP_KEY escrow: attempted here when bao exists on the target, but the
+  # authoritative escrow is operator-side (the runner fetches the key over
+  # SSH and escrows it, failing closed). A fresh host has no bao CLI, so a
+  # missing bao here is expected (runner-owned), while a missing key or a
+  # failed write with bao present is a hard failure.
   if command -v bao >/dev/null 2>&1 && [ -n "${BAO_ADDR:-}" ]; then
     app_key="$(grep -E '^APP_KEY=' /data/coolify/source/.env 2>/dev/null | cut -d= -f2- || true)"
     if [ -z "$app_key" ]; then
-      echo 'WARNING: APP_KEY not found in /data/coolify/source/.env; escrow skipped.' >&2
-    else
-      # bao kv put takes KEY=VALUE as arguments; stdin `-` is a single value,
-      # not a kv map, so values are passed as args (never written to disk).
-      bao kv put -mount=secret projects/ovhcloud/COOLIFY_ADMIN "app_key=${app_key}" "email=${ROOT_USER_EMAIL:-}" >/dev/null
-      log 'escrowed Coolify APP_KEY + admin email to secret/projects/ovhcloud/COOLIFY_ADMIN (value not printed)'
+      echo 'APP_KEY not found in /data/coolify/source/.env; cannot escrow (fail closed).' >&2
+      exit 2
     fi
+    # bao kv put takes KEY=VALUE as arguments; stdin `-` is a single value,
+    # not a kv map, so values are passed as args (never written to disk).
+    bao kv put -mount=secret projects/ovhcloud/COOLIFY_ADMIN "app_key=${app_key}" "email=${ROOT_USER_EMAIL:-}" >/dev/null \
+      || { echo 'APP_KEY escrow write failed (fail closed).' >&2; exit 2; }
+    log 'escrowed Coolify APP_KEY + admin email to secret/projects/ovhcloud/COOLIFY_ADMIN (value not printed)'
   else
-    echo 'WARNING: bao/BAO_ADDR unavailable; APP_KEY escrow must be completed by the runner.' >&2
+    log 'bao unavailable on target; APP_KEY escrow is runner-owned (fail closed there).'
   fi
 fi
 

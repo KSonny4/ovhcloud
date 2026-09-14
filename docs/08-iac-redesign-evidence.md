@@ -230,3 +230,25 @@
   `coolify.${zone}` derived once and used for FQDN, ingress, DNS, and every
   verification; rehearsal asserts the derived hostname and rejects doubling.
   Runner EXIT trap removes remote stage material on every path (local env too).
+
+## 2026-09-14 — OpenBao-only lifecycle + fail-closed tunnel verification (audit round)
+
+- New `scripts/ensure-service-token.sh` (operator side): reads the Cloudflare
+  admin token only from OpenBao, ensures the machine service token exists
+  (creates when absent, `--rotate` on demand), escrows
+  client_id/client_secret/token_id/duration to
+  `COOLIFY_ACCESS_SERVICE_TOKEN`, and proves the escrowed pair with an exact
+  HTTP 200 — every stage fail-closed. Secrets stay in python memory/env, never
+  shell vars, args, or disk. Proven live (existing token + escrow read +
+  HTTP 200, zero mutation). Notable find: Cloudflare bot management rejects
+  the default Python-urllib UA (403), so the checker identifies honestly.
+- Runner now generates the bootstrap password (openssl) and escrows the full
+  bootstrap record to `COOLIFY_ADMIN_BOOTSTRAP` when operator values are
+  absent (fail closed on escrow failure); authoritative APP_KEY escrow moved
+  operator-side (fresh hosts have no bao CLI) with fail-closed fetch+write.
+- `configure-tunnel-access.sh` hardened: owned systemd unit + 0600
+  `--token-file` (token never a command argument — the preserved host already
+  runs exactly this layout, verified: `--token-file` in ps, 0600 root file);
+  `systemctl is-active` failure is fatal (no `|| true`); verification requires
+  exactly HTTP 200 (302 = rejection, fatal). Rehearsal asserts 200-only,
+  no redirect tolerance, no health suppression, plus the lifecycle dry-run.
