@@ -136,6 +136,22 @@ svc_secret="$(bao kv get -field=client_secret secret/projects/ovhcloud/COOLIFY_A
 svc_token_id="$(bao kv get -field=token_id secret/projects/ovhcloud/COOLIFY_ACCESS_SERVICE_TOKEN 2>/dev/null || true)"
 [ -n "$admin" ] && [ -n "$svc_id" ] && [ -n "$svc_secret" ] && [ -n "$svc_token_id" ] || { echo 'OpenBao escrow incomplete (admin + service-token triple required).' >&2; exit 2; }
 api() { curl -sS --max-time 30 -H "Authorization: Bearer ${admin}" "$@"; }
+# Fail-closed envelope read: transport failure, empty body, bad JSON, or
+# "success":false all exit 2 BEFORE any caller can mistake absence for
+# emptiness (a failed ingress/DNS/app/policy read must never trigger a
+# create/overwrite on incomplete state). Prints the raw body on success.
+api_must() {
+  local body
+  body="$(curl -sS --max-time 30 -H "Authorization: Bearer ${admin}" "$1" 2>/dev/null)" || { echo "Cloudflare API transport failed, refusing (fail closed): $1." >&2; exit 2; }
+  [ -n "$body" ] || { echo "Cloudflare API empty response, refusing (fail closed): $1." >&2; exit 2; }
+  printf '%s' "$body" | python3 -c 'import json,sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    sys.exit(1)
+sys.exit(0 if d.get("success") is True else 1)' 2>/dev/null || { echo "Cloudflare API error (bad JSON or success=false), refusing (fail closed): $1." >&2; exit 2; }
+  printf '%s' "$body"
+}
 apost() { curl -sS --max-time 30 -X POST -H "Authorization: Bearer ${admin}" -H 'Content-Type: application/json' "$@"; }
 acct="$CLOUDFLARE_ACCOUNT_ID"; zone="$CLOUDFLARE_ZONE_ID"; tid="$TUNNEL_ID"
 target="${tid}.cfargotunnel.com"
@@ -151,7 +167,7 @@ if [ "${verify_only:-0}" -eq 0 ]; then
 # the fetched config, so unrelated existing routes are never discarded).
 wanted_args=()
 for host in $hostnames; do wanted_args+=("${host}=$(service_for "$host")"); done
-current_ingress="$(api "https://api.cloudflare.com/client/v4/accounts/${acct}/cfd_tunnel/${tid}/configurations" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(json.dumps(d.get("result",{}).get("config",{}).get("ingress",[])))' 2>/dev/null || echo '[]')"
+current_ingress="$(api_must "https://api.cloudflare.com/client/v4/accounts/${acct}/cfd_tunnel/${tid}/configurations" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(json.dumps(d.get("result",{}).get("config",{}).get("ingress",[])))' || { echo 'ingress read failed to parse (fail closed).' >&2; exit 2; })"
 if ingress_covers "$current_ingress" "${wanted_args[@]}"; then
   log 'ingress already routes all hostnames; no PUT.'
 else
@@ -163,7 +179,7 @@ fi
 
 # --- 2+3. per-hostname DNS + Access app/policies ---
 for host in $hostnames; do
-  existing="$(api "https://api.cloudflare.com/client/v4/zones/${zone}/dns_records?type=CNAME&name=${host}" | python3 -c 'import json,sys; r=json.load(sys.stdin).get("result",[]); print((r[0].get("id","") + " " + r[0].get("content","")) if r else "")' || true)"
+  existing="$(api_must "https://api.cloudflare.com/client/v4/zones/${zone}/dns_records?type=CNAME&name=${host}" | python3 -c 'import json,sys; r=json.load(sys.stdin).get("result",[]); print((r[0].get("id","") + " " + r[0].get("content","")) if r else "")' || { echo "DNS read failed for ${host} (fail closed)." >&2; exit 2; })"
   dns_id=''
   if [ "$existing" = "" ]; then
     resp="$(mktemp)"; trap 'rm -f "$resp"' EXIT
@@ -183,7 +199,7 @@ for host in $hostnames; do
   fi
   # Access app (idempotent by domain) + two policies (idempotent by name).
   if [ "$host" = "$EDGE_HOSTNAME" ]; then app_name="Coolify Dashboard"; else app_name="Coolify SSH Administration"; fi
-  app_id="$(api "https://api.cloudflare.com/client/v4/accounts/${acct}/access/apps?domain=${host}" | python3 -c 'import json,sys; r=json.load(sys.stdin).get("result",[]); print(r[0].get("id","") if r else "")')"
+  app_id="$(api_must "https://api.cloudflare.com/client/v4/accounts/${acct}/access/apps?domain=${host}" | python3 -c 'import json,sys; r=json.load(sys.stdin).get("result",[]); print(r[0].get("id","") if r else "")' || { echo "Access app read failed for ${host} (fail closed)." >&2; exit 2; })"
   if [ -z "$app_id" ]; then
     app_id="$(apost -d '{"name":"'"${app_name}"'","domain":"'"${host}"'","type":"self_hosted","session_duration":"24h","auto_redirect_to_identity":false,"allowed_idps":[],"enable_binding_cookie":true}' "https://api.cloudflare.com/client/v4/accounts/${acct}/access/apps" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("result",{}).get("id",""))')"
     [ -n "$app_id" ] || { echo "Access app creation failed for ${host} (fail closed)." >&2; exit 2; }
@@ -193,7 +209,7 @@ for host in $hostnames; do
   fi
   policy_ids='[]'
   for pname in 'Allow machine service token' 'Allow ksonny4@gmail.com'; do
-    pid="$(api "https://api.cloudflare.com/client/v4/accounts/${acct}/access/apps/${app_id}/policies" | python3 -c 'import json,sys; print(next((p["id"] for p in json.load(sys.stdin).get("result",[]) if p.get("name")=="'"${pname}"'"),""))')"
+    pid="$(api_must "https://api.cloudflare.com/client/v4/accounts/${acct}/access/apps/${app_id}/policies" | python3 -c 'import json,sys; print(next((p["id"] for p in json.load(sys.stdin).get("result",[]) if p.get("name")=="'"${pname}"'"),""))' || { echo "Access policy read failed for ${host} (fail closed)." >&2; exit 2; })"
     if [ -z "$pid" ]; then
       if [ "$pname" = 'Allow machine service token' ]; then
         # non_identity mirrors the Terraform convention (see infra/terraform/main.tf).
@@ -242,7 +258,7 @@ fi
 fi  # skip_verify=0: readiness gate (connector must already run)
 
 if [ -n "$handoff_file" ]; then
-  tunnel_name="${TUNNEL_NAME:-$(api "https://api.cloudflare.com/client/v4/accounts/${acct}/cfd_tunnel/${tid}" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("result",{}).get("name",""))')}"
+  tunnel_name="${TUNNEL_NAME:-$(api_must "https://api.cloudflare.com/client/v4/accounts/${acct}/cfd_tunnel/${tid}" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("result",{}).get("name",""))' || { echo 'tunnel read failed to parse (fail closed).' >&2; exit 2; })}"
   [ -n "$tunnel_name" ] || { echo 'tunnel name unresolvable for handoff (fail closed).' >&2; exit 2; }
   python3 -c 'import json,sys; print(json.dumps({"tunnel_id": sys.argv[1], "tunnel_name": sys.argv[2], "routes": json.loads(sys.argv[3])}))' "$tid" "$tunnel_name" "$handoff_routes" >"$handoff_file"
   log "handoff written to ${handoff_file} (feed to scripts/emit-fresh-imports.sh)."

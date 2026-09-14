@@ -238,11 +238,77 @@ grep -q 'TUNNEL_SECRET_PATH=' scripts/run-remote-provision.sh || { echo 'runner 
 grep -q "coolify-admin'" scripts/run-remote-provision.sh || { echo 'runner omits preserved-tunnel-name refusal.' >&2; exit 1; }
 if grep -n 'bao_get COOLIFY_TUNNEL_TOKEN' scripts/run-remote-provision.sh | grep -q .; then echo 'runner still consumes the preserved tunnel singleton.' >&2; exit 1; fi
 grep -q 'TUNNEL_SECRET_PATH' scripts/ensure-tunnel.sh || { echo 'ensure-tunnel omits per-target secret path.' >&2; exit 1; }
-# OVH authorization boundary: no script may read the local OVH credential file; OVH_* must come
+# OVH authorization boundary: no script may touch the AMBIENT credential
+# file (~/.ovh.conf or an unredirected $HOME read); the only permitted
+# .ovh.conf is the throwaway explicit config inside ovh_cli. OVH_* come
 # from the OpenBao OVH_API escrow.
-if grep -rn '\.ovh\.conf' scripts/*.sh scripts/lib/*.sh 2>/dev/null | grep -v 'rehearse-fresh-environment.sh' | grep -q .; then echo 'a script still depends on the local OVH credential file.' >&2; exit 1; fi
+if grep -rnE '~/\.ovh\.conf|\$HOME/\.ovh\.conf|\${HOME}/\.ovh\.conf' scripts/*.sh scripts/lib/*.sh 2>/dev/null | grep -v 'rehearse-fresh-environment.sh' | grep -vE ':[0-9]+:#' | grep -q .; then echo 'a script still depends on the ambient OVH credential file.' >&2; exit 1; fi
+grep -q 'tmp_home}/\.ovh\.conf' scripts/lib/preserved-guard.sh || { echo 'ovh_cli lost its explicit config path.' >&2; exit 1; }
 grep -q 'OVH_API' scripts/tf-env-from-openbao.sh || { echo 'loader omits the OVH_API escrow.' >&2; exit 1; }
 grep -q 'export OVH_APPLICATION_KEY' scripts/tf-env-from-openbao.sh scripts/run-remote-provision.sh || { echo 'OVH_* env emission missing.' >&2; exit 1; }
+# Executed OVH channel proof (stubbed ovhcloud, no network): without
+# OpenBao-derived env the CLI is never invoked (no ambient read, fallback
+# identity only); with env it runs under a throwaway HOME whose config
+# carries exactly the supplied values; missing credentials fail closed.
+mkdir -p /tmp/rehearsal-ovhbin
+cat > /tmp/rehearsal-ovhbin/ovhcloud <<'STUBEOF'
+#!/usr/bin/env bash
+printf 'HOME=%s\n' "$HOME" >> /tmp/rehearsal-ovh-calls.log
+if [ -f "$HOME/.ovh.conf" ]; then cat "$HOME/.ovh.conf" >> /tmp/rehearsal-ovh-calls.log; fi
+printf '[{"ipAddress": "203.0.113.9"}]\n'
+STUBEOF
+chmod +x /tmp/rehearsal-ovhbin/ovhcloud
+rm -f /tmp/rehearsal-ovh-calls.log
+no_env_out="$(env -u OVH_ENDPOINT -u OVH_APPLICATION_KEY -u OVH_APPLICATION_SECRET -u OVH_CONSUMER_KEY PATH="/tmp/rehearsal-ovhbin:$PATH" bash -c 'source scripts/lib/preserved-guard.sh; _preserved_ip_set' 2>&1)"
+[ -f /tmp/rehearsal-ovh-calls.log ] && { echo 'guard invoked ovhcloud without OpenBao-derived credentials (ambient read possible).' >&2; exit 1; }
+# (log file absent is the pass condition; output must be fallback-only.)
+printf '%s' "$no_env_out" | grep -q '57.129.155.203' || { echo 'guard fallback identity missing.' >&2; exit 1; }
+rm -f /tmp/rehearsal-ovh-calls.log
+env_out="$(OVH_ENDPOINT=rehearsal-endpoint OVH_APPLICATION_KEY=rehearsal-ak OVH_APPLICATION_SECRET=rehearsal-as OVH_CONSUMER_KEY=rehearsal-ck PATH="/tmp/rehearsal-ovhbin:$PATH" bash -c 'source scripts/lib/preserved-guard.sh; _preserved_ip_set' 2>&1)"
+[ -f /tmp/rehearsal-ovh-calls.log ] || { echo 'guard skipped the API despite supplied credentials.' >&2; exit 1; }
+grep -q 'HOME=/tmp/ovh-explicit-home' /tmp/rehearsal-ovh-calls.log || { echo 'ovh_cli does not redirect HOME.' >&2; exit 1; }
+for marker in rehearsal-endpoint rehearsal-ak rehearsal-as rehearsal-ck; do grep -q "$marker" /tmp/rehearsal-ovh-calls.log || { echo "explicit config omits ${marker}." >&2; exit 1; }; done
+printf '%s' "$env_out" | grep -q '203.0.113.9' || { echo 'explicit-channel result not used.' >&2; exit 1; }
+if PATH="/tmp/rehearsal-ovhbin:$PATH" bash -c 'source scripts/lib/preserved-guard.sh; ovh_cli vps list' >/dev/null 2>&1; then echo 'ovh_cli succeeds without credentials.' >&2; exit 1; fi
+rm -rf /tmp/rehearsal-ovhbin /tmp/rehearsal-ovh-calls.log
+log 'OVH explicit channel proven: no ambient read, HOME-redirected config, fail closed without credentials.'
+# Runner ordering: OpenBao OVH load must precede the preserved-host guard.
+python3 - <<'PYEOF' || exit 1
+src = open('scripts/run-remote-provision.sh').read().splitlines()
+def idx(pat):
+    hits = [i for i, l in enumerate(src) if pat in l]
+    assert hits, pat
+    return hits[0]
+load_at = idx('  load_ovh_credentials')
+guard_at = idx('refuse_preserved_host "$host"')
+assert load_at < guard_at, 'OVH load must precede guard'
+print('runner OVH order proven: load precedes guard.')
+PYEOF
+# Executed Cloudflare read-failure proof (stubbed bao + curl, no network):
+# transport failure, success=false, and garbage bodies must each exit
+# nonzero with NO create/update call attempted.
+mkdir -p /tmp/rehearsal-cfbin
+cat > /tmp/rehearsal-cfbin/bao <<'STUBEOF'
+#!/usr/bin/env bash
+printf 'dummy-%s' "${3##*=}"
+STUBEOF
+cat > /tmp/rehearsal-cfbin/curl <<'STUBEOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> /tmp/rehearsal-curl-calls.log
+case "${CURL_MODE:-transport}" in
+  transport) exit 7 ;;
+  apifalse) printf '{"success":false,"errors":[{"code":9109}]}' ;;
+  garbage) printf 'not-json-at-all' ;;
+esac
+STUBEOF
+chmod +x /tmp/rehearsal-cfbin/bao /tmp/rehearsal-cfbin/curl
+for mode in transport apifalse garbage; do
+  rm -f /tmp/rehearsal-curl-calls.log
+  if CURL_MODE="$mode" CLOUDFLARE_ACCOUNT_ID=rehearsal CLOUDFLARE_ZONE_ID=rehearsal TUNNEL_ID=rehearsal-tunnel EDGE_HOSTNAME=wire.rehearsal.invalid BAO_ADDR=https://rehearsal.invalid PATH="/tmp/rehearsal-cfbin:$PATH" bash scripts/wire-fresh-edge.sh --skip-verify >/dev/null 2>&1; then echo "wire survives Cloudflare read failure (${mode})." >&2; exit 1; fi
+  if grep -E -- '-X (PUT|POST)' /tmp/rehearsal-curl-calls.log >/dev/null 2>&1; then echo "wire mutated on failed read (${mode})." >&2; exit 1; fi
+done
+rm -rf /tmp/rehearsal-cfbin /tmp/rehearsal-curl-calls.log
+log 'wire read failures proven fail-closed: transport/apifalse/garbage exit nonzero, zero mutations.'
 # First-access determinism gates: key-only minting, destructive reinstall
 # with freshness confirmation, and fail-closed SSH probe with guidance.
 for gate in --generate-key-only --reinstall-with-key --i-confirm-host-is-fresh; do

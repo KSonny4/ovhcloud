@@ -1,5 +1,5 @@
 {
-  "generated_utc": "2026-09-14T14:14:44Z",
+  "generated_utc": "2026-09-14T14:57:37Z",
   "backend": "s3 (R2, encrypted at rest, locked)",
   "plan": "empty (detailed-exitcode 0, default refresh)",
   "preserved_vps_managed": true,

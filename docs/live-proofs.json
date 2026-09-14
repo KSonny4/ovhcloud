@@ -1,5 +1,5 @@
 {
-  "collected_utc": "2026-09-14T14:03:23Z",
+  "collected_utc": "2026-09-14T14:56:41Z",
   "tunnels": [
     {
       "id": "ded07117-a966-4a97-abc3-a93aa3f433b4",
@@ -118,15 +118,20 @@
     }
   ],
   "r2_bucket_objects": {
-    "count": 12,
+    "count": 30,
     "sample_keys": [
       "app-databases/coolify-db-coolify-20260914T125219Z.dump.gz",
+      "app-databases/coolify-db-coolify-20260914T145149Z.dump.gz",
       "app-manifests/20260914T125219Z.json",
-      "app-volumes/134ceb201725467971b4315336c18e727ece68117d28cb61245eab618a6e0fb2-20260914T125219Z.tar.gz",
-      "app-volumes/3d79da30149bc9b37e92b95f9c24c8482f6550418ebce09f2e439a633c946804-20260914T125219Z.tar.gz",
-      "app-volumes/4d49f307e47dcbf71db355936d28ee12b7c7ed349b92841e6acc6d5d3e2c4b33-20260914T125219Z.tar.gz"
+      "app-manifests/20260914T145149Z.json",
+      "app-volumes/134ceb201725467971b4315336c18e727ece68117d28cb61245eab618a6e0fb2-20260914T125219Z.tar.gz"
     ]
   },
-  "vps_containers_running": "9",
-  "host_units": "active active "
+  "vps_containers_running": "10",
+  "host_units": "active active ",
+  "ufw_status": "Status: active\n[ 1] 22/tcp                     ALLOW IN    Anywhere                  \n[ 2] 80/tcp                     DENY IN     Anywhere                  \n[ 3] 443/tcp                    DENY IN     Anywhere                  \n[ 4] 8000/tcp                   DENY IN     Anywhere                  \n[ 5] 8080/tcp                   DENY IN     Anywhere                  \n[ 6] 6001/tcp                   DENY IN     Anywhere                  \n[ 7] 6002/tcp                   DENY IN     Anywhere                  \n[ 8] 22/tcp (v6)                ALLOW IN    Anywhere (v6)             \n[ 9] 80/tcp (v6)                DENY IN     Anywhere (v6)             \n[10] 443/tcp (v6)               DENY IN     Anywhere (v6)             \n[11] 8000/tcp (v6)              DENY IN     Anywhere (v6)             \n[12] 8080/tcp (v6)              DENY IN     Anywhere (v6)             \n[13] 6001/tcp (v6)              DENY IN     Anywhere (v6)             \n[14] 6002/tcp (v6)              DENY IN     Anywhere (v6)             ",
+  "docker_images": "1jrcaodjhs115w8catdr02d3=coollabsio/coolify-helper:1.0.16\ncoolify-db=postgres:15-alpine\ncoolify-proxy=traefik:v3.6\ncoolify-realtime=coollabsio/coolify-realtime:1.0.19\ncoolify-redis=redis:7-alpine\ncoolify-sentinel=coollabsio/sentinel:0.0.22\ncoolify=coollabsio/coolify:4.3.19\nfabric-api-4voakknnfy2e2vah8xt9crnu-143015152486=4voakknnfy2e2vah8xt9crnu_fabric-api:914bca120459ba91c6b7b8fa5e018c0a1034d673\nfabric-neo4j-4voakknnfy2e2vah8xt9crnu-143015179822=neo4j:5.26.0-community\nfabric-postgres-4voakknnfy2e2vah8xt9crnu-143015172534=pgvector/pgvector:0.8.0-pg16",
+  "latest_instance_dump": "coolify-db-20260914T145142Z.dump.gz",
+  "latest_app_manifest": "20260914T145149Z.json",
+  "dump_roundtrip_integrity": "gzip-ok coolify-db-20260914T145142Z.dump.gz"
 }

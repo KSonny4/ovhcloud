@@ -38,12 +38,31 @@ ev_ssh_key="${EVIDENCE_SSH_KEY:-$HOME/.ssh/ovh_coolify_ed25519}"
 ev_ssh_host="${EVIDENCE_SSH_HOST:-ubuntu@57.129.155.203}"
 coolify_status="$(ssh -i "$ev_ssh_key" -o BatchMode=yes -o ConnectTimeout=20 "$ev_ssh_host" 'docker ps --format "{{.Names}} {{.Status}}" 2>/dev/null | grep -cE "Up|healthy" || true')"
 timer_status="$(ssh -i "$ev_ssh_key" -o BatchMode=yes -o ConnectTimeout=20 "$ev_ssh_host" 'systemctl is-active coolify-backup.timer cloudflared 2>&1 | tr "\n" " " || true')"
+# Firewall posture (tunnel-only: 80/443 denied), container image pins, and
+# the post-cleanup reseed stamps (latest instance dump + app manifest keys
+# prove tonight's-plane state without narrative).
+ufw_status="$(ssh -i "$ev_ssh_key" -o BatchMode=yes -o ConnectTimeout=20 "$ev_ssh_host" 'sudo ufw status numbered 2>/dev/null | grep -E "^\[|Status" || true')"
+docker_images="$(ssh -i "$ev_ssh_key" -o BatchMode=yes -o ConnectTimeout=20 "$ev_ssh_host" 'docker ps --format "{{.Names}}={{.Image}}" 2>/dev/null | sort || true')"
+latest_dump="$(AWS_DEFAULT_REGION=auto aws --endpoint-url "$R2_ENDPOINT" s3 ls "s3://${R2_BUCKET}/" 2>/dev/null | awk '{print $4}' | grep '^coolify-db-' | sort | tail -n1 || true)"
+latest_manifest="$(AWS_DEFAULT_REGION=auto aws --endpoint-url "$R2_ENDPOINT" s3 ls "s3://${R2_BUCKET}/app-manifests/" 2>/dev/null | awk '{print $4}' | sort | tail -n1 || true)"
+# Dump round-trip integrity: GET the latest instance dump and verify gzip
+# integrity (proves the R2 GET path + backup usability, machine-checked).
+dump_integrity='missing'
+if [ -n "$latest_dump" ]; then
+  tmp_dump="$(mktemp /tmp/evidence-dump.XXXXXX.gz)"
+  if AWS_DEFAULT_REGION=auto aws --endpoint-url "$R2_ENDPOINT" s3api get-object --bucket "$R2_BUCKET" --key "${latest_dump}" "$tmp_dump" >/dev/null 2>&1 && gzip -t "$tmp_dump" 2>/dev/null; then
+    dump_integrity="gzip-ok ${latest_dump}"
+  else
+    dump_integrity="FAILED ${latest_dump}"
+  fi
+  rm -f "$tmp_dump"
+fi
 
 # JSON travels via argv + json.loads (never interpolated into source:
 # JSON true/false/null are not valid Python literals).
-python3 - "$uts" "$tunnels" "$dns" "$dns_ssh" "$apps" "$r2_objects" "$coolify_status" "$timer_status" >"$out" <<'PYEOF'
+python3 - "$uts" "$tunnels" "$dns" "$dns_ssh" "$apps" "$r2_objects" "$coolify_status" "$timer_status" "$ufw_status" "$docker_images" "$latest_dump" "$latest_manifest" "$dump_integrity" >"$out" <<'PYEOF'
 import json, sys
-_, uts, tunnels, dns, dns_ssh, apps, r2, ncont, units = sys.argv
+_, uts, tunnels, dns, dns_ssh, apps, r2, ncont, units, ufw, images, dump, manifest, integrity = sys.argv
 print(json.dumps({
   "collected_utc": uts,
   "tunnels": json.loads(tunnels or 'null'),
@@ -53,6 +72,11 @@ print(json.dumps({
   "r2_bucket_objects": json.loads(r2 or 'null'),
   "vps_containers_running": ncont,
   "host_units": units,
+  "ufw_status": ufw,
+  "docker_images": images,
+  "latest_instance_dump": dump,
+  "latest_app_manifest": manifest,
+  "dump_roundtrip_integrity": integrity,
 }, indent=2))
 PYEOF
 unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY TF_VAR_cloudflare_api_token TF_VAR_service_token_id CLOUDFLARE_API_TOKEN OVH_ENDPOINT OVH_APPLICATION_KEY OVH_APPLICATION_SECRET OVH_CONSUMER_KEY R2_ENDPOINT R2_BUCKET 2>/dev/null || true

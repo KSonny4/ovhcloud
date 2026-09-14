@@ -50,6 +50,20 @@ while [ "$#" -gt 0 ]; do
 done
 
 log() { printf '%s\n' "$*"; }
+# Loads OVH_API from OpenBao into the ovh_cli channel variables (exported
+# only when ALL four fields are present; a partial escrow exports nothing
+# so no half-credentialed call is possible). Called before the
+# preserved-host guard on live runs; dry-run never touches OpenBao.
+load_ovh_credentials() {
+  local ak ash ck ep
+  ak="$(bao kv get -field=application_key secret/projects/ovhcloud/OVH_API 2>/dev/null || true)"
+  ash="$(bao kv get -field=application_secret secret/projects/ovhcloud/OVH_API 2>/dev/null || true)"
+  ck="$(bao kv get -field=consumer_key secret/projects/ovhcloud/OVH_API 2>/dev/null || true)"
+  ep="$(bao kv get -field=endpoint secret/projects/ovhcloud/OVH_API 2>/dev/null || true)"
+  if [ -n "$ak" ] && [ -n "$ash" ] && [ -n "$ck" ] && [ -n "$ep" ]; then
+    export OVH_ENDPOINT="$ep" OVH_APPLICATION_KEY="$ak" OVH_APPLICATION_SECRET="$ash" OVH_CONSUMER_KEY="$ck"
+  fi
+}
 run() {
   if [ "$dry_run" -eq 1 ]; then
     log "DRY-RUN: $*"
@@ -92,6 +106,14 @@ fi
 GUARD_SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=scripts/lib/preserved-guard.sh
 source "${GUARD_SCRIPT_DIR}/lib/preserved-guard.sh"
+# OVH authorization precedes every ovhcloud touch: live runs load the
+# OpenBao-derived channel BEFORE the guard (fail closed on bao errors via
+# set -e); dry-run never touches OpenBao, so the guard makes no API call
+# and decides on service name + embedded fallback addresses.
+if [ "$dry_run" -eq 0 ]; then
+  export BAO_ADDR="$bao_addr"
+  load_ovh_credentials
+fi
 refuse_preserved_host "$host" || exit 2
 # SSH credentials are OpenBao-managed: a supplied key is used as-is, otherwise
 # the runner generates an ed25519 pair and escrows both halves (fail closed).
@@ -143,18 +165,16 @@ fi
 key_fingerprint="$(ssh-keygen -lf "$ssh_pub_file" 2>/dev/null | awk '{print $2}' | tr -cd 'a-zA-Z0-9' | cut -c1-16 | tr '[:upper:]' '[:lower:]')"
 if [ -z "$key_fingerprint" ]; then echo 'cannot fingerprint the SSH public key.' >&2; exit 2; fi
 # OVH authorization arrives ONLY from OpenBao (OVH_API entry) via environment;
-# The local OVH credential file is never read (see the rehearsal gate). Missing escrow fails
+# the ambient OVH credential file is never read: every ovhcloud invocation
+# goes through ovh_cli (explicit HOME-redirected config), and the guard
+# makes no API call at all without these variables. Missing escrow fails
 # closed when a generated key would be stranded; a supplied key stays
 # operator-distributed.
-ovh_ak="$(bao kv get -field=application_key secret/projects/ovhcloud/OVH_API 2>/dev/null || true)"
-ovh_as="$(bao kv get -field=application_secret secret/projects/ovhcloud/OVH_API 2>/dev/null || true)"
-ovh_ck="$(bao kv get -field=consumer_key secret/projects/ovhcloud/OVH_API 2>/dev/null || true)"
-ovh_ep="$(bao kv get -field=endpoint secret/projects/ovhcloud/OVH_API 2>/dev/null || true)"
-if [ -n "$ovh_ak" ] && [ -n "$ovh_as" ] && [ -n "$ovh_ck" ] && [ -n "$ovh_ep" ]; then
+# OVH channel state (exported by load_ovh_credentials before the guard on
+# live runs; prepare reuses the same variables, never re-reads escrow).
+if [ -n "${OVH_ENDPOINT:-}" ] && [ -n "${OVH_APPLICATION_KEY:-}" ] && [ -n "${OVH_APPLICATION_SECRET:-}" ] && [ -n "${OVH_CONSUMER_KEY:-}" ]; then
   OVH_KEY_NAME="ovh-coolify-${key_fingerprint}"
   export OVH_KEY_NAME OVH_PUB_FILE="$ssh_pub_file"
-  export OVH_ENDPOINT="$ovh_ep" OVH_APPLICATION_KEY="$ovh_ak" OVH_APPLICATION_SECRET="$ovh_as" OVH_CONSUMER_KEY="$ovh_ck"
-  ovh_ak=''; ovh_as=''; ovh_ck=''
   python3 - <<'PY'
 import hashlib, json, os, sys, time, urllib.request, urllib.error
 try:
@@ -286,25 +306,21 @@ if [ "$reinstall_with_key" -eq 1 ]; then
     echo "Refusing: reinstall target is the preserved OVH service ${PRESERVED_SERVICE_NAME}." >&2
     exit 2
   fi
-  command -v ovhcloud >/dev/null 2>&1 || { echo 'ovhcloud CLI is required for reinstall mode.' >&2; exit 2; }
-  # Reinstall authenticates the CLI from OpenBao escrow (never a local file).
-  OVH_ENDPOINT="$(bao kv get -field=endpoint secret/projects/ovhcloud/OVH_API 2>/dev/null || true)"
-  OVH_APPLICATION_KEY="$(bao kv get -field=application_key secret/projects/ovhcloud/OVH_API 2>/dev/null || true)"
-  OVH_APPLICATION_SECRET="$(bao kv get -field=application_secret secret/projects/ovhcloud/OVH_API 2>/dev/null || true)"
-  OVH_CONSUMER_KEY="$(bao kv get -field=consumer_key secret/projects/ovhcloud/OVH_API 2>/dev/null || true)"
-  export OVH_ENDPOINT OVH_APPLICATION_KEY OVH_APPLICATION_SECRET OVH_CONSUMER_KEY
-  if [ -z "$OVH_APPLICATION_KEY" ] || [ -z "$OVH_APPLICATION_SECRET" ] || [ -z "$OVH_CONSUMER_KEY" ]; then
+  # Reinstall authenticates through ovh_cli (OpenBao escrow via an explicit
+  # HOME-redirected config; the ambient file is never read, fail closed).
+  load_ovh_credentials
+  if [ -z "${OVH_APPLICATION_KEY:-}" ] || [ -z "${OVH_APPLICATION_SECRET:-}" ] || [ -z "${OVH_CONSUMER_KEY:-}" ] || [ -z "${OVH_ENDPOINT:-}" ]; then
     echo 'OVH_API escrow incomplete in OpenBao; cannot reinstall (fail closed).' >&2
     exit 2
   fi
   image_id="${PROVISION_IMAGE_ID:-}"
   if [ -z "$image_id" ]; then
     log 'resolving newest Ubuntu LTS image for the service...'
-    image_id="$(ovhcloud vps image list "$ovh_service" -o json 2>/dev/null | python3 -c 'import json,sys; imgs=[i for i in json.load(sys.stdin) if "Ubuntu" in str(i)]; print(sorted(imgs, key=lambda i: str(i.get("name",""), reverse=True))[0]["id"] if imgs else "")' || true)"
+    image_id="$(ovh_cli vps image list "$ovh_service" -o json | python3 -c 'import json,sys; imgs=[i for i in json.load(sys.stdin) if "Ubuntu" in str(i)]; print(sorted(imgs, key=lambda i: str(i.get("name",""), reverse=True))[0]["id"] if imgs else "")' || true)"
     [ -n "$image_id" ] || { echo 'no Ubuntu image found for the service; set PROVISION_IMAGE_ID explicitly.' >&2; exit 2; }
   fi
   log "reinstalling ${ovh_service} with image ${image_id} + injected SSH key (DESTRUCTIVE, confirmed fresh)..."
-  run ovhcloud vps reinstall "$ovh_service" --image-id "$image_id" --public-ssh-key "$(cat "$ssh_pub_file")" --do-not-send-password --wait
+  run ovh_cli vps reinstall "$ovh_service" --image-id "$image_id" --public-ssh-key "$(cat "$ssh_pub_file")" --do-not-send-password --wait
   log 'reinstall complete; connector key injected at install time.'
 fi
 

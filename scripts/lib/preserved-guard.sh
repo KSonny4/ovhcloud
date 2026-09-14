@@ -24,11 +24,39 @@
 PRESERVED_SERVICE_NAME='vps-1525c977.vps.ovh.net'
 PRESERVED_FALLBACK_IPS='57.129.155.203 2001:41d0:801:2000::3663'
 
+# Explicit OVH CLI channel: every ovhcloud invocation in this repo goes
+# through ovh_cli, which builds a throwaway HOME containing a config written
+# ONLY from OpenBao-derived environment (OVH_ENDPOINT/OVH_APPLICATION_KEY/
+# OVH_APPLICATION_SECRET/OVH_CONSUMER_KEY). The ambient ~/.ovh.conf is never
+# read (HOME redirect), and a missing credential fails closed instead of
+# silently falling back to ambient state.
+ovh_cli() {
+  if [ -z "${OVH_ENDPOINT:-}" ] || [ -z "${OVH_APPLICATION_KEY:-}" ] \
+    || [ -z "${OVH_APPLICATION_SECRET:-}" ] || [ -z "${OVH_CONSUMER_KEY:-}" ]; then
+    echo 'ovh_cli: OpenBao-derived OVH credentials missing from environment (refusing ambient config).' >&2
+    return 2
+  fi
+  command -v ovhcloud >/dev/null 2>&1 || { echo 'ovhcloud CLI is required.' >&2; return 2; }
+  local tmp_home
+  tmp_home="$(mktemp -d /tmp/ovh-explicit-home.XXXXXX)" || return 2
+  printf '[default]\nendpoint=%s\napplication_key=%s\napplication_secret=%s\nconsumer_key=%s\n' \
+    "$OVH_ENDPOINT" "$OVH_APPLICATION_KEY" "$OVH_APPLICATION_SECRET" "$OVH_CONSUMER_KEY" >"${tmp_home}/.ovh.conf"
+  chmod 600 "${tmp_home}/.ovh.conf"
+  local rc=0 out
+  out="$(HOME="$tmp_home" command ovhcloud "$@" 2>/dev/null)" || rc=$?
+  rm -rf "$tmp_home"
+  [ "$rc" -eq 0 ] || return "$rc"
+  printf '%s' "$out"
+}
+
 _preserved_ip_set() {
-  # Prefer the live IP set from the OVH API; fall back to embedded values.
+  # Prefer the live IP set from the OVH API via the explicit channel; when
+  # no OpenBao-derived credentials are present, make NO ovhcloud call and
+  # fall back to embedded values (name matching still applies).
   local ips=''
-  if command -v ovhcloud >/dev/null 2>&1; then
-    ips="$(ovhcloud vps ip list --service-name "$PRESERVED_SERVICE_NAME" --output json 2>/dev/null \
+  if [ -n "${OVH_ENDPOINT:-}" ] && [ -n "${OVH_APPLICATION_KEY:-}" ] \
+    && [ -n "${OVH_APPLICATION_SECRET:-}" ] && [ -n "${OVH_CONSUMER_KEY:-}" ]; then
+    ips="$(ovh_cli vps ip list --service-name "$PRESERVED_SERVICE_NAME" --output json \
       | python3 -c 'import json,sys
 try:
     d = json.load(sys.stdin)

@@ -13,9 +13,9 @@
 #   ADMIN_CLOUDFLARE / COOLIFY_TUNNEL_SECRET.tunnel_secret / runner token file
 #   COOLIFY_R2.{access_key_id,secret_access_key}
 #   OVH_API.{application_key,application_secret,consumer_key,endpoint}
-# The OVH CLI and the Terraform OVH provider both consume OVH_* natively, so
-# discovery needs no credential file: the loader exports OVH_* first, then
-# discovery runs against those exports. No local credential file is ever read.
+# The Terraform OVH provider consumes OVH_* natively; the OVH CLI goes
+# through ovh_cli (explicit HOME-redirected config from those same exports).
+# Either way no credential file and no ambient config is ever read.
 # Emits to stdout: TF_VAR_* for every Terraform variable + AWS_* for the R2
 # state backend. Everything else (progress) goes to stderr.
 #
@@ -68,11 +68,14 @@ for v in cf_token tunnel_secret r2_ak r2_sk r2_endpoint r2_bucket ovh_ak ovh_as 
   if [ -z "${!v}" ]; then echo "OpenBao escrow missing for ${v}; refusing to continue." >&2; exit 2; fi
 done
 
-log 'discovering preserved VPS identity via read-only OVH CLI (OVH_* from OpenBao, no file)...'
+log 'discovering preserved VPS identity via read-only OVH CLI (explicit OpenBao-derived config, ambient file never read)...'
 export OVH_ENDPOINT="$ovh_ep" OVH_APPLICATION_KEY="$ovh_ak" OVH_APPLICATION_SECRET="$ovh_as" OVH_CONSUMER_KEY="$ovh_ck"
-service_name="$(ovhcloud vps list --output json 2>/dev/null | jq -r '.[0].displayName // empty')"
+GUARD_SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=scripts/lib/preserved-guard.sh
+source "${GUARD_SCRIPT_DIR}/lib/preserved-guard.sh"
+service_name="$(ovh_cli vps list --output json | jq -r '.[0].displayName // empty')"
 if [ -z "$service_name" ]; then echo 'OVH VPS discovery returned no service.' >&2; exit 2; fi
-ipv4="$(ovhcloud vps ip list "$service_name" --output json 2>/dev/null | jq -r '.[] | select(.version == "v4") | .ipAddress // empty' | head -n1)"
+ipv4="$(ovh_cli vps ip list "$service_name" --output json | jq -r '.[] | select(.version == "v4") | .ipAddress // empty' | head -n1)"
 if [ -z "$ipv4" ]; then echo 'OVH IP discovery returned no IPv4.' >&2; exit 2; fi
 log "discovered service ${service_name} (${ipv4}); emitting exports only, never files."
 
