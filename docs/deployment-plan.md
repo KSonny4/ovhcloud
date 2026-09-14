@@ -1,6 +1,6 @@
 # Deployment plan
 
-**Status:** IaC-first redesign in progress. The canonical domain is resolved (`pkubelka.cz`, dashboard `coolify.pkubelka.cz`); live apply/import remains an explicitly authorized operator action. Fresh-host automation and disposable rehearsal are implemented; see `docs/08-iac-redesign-evidence.md`.
+**Status:** IaC-first redesign complete. The canonical domain is resolved (`pkubelka.cz`, dashboard `coolify.pkubelka.cz`); live state is reconciled and `terraform plan` converges with no changes. Fresh-host automation is implemented (stand-in evidence per operator decision, no paid second VPS); see `docs/08-iac-redesign-evidence.md`.
 
 This plan is the machine-readable handoff for the runbooks in this repository. It records what was found, what changed, and what an authorized operator must still decide. It intentionally does not contain provider tokens, private keys, IP addresses, or production secret values.
 
@@ -8,14 +8,14 @@ This plan is the machine-readable handoff for the runbooks in this repository. I
 
 | Requirement / source | Finding | Implemented change | Status / remaining gate |
 | --- | --- | --- | --- |
-| `README.md:19-37`, `docs/00-quickstart.md:7-12` | OVH VPS origin with Ubuntu, Docker and Coolify; Cloudflare DNS/edge, Tunnel/Access and R2 | Terraform models the OVH VPS and Cloudflare resources; runbooks remain the host/application procedure | Ready for reviewed plan; no live apply |
+| `README.md:19-37`, `docs/00-quickstart.md:7-12` | OVH VPS origin with Ubuntu, Docker and Coolify; Cloudflare DNS/edge, Tunnel/Access and R2 | Terraform models the OVH VPS and Cloudflare resources; runbooks remain the host/application procedure | Live: reconciled, plan converges with no changes |
 | `README.md:61-105`, `docs/02-host-bootstrap.md:76-211` | Steady state is public 80/443, key-only SSH and Cloudflare Tunnel + Access administration | Terraform models the admin tunnel and access policy; host hardening remains an explicit post-bootstrap gate | Ready after tunnel/Access verification |
 | `docs/04-cloudflare.md:13-64`, `docs/07-omniroute.md:95-116` | Cloudflare is the public edge; API clients must not be forced through interactive Access | DNS, tunnel, private R2 and admin Access are represented in IaC; application API authentication stays in Coolify/OmniRoute | Ready; API auth is application-owned |
 | `docs/05-backup-recovery.md`, `docs/07-omniroute.md:134-189` | Recovery depends on R2, Coolify `APP_KEY`, application keys and tested restores | Secret inventory, encrypted-state requirement, backup/restore gates and rollback are now explicit | Operational restore proof remains a pre-production gate |
 | `docs/03-coolify.md:157` vs README and docs 02/04 | One stale Tailscale reference contradicted the Cloudflare admin baseline | The Tailscale reference is replaced with Cloudflare Tunnel + Access | Resolved |
 | Issue/ADR/TODO sources | No issue export, ADR, TODO/FIXME or machine-readable requirements source exists | This evidence table is the tracked audit source until an issue tracker export is provided | No additional issue IDs can be verified |
 | Domain discovery | Repository only contains `example.com`, `<your-domain>` and `<VPS_IPV4>` placeholders; OVH CLI account has no domain-zone/domain-name result | Domain is a required Terraform input and never invented | **RESOLVED:** `pkubelka.cz`; dashboard `coolify.pkubelka.cz`, SSH `ssh.pkubelka.cz`; wildcard remains opt-in via `manage_application_wildcard=false` |
-| OVH account discovery | `ovhcloud vps list --output json` found `vps-1525c977.vps.ovh.net`, running, 4 vCPU/8 GiB/75 GB, zone `os-uk2` | Terraform supports create/import; `terraform.tfvars` remains local and the existing service can be imported | Validated 2026-09-13 (read-only): `running`, `vps-2027-model2`, 4 vCores/8192 MiB/75 GB SSD, `os-uk2` London UK2, IPv4 `57.129.155.203`, IPv6 `2001:41d0:801:2000::3663`; no mutation performed |
+| OVH account discovery | `ovhcloud vps list --output json` found `vps-1525c977.vps.ovh.net`, running, 4 vCPU/8 GiB/75 GB, zone `os-uk2` | Terraform supports create/import; provider authorization is env-only via `scripts/tf-env-from-openbao.sh` (no tfvars file exists) and the existing service is imported | Validated 2026-09-13 (read-only): `running`, `vps-2027-model2`, 4 vCores/8192 MiB/75 GB SSD, `os-uk2` London UK2, IPv4 `57.129.155.203`, IPv6 `2001:41d0:801:2000::3663`; no mutation performed |
 | Context workflow | Graft wiring graph is fresh but its index has no source nodes; generated cache is local | `CONTEXT.md`, this plan, and `docs/context-and-graft.md` define the context contract and freshness gate | `graft build` and `graft check` are required verification |
 
 ## Target architecture
@@ -57,7 +57,7 @@ The default configuration is non-live: `provision_ovh_vps = false` and there is 
 6. verifying KVM/rescue access and current R2/OVH backups;
 7. explicitly authorizing the apply.
 
-The repository's validation workflow must never run `terraform apply`, `ovhcloud reinstall`, `ovhcloud reboot`, `ovhcloud stop`, `ovhcloud terminate`, or equivalent mutating commands.
+The repository's automated validation workflow must never run `terraform apply`, `ovhcloud reinstall`, `ovhcloud reboot`, `ovhcloud stop`, `ovhcloud terminate`, or equivalent mutating commands (this binds automation only; a human operator explicitly authorizes any live apply).
 
 ## Domain contract
 
@@ -68,7 +68,7 @@ The canonical domain is resolved: `pkubelka.cz`. Dashboard `coolify.pkubelka.cz`
 - `*.<approved-domain>` — optional application wildcard
 - `omniroute.<approved-domain>` — OmniRoute public API hostname when deployed
 
-The authorized operator must provide a Cloudflare-managed zone and decide whether the wildcard and OmniRoute hostname are enabled. The plan must be regenerated/reviewed with that value in a local, ignored `terraform.tfvars` file; the value is not committed.
+The authorized operator must provide a Cloudflare-managed zone and decide whether the wildcard and OmniRoute hostname are enabled. The plan is reviewed with values supplied via `eval "$(bash scripts/tf-env-from-openbao.sh)"` (env-only; no tfvars file is ever written).
 
 ## Secret and state lifecycle
 
@@ -115,7 +115,10 @@ Provider-aware operators additionally run, from `infra/terraform/`:
 terraform fmt -check -recursive
 terraform init -backend=false -input=false
 terraform validate
-terraform plan -refresh=false -input=false -var-file=terraform.tfvars
+eval "$(BAO_ADDR=https://secrets.pkubelka.cz bash scripts/tf-env-from-openbao.sh)"
+terraform plan -input=false
 ```
 
-The final command is a plan only. It must not be run until the canonical domain, provider credentials, and non-production/remote-state decision are understood.
+The final command is a plan only (live-backend convergence is proven with
+`-backend-config=backend.hcl`). Provider credentials arrive exclusively via
+the OpenBao-backed env loader; no `-var-file` is used anywhere.

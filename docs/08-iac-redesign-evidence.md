@@ -640,3 +640,17 @@
   Your infrastructure matches the configuration.** Final convergence retained.
 - Inventory item 2 corrected to RESOLVED (rotations complete, old revoked);
   deployment-plan verified consistent on inspection (no stale claims found).
+
+## 2026-09-14 — runtime fidelity + deployment-plan consistency (audit round)
+
+- `--recreate` is now element-faithful: entrypoint/cmd arrays travel
+  element-per-line (no word-splitting), exec-form healthchecks map via
+  shlex.join, `on-failure:N` retry counts restored, workdir/user/restart/
+  health timings applied, command appended after the image.
+- Live proof on destroyed `rt2-app` (entrypoint /bin/sh, cmd with spaces +
+  shell operators, on-failure:5, exec healthcheck, env, label, volume):
+  recreated with entry `[/bin/sh]`, cmd exact, restart `on-failure:5`,
+  health `healthy`, volume content `spaced-arg-test`. Full cleanup after.
+- `docs/deployment-plan.md` reconciled to the implemented reality (status
+  complete + converged, env-only authorization, no tfvars, operator-scoped
+  apply rule); inventory item 2 marked RESOLVED.

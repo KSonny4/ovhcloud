@@ -192,18 +192,32 @@ if [ -n "$recreate" ]; then
     # or empty cmd means image default (nothing passed).
     rt_workdir="$(printf '%s' "$cspec" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("runtime",{}).get("workdir",""))')"
     rt_user="$(printf '%s' "$cspec" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("runtime",{}).get("user",""))')"
-    rt_entry="$(printf '%s' "$cspec" | python3 -c 'import json,sys; e=json.load(sys.stdin).get("runtime",{}).get("entrypoint"); print(" ".join(e) if e else "")')"
-    rt_cmd="$(printf '%s' "$cspec" | python3 -c 'import json,sys; c=json.load(sys.stdin).get("runtime",{}).get("cmd"); print(" ".join(c) if c else "")')"
+    # Arrays travel element-per-line (never word-split): faithful for quoted
+    # arguments with spaces. Portable while-read (no mapfile: macOS bash 3).
+    # Entrypoint: first element is the executable, the rest are pre-image args.
+    rt_entry_arr=()
+    while IFS= read -r line; do
+      [ -n "$line" ] || continue
+      rt_entry_arr+=("$line")
+    done <<<"$(printf '%s' "$cspec" | python3 -c 'import json,sys; e=json.load(sys.stdin).get("runtime",{}).get("entrypoint"); [print(x) for x in (e or [])]')"
+    if [ "${#rt_entry_arr[@]}" -gt 0 ]; then
+      run_args+=(--entrypoint "${rt_entry_arr[0]}")
+      run_args+=("${rt_entry_arr[@]:1}")
+    fi
     rt_restart="$(printf '%s' "$cspec" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("runtime",{}).get("restart",""))')"
+    rt_restart_max="$(printf '%s' "$cspec" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("runtime",{}).get("restart_max",0))')"
     [ -n "$rt_workdir" ] && run_args+=(-w "$rt_workdir")
     [ -n "$rt_user" ] && run_args+=(-u "$rt_user")
-    # shellcheck disable=SC2206
-    rt_entry_arr=($rt_entry); [ "${#rt_entry_arr[@]}" -gt 0 ] && run_args+=(--entrypoint "${rt_entry_arr[0]}")
-    if [ "${#rt_entry_arr[@]}" -gt 1 ]; then
-      # shellcheck disable=SC2206
-      rt_extra=(${rt_entry_arr[@]:1}); run_args+=("${rt_extra[@]}")
-    fi
-    case "$rt_restart" in ''|no) ;; *) run_args+=(--restart "$rt_restart") ;; esac
+    case "$rt_restart" in
+      ''|no) ;;
+      on-failure)
+        if [ "${rt_restart_max:-0}" -gt 0 ] 2>/dev/null; then
+          run_args+=(--restart "on-failure:${rt_restart_max}")
+        else
+          run_args+=(--restart on-failure)
+        fi ;;
+      *) run_args+=(--restart "$rt_restart") ;;
+    esac
     hc_kind="$(printf '%s' "$cspec" | python3 -c 'import json,sys; t=(json.load(sys.stdin).get("runtime",{}).get("healthcheck",{}) or {}).get("Test",[]); print(t[0] if t else "")')"
     if [ "$hc_kind" = 'NONE' ]; then
       run_args+=(--no-healthcheck)
@@ -211,7 +225,10 @@ if [ -n "$recreate" ]; then
       hc_cmd="$(printf '%s' "$cspec" | python3 -c 'import json,sys; t=(json.load(sys.stdin).get("runtime",{}).get("healthcheck",{}) or {}).get("Test",[]); print(t[1] if len(t)>1 else "")')"
       [ -n "$hc_cmd" ] && run_args+=(--health-cmd "$hc_cmd")
     elif [ "$hc_kind" = 'CMD' ]; then
-      hc_cmd="$(printf '%s' "$cspec" | python3 -c 'import json,sys; t=(json.load(sys.stdin).get("runtime",{}).get("healthcheck",{}) or {}).get("Test",[]); print(" ".join(t[1:]))')"
+      # Exec-form healthcheck: shlex.join preserves quoting semantics through
+      # the shell that --health-cmd runs under (documented approximation:
+      # argument vectors survive, exotic control operators do not).
+      hc_cmd="$(printf '%s' "$cspec" | python3 -c 'import json,shlex,sys; t=(json.load(sys.stdin).get("runtime",{}).get("healthcheck",{}) or {}).get("Test",[]); print(shlex.join(t[1:]) if len(t)>1 else "")')"
       [ -n "$hc_cmd" ] && run_args+=(--health-cmd "$hc_cmd")
     fi
     for hf in Interval Timeout StartPeriod; do
@@ -226,11 +243,12 @@ if [ -n "$recreate" ]; then
     done
     hr="$(printf '%s' "$cspec" | python3 -c 'import json,sys; print((json.load(sys.stdin).get("runtime",{}).get("healthcheck",{}) or {}).get("Retries",0))')"
     [ "${hr:-0}" -gt 0 ] 2>/dev/null && run_args+=(--health-retries "$hr")
+    # Command array, element-faithful (appended after the image).
     cmd_args=()
-    if [ -n "$rt_cmd" ]; then
-      # shellcheck disable=SC2206
-      cmd_args=($rt_cmd)
-    fi
+    while IFS= read -r line; do
+      [ -n "$line" ] || continue
+      cmd_args+=("$line")
+    done <<<"$(printf '%s' "$cspec" | python3 -c 'import json,sys; c=json.load(sys.stdin).get("runtime",{}).get("cmd"); [print(x) for x in (c or [])]')"
     while IFS= read -r mnt; do
       [ -n "$mnt" ] || continue
       mtype="${mnt%%|*}"; rest="${mnt#*|}"; msrc="${rest%%|*}"; rest2="${rest#*|}"; mdst="${rest2%%|*}"; mro="${rest2#*|}"
