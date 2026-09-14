@@ -36,7 +36,9 @@ if [ -n "$host" ]; then
   ssh "${ssh_opts[@]}" "$host" "mkdir -p $remote_stage"
   scp "${ssh_opts[@]}" "$repo_root/scripts/schedule-coolify-backup.sh" \
     "$repo_root/scripts/backup-app-workloads.sh" \
-    "$repo_root/scripts/fetch-r2-env.sh" "$0" "$host:$remote_stage/"
+    "$repo_root/scripts/fetch-r2-env.sh" \
+    "$repo_root/scripts/rollback-coolify-backup.sh" \
+    "$repo_root/scripts/rollback-app-workloads.sh" "$0" "$host:$remote_stage/"
   # shellcheck disable=SC2029
   ssh "${ssh_opts[@]}" "$host" "sudo bash $remote_stage/test-clean-target-install.sh --local-dir $remote_stage"
   rc=$?
@@ -66,6 +68,8 @@ check $? 'installer exits 0 non-dry-run into isolated prefix'
 [ -x "$BACKUP_DIR/backup-to-r2.sh" ]; check $? 'instance backup script installed executable'
 [ -x "$BACKUP_DIR/backup-app-workloads.sh" ]; check $? 'workload companion installed executable'
 [ -x "$BACKUP_DIR/fetch-r2-env.sh" ]; check $? 'fetch wrapper installed executable'
+[ -x "$BACKUP_DIR/rollback-coolify-backup.sh" ]; check $? 'instance rollback installed executable'
+[ -x "$BACKUP_DIR/rollback-app-workloads.sh" ]; check $? 'workload rollback installed executable'
 if grep -q 'EnvironmentFile' "$SYSTEMD_DIR/coolify-backup.service" 2>/dev/null; then echo 'FAIL: unit still references EnvironmentFile' >&2; fail=1; else echo 'ok: unit carries no EnvironmentFile (memory-only)'; fi
 if grep -q 'fetch-r2-env.sh -- ' "$SYSTEMD_DIR/coolify-backup.service" 2>/dev/null; then echo 'ok: unit execs through fetch wrapper'; else echo 'FAIL: unit bypasses fetch wrapper' >&2; fail=1; fi
 grep -q "fetch-r2-env.sh -- ${BACKUP_DIR}/backup-to-r2.sh" "$SYSTEMD_DIR/coolify-backup.service" 2>/dev/null; check $? 'unit carries instance ExecStart via wrapper'

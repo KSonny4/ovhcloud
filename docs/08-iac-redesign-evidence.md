@@ -560,3 +560,28 @@
   (shopdb tables=1, coolify tables=63, volumes incl. 2 known files) ->
   probes dropped, host + R2 test artifacts removed. Debugged live:
   prefix-stripped download keys, missing `coolify` role (no-owner/no-acl).
+
+## 2026-09-14 — in-service rollback + coverage contract + docs consistency (audit round)
+
+- Real operational rollback: `rollback-app-workloads.sh --recreate NAME
+  --db-password ...` brings a destroyed workload back into service —
+  volumes recreated from snapshots with file-count parity, containers
+  recreated from manifest-recorded images (refuses live targets), dumps
+  restored with tables-exact/rows->= parity, container health checked.
+  Live proof on destroyed `shop` workload (4 known rows + 3 known files):
+  RESTORED-INTO-SERVICE across the board, exact values verified by query
+  (widget/gadget/doodad/thingamajig + 3 sku files), HEALTHY, then full
+  cleanup (host + R2). Debugged live: prefix-stripped keys, missing roles
+  (no-owner/no-acl), empty-DB dumps (skipped at backup: no user tables).
+- Backup manifest now carries verifiable counts (tables/rows per DB incl.
+  image + user, files/bytes per volume, binds) for parity checks.
+- Coverage contract enforced: postgres + named volumes + APP_BIND_PATHS host
+  dirs (SQLite) are covered; coolify* platform-owned skipped by design; any
+  other stateful mount (undeclared binds) or non-postgres database fails the
+  run with an explicit gap list (proven live: coverage ok on current host).
+- Fresh targets get rollback: runner stages both rollback scripts, schedule
+  installs them or fails closed, clean-target test asserts all 12 artifacts,
+  exact fetch-wrapper invocations documented in quickstart step 5.
+- Docs reconciled: `iac-interfaces.md` runner contract rewritten to the
+  memory-only reality (no env file, R2 absent from blob, tunnel_id + OVH_API
+  fields); quickstart documents invocations + workload contract.

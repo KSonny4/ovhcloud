@@ -398,6 +398,7 @@ remote_touched=1
 run scp -p "${ssh_opts[@]}" "$repo_root/scripts/bootstrap-vps.sh" "$repo_root/scripts/provision-coolify.sh" \
   "$repo_root/scripts/configure-tunnel-access.sh" "$repo_root/scripts/schedule-coolify-backup.sh" \
   "$repo_root/scripts/backup-app-workloads.sh" "$repo_root/scripts/fetch-r2-env.sh" \
+  "$repo_root/scripts/rollback-coolify-backup.sh" "$repo_root/scripts/rollback-app-workloads.sh" \
   "${ssh_user}@${host}:${remote_dir}/"
 run scp -p "${ssh_opts[@]}" "$repo_root/scripts/lib/preserved-guard.sh" \
   "${ssh_user}@${host}:${remote_dir}/lib/"

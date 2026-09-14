@@ -88,9 +88,19 @@ A human must authorize any `terraform apply`.
 ## Step 5 — Backups and rollback
 
 - Nightly: Coolify instance database + application databases/volumes -> R2
-  (14-day retention), timer `coolify-backup.timer` on the host.
-- Restore proof (disposable probe, production untouched):
-  `bash scripts/rollback-coolify-backup.sh` on the host as root.
+  (14-day retention), timer `coolify-backup.timer` on the host. R2 keys are
+  memory-only (OpenBao pull per run); no credential file exists anywhere.
+- Rollback (exact noninteractive invocations, on the host as root; both
+  scripts are installed at `/root/coolify-backup/` by the schedule):
+  - instance probe restore (production untouched):
+    `sudo bash /root/coolify-backup/fetch-r2-env.sh -- bash /root/coolify-backup/rollback-coolify-backup.sh`
+  - application probe restore:
+    `sudo bash /root/coolify-backup/fetch-r2-env.sh -- bash /root/coolify-backup/rollback-app-workloads.sh [--stamp STAMP]`
+  - bring a destroyed workload back into service (refuses live targets):
+    `sudo bash /root/coolify-backup/fetch-r2-env.sh -- bash /root/coolify-backup/rollback-app-workloads.sh --recreate NAME --db-password '...'`
+- Supported workload contract: PostgreSQL databases, Docker named volumes,
+  and `APP_BIND_PATHS` host directories (e.g. SQLite) are backed up; the
+  nightly run fails closed listing anything else stateful as a gap.
 - Rotation procedures for every credential: [secret-rotation.md](secret-rotation.md).
 
 ## Continue reading

@@ -28,16 +28,21 @@ failure:
   secret access. On-target stages additionally refuse when the machine
   itself is the preserved VPS.
 - Retrieves from OpenBao by name only: `COOLIFY_SSH_PUBLIC_KEY.value`,
-  `COOLIFY_TUNNEL_TOKEN.tunnel_token`,
-  `COOLIFY_ACCESS_SERVICE_TOKEN.{client_id,client_secret}`,
-  `COOLIFY_R2.{access_key_id,secret_access_key,bucket}`; exits when any field
+  `COOLIFY_TUNNEL_TOKEN.{tunnel_id,tunnel_token}`,
+  `COOLIFY_ACCESS_SERVICE_TOKEN.{client_id,client_secret,token_id}`,
+  `OVH_API.{application_key,application_secret,consumer_key,endpoint}`
+  (R2 keys are deliberately NEVER retrieved operator-side: the target pulls
+  them memory-only via `fetch-r2-env.sh`); exits when any required field
   is absent.
-- Copies the four stage scripts plus the guard library and a generated 0600
-  env file to `/tmp/ovh-provision` on the target, runs each stage with
-  `sudo -E`, verifies (docker hello-world, origin login, domain login
-  HTTP 200 locally, timer enabled). An EXIT trap removes remote stage
-  material (including the credential env file) on every exit path, and the
-  local env file is deleted likewise; a cleanup failure warns loudly.
+- Copies the stage scripts (bootstrap, provision, tunnel/access, schedule +
+  workload companion + fetch wrapper + both rollback scripts) plus the guard
+  library to `/tmp/ovh-provision` on the target — scripts only, no credential
+  files. Stage secrets travel as a base64 env blob on each SSH command's
+  stdin (never argv, never disk); R2 keys are absent from the blob by
+  construction. Runs each stage with `sudo -E`, verifies (docker
+  hello-world, origin login, edge wiring + dashboard HTTP 200, timer
+  enabled). An EXIT trap removes remote stage material on every exit path;
+  a cleanup failure warns loudly.
 - `--dry-run` logs the full plan without touching the network (exercised twice
   byte-identical by the rehearsal `runner_channel` phase); `--stages` selects
   a subset. Initial SSH key injection on a fresh OVH VPS (order/reinstall

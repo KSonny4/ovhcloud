@@ -169,6 +169,14 @@ if grep -rn "source \"\\\$env_file\"" scripts/backup-app-workloads.sh scripts/ro
 for gate in 'SSH_HOSTNAME=' '--handoff-file' 'emit-fresh-imports.sh'; do
   grep -q -- "$gate" scripts/run-remote-provision.sh || { echo "runner omits complete edge path: ${gate}." >&2; exit 1; }
 done
+# Rollback on fresh targets: the runner must stage both rollback scripts and
+# the schedule must install them (or fail closed); coverage gaps fail closed.
+for gate in 'rollback-coolify-backup.sh' 'rollback-app-workloads.sh'; do
+  grep -q -- "$gate" scripts/run-remote-provision.sh || { echo "runner omits rollback staging: ${gate}." >&2; exit 1; }
+done
+grep -q 'rollback-less schedule' scripts/schedule-coolify-backup.sh || { echo 'schedule omits rollback install gate.' >&2; exit 1; }
+grep -q 'WORKLOAD COVERAGE GAP' scripts/backup-app-workloads.sh || { echo 'backup omits coverage fail-closed gate.' >&2; exit 1; }
+grep -q -- '--recreate' scripts/rollback-app-workloads.sh || { echo 'rollback omits in-service recreate.' >&2; exit 1; }
 for gate in 'SSH_HOSTNAME' 'ssh://localhost:22' 'access_app_id' 'emit-fresh-imports'; do
   grep -q -- "$gate" scripts/wire-fresh-edge.sh || { echo "wire script omits SSH/Access/handoff: ${gate}." >&2; exit 1; }
 done
@@ -228,6 +236,7 @@ log '== backup_ready (dry-run) =='
 bash scripts/backup-r2-probe.sh --dry-run
 bash scripts/rollback-coolify-backup.sh --dry-run
 bash scripts/rollback-app-workloads.sh --dry-run
+bash scripts/rollback-app-workloads.sh --dry-run --recreate demo --db-password dry-run-only
 bash scripts/ensure-service-token.sh --dry-run
 bash scripts/ensure-service-token.sh --dry-run --ensure-only
 bash scripts/tf-env-from-openbao.sh --dry-run

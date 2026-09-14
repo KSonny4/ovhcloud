@@ -98,6 +98,20 @@ elif [ ! -f "$app_installed" ] && [ "$dry_run" -eq 0 ]; then
   exit 2
 fi
 
+# Rollback procedures ship with the schedule (fresh targets must be able to
+# roll back noninteractively): same install-or-fail-closed companion pattern.
+for rollback_src in rollback-coolify-backup.sh rollback-app-workloads.sh; do
+  src_path="$(cd "$(dirname "$0")" && pwd)/${rollback_src}"
+  if [ -f "$src_path" ]; then
+    run cp "$src_path" "${backup_dir}/${rollback_src}"
+    run chmod 700 "${backup_dir}/${rollback_src}"
+    log "installed ${rollback_src}."
+  elif [ ! -f "${backup_dir}/${rollback_src}" ] && [ "$dry_run" -eq 0 ]; then
+    echo "${rollback_src} found neither beside this script nor installed; refusing a rollback-less schedule." >&2
+    exit 2
+  fi
+done
+
 cat >"$backup_script" <<'BACKUP_EOF'
 #!/usr/bin/env bash
 # Nightly Coolify instance DB backup. Credentials arrive ONLY via environment
