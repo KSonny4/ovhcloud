@@ -1,0 +1,45 @@
+{
+  "schema": "pr-metrics/v1",
+  "inputs": {
+    "eg-pin-freshness": {
+      "command": "tools/check_eg_freshness.py (EG repo)",
+      "scope": "repo AGENTS.md pin",
+      "population": "1 pin",
+      "window": "point-in-time",
+      "exclusions": []
+    },
+    "fabric-coverage": {
+      "command": "Fabric /status generations",
+      "scope": "repo dataset",
+      "population": "1 dataset",
+      "window": "point-in-time",
+      "exclusions": []
+    }
+  },
+  "metrics": [
+    {
+      "id": "eg-pin-differs",
+      "label": "EG pin differs from latest",
+      "unit": "flag",
+      "input": "eg-pin-freshness",
+      "method": {
+        "kind": "value",
+        "path": [
+          "differs"
+        ]
+      }
+    },
+    {
+      "id": "fabric-files",
+      "label": "Fabric indexed files",
+      "unit": "files",
+      "input": "fabric-coverage",
+      "method": {
+        "kind": "value",
+        "path": [
+          "files"
+        ]
+      }
+    }
+  ]
+}

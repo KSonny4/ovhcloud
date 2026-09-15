@@ -1,0 +1,29 @@
+{
+  "schema": "pr-evidence/v1",
+  "repository": "KSonny4/ovhcloud",
+  "revision": "7e01e0a69c375f0484ceec19b81ea22e99ad526a",
+  "base_revision": "7e01e0a69c375f0484ceec19b81ea22e99ad526a",
+  "definitions": "docs/eg-adoption.definitions.json",
+  "definitions_sha256": "1a7f15440e53a1e52989c3657496821d3a64917893c73da3f6141e3ba88dd018",
+  "inputs": {
+    "eg-pin-freshness": {
+      "status": "complete",
+      "detail": "pinned 656d5569 vs latest 2084e4f3: stale (informative-first)",
+      "tool": "check_eg_freshness.py",
+      "tool_version": "v0.1-eg46",
+      "exit_code": 0,
+      "sha256": "8adc4720587b33e9a3662eab0ac9bb5e026a553be39b37d045c92ae6ac0b8cfe",
+      "path": "docs/eg-pin.json"
+    },
+    "fabric-coverage": {
+      "status": "complete",
+      "detail": "generation 7e01e0a6: 1 files indexed",
+      "tool": "fabric-status",
+      "tool_version": "v0.1",
+      "exit_code": 0,
+      "sha256": "2ecb2aa5eb32cad91d4f2157d49cbe0049168c42b8266aa5ecdb8e6da7381f1f",
+      "path": "docs/fabric-coverage.json"
+    }
+  },
+  "note": "Informative-first pilot: revision tracks base main; head-matching enforced at calibration per L4 path. Owner merge decision."
+}
