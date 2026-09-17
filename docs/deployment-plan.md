@@ -24,6 +24,8 @@ This plan is the machine-readable handoff for the runbooks in this repository. I
 Cloudflare DNS + proxy/TLS (exclusive public edge)
   ├── coolify.pkubelka.cz -> Tunnel coolify-admin -> localhost:8000 (Terraform CNAME)
   ├── ssh.pkubelka.cz     -> Tunnel coolify-admin -> localhost:22 (Terraform CNAME)
+  ├── omni.pkubelka.cz    -> Tunnel coolify-admin -> localhost:80 (Terraform CNAME; production cutover 2026-09-14, no Access app; Pi tunnel stays as fallback)
+  ├── omniroute.pkubelka.cz -> Tunnel coolify-admin -> localhost:80 (Terraform CNAME; staging, no Access app)
   ├── Access: human OTP/email policy (ksonny4@gmail.com) + machine service token
   └── private R2 bucket   <- Coolify/database/volume backups (Terraform + probe)
 
@@ -40,7 +42,7 @@ Cloudflare is the exclusive public DNS/edge provider. OVH remains the compute/or
 `infra/terraform/` contains one root configuration for the provider resources:
 
 - `ovh_vps.platform`: optional VPS ordering contract. Existing infrastructure is verified read-only through `data.ovh_vps.existing` rather than implicitly recreated; Ubuntu image selection and SSH-key bootstrap remain explicit operator gates because the pinned provider schema does not expose those fields on this resource.
-- Cloudflare DNS CNAMEs for the Coolify dashboard and SSH hostname point at the Tunnel (`<tunnel-id>.cfargotunnel.com`), not at origin A records; the application wildcard is opt-in and disabled by default.
+- Cloudflare DNS CNAMEs for the Coolify dashboard and SSH hostname point at the Tunnel (`<tunnel-id>.cfargotunnel.com`), not at origin A records; the OmniRoute application hostnames (`omni.` production, `omniroute.` staging) are likewise Tunnel CNAMEs with no Access app; the application wildcard is opt-in and disabled by default.
 - Cloudflare Tunnel `coolify-admin` with declared ingress plus `prevent_destroy`; cloudflared install/verify is scripted in `scripts/configure-tunnel-access.sh`.
 - Cloudflare Access: human OTP/email policy retained plus a scoped machine service token (`non_identity`) escrowed to OpenBao by `scripts/ensure-service-token.sh` (Terraform owns token identity + policy binding only; no vault provider/resources in the module, so the live plan converges with zero residual adds); no provisioning step depends on browser login.
 - A private Cloudflare R2 bucket for backup destinations.
@@ -66,7 +68,8 @@ The canonical domain is resolved: `pkubelka.cz`. Dashboard `coolify.pkubelka.cz`
 - `coolify.<approved-domain>` — Coolify dashboard
 - `ssh.<approved-domain>` — SSH Tunnel/Access hostname
 - `*.<approved-domain>` — optional application wildcard
-- `omniroute.<approved-domain>` — OmniRoute public API hostname when deployed
+- `omni.<approved-domain>` — OmniRoute production API hostname (Coolify via Tunnel, no Access app; cut over 2026-09-14, Pi tunnel as fallback)
+- `omniroute.<approved-domain>` — OmniRoute staging API hostname (Coolify via Tunnel, no Access app)
 
 The authorized operator must provide a Cloudflare-managed zone and decide whether the wildcard and OmniRoute hostname are enabled. The plan is reviewed with values supplied via the two-step loader form (`loader_out="$(...)" || exit 2`, then `eval "$loader_out"`; env-only, no tfvars file is ever written).
 

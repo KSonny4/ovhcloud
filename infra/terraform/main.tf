@@ -108,6 +108,18 @@ resource "cloudflare_dns_record" "ssh" {
   comment = "Cloudflare Tunnel hostname for Access-protected SSH."
 }
 
+resource "cloudflare_dns_record" "omni" {
+  # Production cutover 2026-09-14: serves the Coolify deployment (was the
+  # manually-managed Pi-tunnel record; adopted into Terraform, no Access app).
+  zone_id = data.cloudflare_zone.canonical.id
+  name    = "omni.${var.domain}"
+  type    = "CNAME"
+  content = "${cloudflare_zero_trust_tunnel_cloudflared.admin.id}.cfargotunnel.com"
+  ttl     = 1
+  proxied = true
+  comment = "OmniRoute production (Coolify, cut over from Pi 20260914)"
+}
+
 resource "cloudflare_dns_record" "omniroute" {
   # OmniRoute staging hostname (Pi migration; serves the Coolify deployment).
   # No Access app fronts it: the gateway API must stay machine-accessible.
@@ -211,6 +223,12 @@ resource "cloudflare_zero_trust_tunnel_cloudflared_config" "admin" {
         # pattern as fabric; traefik routes by Host to the app. No Access
         # policy here — the gateway API stays machine-accessible.
         hostname = "omniroute.${var.domain}"
+        service  = "http://localhost:80"
+      },
+      {
+        # Production cutover 2026-09-14: same origin-proxy pattern; revert by
+        # pointing DNS back at the Pi tunnel (Pi units stay up as fallback).
+        hostname = "omni.${var.domain}"
         service  = "http://localhost:80"
       },
       {
