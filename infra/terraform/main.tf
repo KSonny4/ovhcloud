@@ -144,6 +144,19 @@ resource "cloudflare_dns_record" "fabric" {
   comment = "fabric rollout 20260914"
 }
 
+resource "cloudflare_dns_record" "registry" {
+  # Private Docker registry hostname (plan-only until an authorized apply).
+  # No Access app fronts it: docker push/pull clients are machines, same
+  # rule as the OmniRoute API hostnames.
+  zone_id = data.cloudflare_zone.canonical.id
+  name    = "registry.${var.domain}"
+  type    = "CNAME"
+  content = "${cloudflare_zero_trust_tunnel_cloudflared.admin.id}.cfargotunnel.com"
+  ttl     = 1
+  proxied = true
+  comment = "Private Docker registry (Coolify registry:2)"
+}
+
 resource "cloudflare_zero_trust_access_identity_provider" "one_time_pin" {
   account_id = var.cloudflare_account_id
   name       = "One-time PIN"
@@ -229,6 +242,13 @@ resource "cloudflare_zero_trust_tunnel_cloudflared_config" "admin" {
         # Production cutover 2026-09-14: same origin-proxy pattern; revert by
         # pointing DNS back at the Pi tunnel (Pi units stay up as fallback).
         hostname = "omni.${var.domain}"
+        service  = "http://localhost:80"
+      },
+      {
+        # Private Docker registry (Coolify registry:2; plan-only): same
+        # origin-proxy pattern; Traefik routes by Host to the app. No Access
+        # policy here — docker clients are machines, like the OmniRoute API.
+        hostname = "registry.${var.domain}"
         service  = "http://localhost:80"
       },
       {

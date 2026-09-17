@@ -1,6 +1,6 @@
 # Deployment plan
 
-**Status:** IaC-first redesign complete. The canonical domain is resolved (`pkubelka.cz`, dashboard `coolify.pkubelka.cz`); live state is reconciled and `terraform plan` converges with no changes. Fresh-host automation is implemented (stand-in evidence per operator decision, no paid second VPS); see `docs/08-iac-redesign-evidence.md`.
+**Status:** IaC-first redesign complete. The canonical domain is resolved (`pkubelka.cz`, dashboard `coolify.pkubelka.cz`); live state is reconciled and `terraform plan` converges with no changes except pending plan-only adds (private Docker registry hostname, converging on the next authorized apply). Fresh-host automation is implemented (stand-in evidence per operator decision, no paid second VPS); see `docs/08-iac-redesign-evidence.md`.
 
 This plan is the machine-readable handoff for the runbooks in this repository. It records what was found, what changed, and what an authorized operator must still decide. It intentionally does not contain provider tokens, private keys, IP addresses, or production secret values.
 
@@ -26,6 +26,7 @@ Cloudflare DNS + proxy/TLS (exclusive public edge)
   ├── ssh.pkubelka.cz     -> Tunnel coolify-admin -> localhost:22 (Terraform CNAME)
   ├── omni.pkubelka.cz    -> Tunnel coolify-admin -> localhost:80 (Terraform CNAME; production cutover 2026-09-14, no Access app; Pi tunnel stays as fallback)
   ├── omniroute.pkubelka.cz -> Tunnel coolify-admin -> localhost:80 (Terraform CNAME; staging, no Access app)
+  ├── registry.pkubelka.cz -> Tunnel coolify-admin -> localhost:80 (Terraform CNAME; plan-only, no Access app; see docs/09-docker-registry.md)
   ├── Access: human OTP/email policy (ksonny4@gmail.com) + machine service token
   └── private R2 bucket   <- Coolify/database/volume backups (Terraform + probe)
 
@@ -70,6 +71,7 @@ The canonical domain is resolved: `pkubelka.cz`. Dashboard `coolify.pkubelka.cz`
 - `*.<approved-domain>` — optional application wildcard
 - `omni.<approved-domain>` — OmniRoute production API hostname (Coolify via Tunnel, no Access app; cut over 2026-09-14, Pi tunnel as fallback)
 - `omniroute.<approved-domain>` — OmniRoute staging API hostname (Coolify via Tunnel, no Access app)
+- `registry.<approved-domain>` — private Docker registry (Coolify `registry:2` via Tunnel, no Access app; plan-only, see `docs/09-docker-registry.md`)
 
 The authorized operator must provide a Cloudflare-managed zone and decide whether the wildcard and OmniRoute hostname are enabled. The plan is reviewed with values supplied via the two-step loader form (`loader_out="$(...)" || exit 2`, then `eval "$loader_out"`; env-only, no tfvars file is ever written).
 
@@ -84,6 +86,7 @@ The authorized operator must provide a Cloudflare-managed zone and decide whethe
 | Coolify `APP_KEY` | Coolify owner | OpenBao `secret/projects/ovhcloud/COOLIFY_ADMIN` (`app_key`, `email`): target-side attempt when bao exists, authoritative runner fetch over SSH + escrow (memory-only, fail closed) | restore test must decrypt a known backup |
 | OmniRoute `STORAGE_ENCRYPTION_KEY`, `API_KEY_SECRET`, `JWT_SECRET` | automation-derived | OpenBao `secret/projects/ovhcloud/OMNIROUTE` via `ensure-omniroute-secrets.sh` (generate-if-absent + escrow, reuse otherwise; values never printed/disk); restore re-injects from escrow via `fetch-app-secrets.sh` blob (no human relay) | restore test must load known configuration |
 | Cloudflare machine service token | Terraform-generated, escrowed in OpenBao | `secret/projects/ovhcloud/COOLIFY_ACCESS_SERVICE_TOKEN` (`client_id`, `client_secret`) | noninteractive verification must pass without browser login |
+| Docker registry htpasswd + `REGISTRY_HTTP_SECRET` | registry owner | OpenBao `secret/projects/ovhcloud/REGISTRY` (`htpasswd`, `http_secret`): generated off-host, relayed into the Coolify file mount/env memory-only, never committed | rotate htpasswd + redeploy; verify with authenticated `docker login` |
 | Terraform state | platform owner | encrypted remote backend with locking (`backend.hcl`, ignored; `backend.hcl.example` committed) | never use an unencrypted local state for production apply; rehearsal uses disposable local state only |
 
 ## Deployment and rollback sequence
