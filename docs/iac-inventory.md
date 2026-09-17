@@ -28,18 +28,63 @@
 | Coolify | 4.3.19; containers healthy | Preserve and automate equivalent fresh installation |
 | cloudflared | 2026.9.1, enabled/active | Replace manual install with bootstrap automation |
 
-## Cloudflare edge and administration
+## Cloudflare edge and administration (live 2026-09-17, API-verified)
+
+Tunnel `coolify-admin` (`b145382e-d1cc-4e60-b910-3de56fa9ce2c`, healthy) carries this ingress (catch-all `http_status:404` last):
+
+| Hostname | Origin service | Notes |
+| --- | --- | --- |
+| `coolify.pkubelka.cz` | `http://localhost:6001`, `:6002`, `:8000` | Dashboard (+realtime); Access human OTP |
+| `ssh.pkubelka.cz` | `ssh://localhost:22` | Access human OTP + machine service token |
+| `fabric.pkubelka.cz` | `https://localhost:443` | No Access app |
+| `graph-dispatcher.pkubelka.cz` | `https://localhost:443` | No Access app |
+| `omniroute.pkubelka.cz` | `http://localhost:80` | Staging API, no Access app |
+| `omni.pkubelka.cz` | `http://localhost:80` | Production API (cut over 2026-09-14), no Access app |
+| `registry.pkubelka.cz` | `http://localhost:80` | Private registry (live 2026-09-17), no Access app |
+
+Proxied DNS (zone `pkubelka.cz`; all CNAMEs below point at `coolify-admin`'s `<tunnel-id>.cfargotunnel.com` unless noted): `coolify`, `ssh`, `fabric`, `graph-dispatcher` (+`www`), `keeper`, `omniroute`, `omni`, `registry`; other tunnels serve `recorder`/`trading` (`af70d44…`), `dark`/`dark-dev`/`stremio` (`ef0c9d3…`), `secrets` (`612f43c…`); `forms` → Pages, apex/`pkubelka.cz` → Pages; `llm-quota`/`radar` are `AAAA 100::` placeholders. The account contains unrelated existing tunnels, DNS records, and Access apps — do not claim or destroy them; scope Terraform by explicit names/IDs.
 
 | Resource | Current state | IaC requirement |
 | --- | --- | --- |
-| `coolify.pkubelka.cz` | Proxied CNAME to `b145382e-d1cc-4e60-b910-3de56fa9ce2c.cfargotunnel.com` | Manage as Tunnel route, not an origin A record |
-| `ssh.pkubelka.cz` | Proxied CNAME to the same Tunnel | Manage with Access and machine verification |
-| Tunnel `coolify-admin` | ID `b145382e-d1cc-4e60-b910-3de56fa9ce2c`, healthy | Import/manage with declared ingress |
-| Tunnel ingress | `coolify.pkubelka.cz` → `http://localhost:8000`; `ssh.pkubelka.cz` → `ssh://localhost:22`; fallback 404 | Declare idempotently |
 | Coolify Access app | Self-hosted app for `coolify.pkubelka.cz`; email allow policy for `ksonny4@gmail.com` | Retain human dashboard policy |
-| SSH Access app | Self-hosted app for `ssh.pkubelka.cz`; email allow policy for `ksonny4@gmail.com` | Add scoped service-token machine policy for verification |
+| SSH Access app | Self-hosted app for `ssh.pkubelka.cz`; email allow policy for `ksonny4@gmail.com` | Scoped service-token machine policy for verification |
 | R2 | Account API reports R2 enabled; bucket `ovh-coolify-backups` created 2026-09-13 via API (EEUR, Standard) | Terraform must import the existing bucket; scoped S3 credential issuance is blocked on a fresh full-access token (see gaps) |
-| Other Cloudflare resources | The account contains unrelated existing tunnels, DNS records, and Access apps | Do not claim or destroy unrelated resources; scope Terraform by explicit names/IDs |
+
+## Coolify application inventory (live 2026-09-17, edge-API read)
+
+Host: Coolify 4.3.19, server `localhost`, Traefik v3.7 proxy. Projects: `context-fabric`, `omniroute`, `llm-quota`, `graph-engineering`, `keeper`, `docker-registry`.
+
+| Application | Project / env | Type | Status | Notes |
+| --- | --- | --- | --- | --- |
+| `fabric-stack` | context-fabric | compose | running:healthy | Serves `fabric.pkubelka.cz` |
+| `omniroute-compose` | omniroute / production | compose | running:healthy | Serves `omni.pkubelka.cz` + `omniroute.pkubelka.cz` |
+| `omniroute-obs` | omniroute / production | compose | running:unknown | Observability stack |
+| `omniroute-watcher` | omniroute / production | compose | running:unknown | Watcher |
+| `registry` | omniroute / production | docker image (`registry:2.8.3`) | running:unknown, serving proven | Serves `registry.pkubelka.cz`; health shows unknown because authed `/v2/` answers 401 — see `docs/09-docker-registry.md` §7 |
+| `graph-dispatcher` | graph-engineering | dockerfile | running:healthy | Serves `graph-dispatcher.pkubelka.cz` |
+| `keeper` | keeper | compose | running:unknown | Serves `keeper.pkubelka.cz` |
+| `llm-quota` | llm-quota | dockerfile | running:healthy | — |
+| `llm-quota2` | llm-quota | dockerfile | **exited:unhealthy** | Needs owner triage (see gaps) |
+| `dump.git` | placement unconfirmed (dashboard check) | dockerfile | running:healthy | — |
+
+A separate `docker-registry` project (service `registry`, image `registry:3`) predates the proven registry above; consolidate on one (see gaps). Edge API is rate-sensitive — space automated reads seconds apart; transient 404/string responses under burst load recover on retry.
+
+## Secret escrow map (names only — values live in OpenBao, never in Git)
+
+| OpenBao path | Fields | Consumers |
+| --- | --- | --- |
+| `secret/projects/ovhcloud/ADMIN_CLOUDFLARE` | `ADMIN_CLOUDFLARE` (API token) | Terraform loader, Cloudflare API automation |
+| `secret/projects/ovhcloud/OVH_API` | `application_key`, `application_secret`, `consumer_key`, `endpoint` | `ovh_cli` read-only discovery |
+| `secret/projects/ovhcloud/COOLIFY_TUNNEL_SECRET` | `tunnel_secret` | Terraform loader (preserved `coolify-admin` singleton) |
+| `secret/projects/ovhcloud/COOLIFY_TUNNEL_<NAME>` | `tunnel_id`, `tunnel_token` | Per-target tunnel creation (fresh hosts) |
+| `secret/projects/ovhcloud/COOLIFY_TUNNEL_TOKEN` | `tunnel_token` | Break-glass reinstall only (no automation reads it) |
+| `secret/projects/ovhcloud/COOLIFY_R2` | `access_key_id`, `secret_access_key`, `bucket`, `endpoint` | Host-timer backup plane + restore probe |
+| `secret/projects/ovhcloud/COOLIFY_ADMIN` | `app_key`, `email`, `password` | Coolify bootstrap and recovery |
+| `secret/projects/ovhcloud/COOLIFY_API` | `token` (root-admin Sanctum) | API-driven app/resource creation + verification |
+| `secret/projects/ovhcloud/COOLIFY_ACCESS_SERVICE_TOKEN` | `client_id`, `client_secret` | Machine edge access (noninteractive verification, API calls) |
+| `secret/projects/ovhcloud/COOLIFY_SSH_PRIVATE_KEY` / `COOLIFY_SSH_PUBLIC_KEY` | key material | Guest bootstrap, Coolify machine connection |
+| `secret/projects/ovhcloud/OMNIROUTE` | `STORAGE_ENCRYPTION_KEY`, `API_KEY_SECRET`, `JWT_SECRET` | OmniRoute apps (escrow-recoverable restore) |
+| `secret/projects/ovhcloud/REGISTRY` | `htpasswd`, `http_secret`, `username`, `password` | Private registry auth + smoke verify (live 2026-09-17) |
 
 ## Current gaps against the redesign (updated 2026-09-14)
 
@@ -82,6 +127,8 @@
    timer is the single backup plane. Per-application database/volume schedules attach
    once applications exist (zero app databases on this fresh install).
 6. The supported guest OS baseline is version-sensitive: the current host reports Ubuntu 26.04 LTS while the older runbooks mention Ubuntu 24.04 LTS. Fresh bootstrap supports both and verifies Docker itself.
+7. OPEN 2026-09-17: `registry.pkubelka.cz` DNS + tunnel ingress were created via Cloudflare API outside Terraform state. Before the next `terraform apply`, import both (exact commands in `docs/09-docker-registry.md` §7) and require an empty plan — otherwise apply will fight live state.
+8. OPEN 2026-09-17: consolidate the two registries (proven `registry:2.8.3` app in `omniroute` vs pre-existing `registry:3` service in `docker-registry` project) and triage `llm-quota2` (exited:unhealthy). Neither affects the proven registry path.
 
 ## Safety boundary (validated 2026-09-13)
 
