@@ -38,6 +38,7 @@ Dashboard → `production` environment → **New Resource → Application → Do
   - `REGISTRY_AUTH=htpasswd`
   - `REGISTRY_AUTH_HTPASSWD_REALM=Registry Realm`
   - `REGISTRY_AUTH_HTPASSWD_PATH=/auth/htpasswd`
+  - `REGISTRY_HTTP_HOST=https://registry.<approved-domain>` — REQUIRED behind the Tunnel: edge TLS terminates at Cloudflare while the registry sees plain HTTP, so without this it mints `http://` upload URLs and every push fails auth on resume. This was the live failure on 2026-09-17.
 - Mount the htpasswd file at `/auth/htpasswd` (read-only). Its content lives in OpenBao at `secret/projects/ovhcloud/REGISTRY` (key names only here — never values, never in Git); copy it onto the mount through the operator's secure channel at deploy time.
 - Resource limits: this is a small host — set CPU/memory limits so large pushes cannot starve neighboring apps.
 
@@ -83,3 +84,22 @@ Delete the `smoke/` test repository afterwards via the registry API so test blob
 ## 6. DNS / tunnel / IaC status
 
 Terraform (plan-only) already declares the `registry.<domain>` CNAME and the tunnel ingress route — same origin-proxy pattern as the other application hostnames, no Access app. A human may apply them only through the authorized-apply sequence in `docs/deployment-plan.md`; validation here never runs `terraform apply`.
+
+## 7. Live deployment record (2026-09-17)
+
+Deployed and proven live the same day via Coolify + Cloudflare APIs (no browser available in the automation session):
+
+- Coolify app `registry` (`uttlrzcrskrudfpwuxfhml3e`), project `omniroute`, environment `production`, server `localhost`; image `registry:2.8.3`, port `5000`, persistent volume `/var/lib/registry`, htpasswd file mount `/auth/htpasswd` (content from OpenBao escrow).
+- Cloudflare: proxied CNAME `registry` → `coolify-admin` tunnel hostname; tunnel ingress `registry.${domain} → http://localhost:80` inserted before the catch-all (prior config backed up before the change).
+- Live proof: `docker login` OK, pushed `hello-world`, deleted all local copies, pulled back digest-identical (`sha256:5099b89d…`), container ran (`Hello from Docker!`), catalog listed the repo. Proof repo removed afterwards; credentials scrubbed from the operator machine.
+- Two API-path gotchas recorded for the next operator: (a) the public Coolify API has no domains endpoint, and Coolify does not generate Traefik routers from the `fqdn` string on docker-image apps — the Host router (`traefik.enable`, `traefik.docker.network`, gzip middleware, Host+PathPrefix rule, port-5000 service) was supplied via base64 `custom_labels` and took effect on redeploy; (b) `REGISTRY_HTTP_HOST` is mandatory (see section 2).
+- Escrow `secret/projects/ovhcloud/REGISTRY` now holds `htpasswd`, `http_secret`, `username`, `password` (plaintext kept for smoke/rotation verify; vault-only, never Git).
+- **Terraform drift note:** DNS + tunnel ingress were created via Cloudflare API, outside Terraform state. Before the next `terraform apply`, the operator must import both (exact resource addresses in `infra/terraform/main.tf`):
+
+```bash
+terraform import cloudflare_dns_record.registry <zone-id>/9c52c9d1820697c9111b58b05bf96bbf
+terraform import cloudflare_zero_trust_tunnel_cloudflared_config.admin <account-id>/<tunnel-id>
+```
+
+  then `terraform plan` must show no changes. IDs above are the live objects created 2026-09-17 (zone/account/tunnel IDs per the existing configuration).
+- **Duplicate note:** a separate `docker-registry` project (service `registry`, image `registry:3`) already exists on the host, predating this deployment. Consolidate on one registry later; the proven one is this app (`registry.pkubelka.cz`, `registry:2.8.3`).
