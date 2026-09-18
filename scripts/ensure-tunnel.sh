@@ -3,10 +3,10 @@
 # Cloudflare Tunnel exists per fresh target, escrow its connector token at a
 # per-target secret path BEFORE any consumer reads it, and stay a no-op when
 # that path already holds one. OpenBao tunnel ontology (three entries,
-# distinct roles, never mixed): COOLIFY_TUNNEL_SECRET.tunnel_secret feeds
-# the preserved Terraform tunnel config via the loader; COOLIFY_TUNNEL_TOKEN.
+# distinct roles, never mixed): EDGE_TUNNEL_SECRET.tunnel_secret feeds
+# the preserved Terraform tunnel config via the loader; EDGE_TUNNEL_TOKEN.
 # tunnel_token is the preserved connector's cold recovery escrow (no
-# automation reads it); COOLIFY_TUNNEL_<NAME>.{tunnel_id,tunnel_token} is
+# automation reads it); EDGE_TUNNEL_<NAME>.{tunnel_id,tunnel_token} is
 # the per-target entry this script owns. The preserved entries are NEVER
 # read or written here: a fresh target attaching to the preserved tunnel
 # would inherit its routes, which the preservation boundary forbids.
@@ -51,12 +51,12 @@ secret_path="${TUNNEL_SECRET_PATH:?TUNNEL_SECRET_PATH (per-target OpenBao entry)
 # Defense in depth (the runner refuses first): this script itself must never
 # operate on the preserved tunnel or its escrow entries, no matter who
 # invokes it.
-if [ "${TUNNEL_NAME:-}" = 'coolify-admin' ]; then
-  echo 'Refusing: coolify-admin is the preserved tunnel; fresh targets get a dedicated tunnel.' >&2
+if [ "${TUNNEL_NAME:-}" = 'nomad-admin' ]; then
+  echo 'Refusing: nomad-admin is the preserved tunnel; fresh targets get a dedicated tunnel.' >&2
   exit 2
 fi
 case "$secret_path" in
-  *coolify-admin*|COOLIFY_TUNNEL_TOKEN|COOLIFY_TUNNEL_SECRET)
+  *nomad-admin*|EDGE_TUNNEL_TOKEN|EDGE_TUNNEL_SECRET)
     echo "Refusing: per-target path must not be a preserved entry (got ${secret_path})." >&2
     exit 2 ;;
 esac

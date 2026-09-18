@@ -3,7 +3,7 @@
 #
 # Root cause: Docker publishes container ports via iptables rules that jump
 # BEFORE UFW's INPUT chain, so UFW DENY entries never applied to the
-# Coolify-infra ports (:80/:443/:8000/:8080/:6001/:6002) — external probes
+# Nomad-infra ports (:80/:443/:4646/:4647/:4648) — external probes
 # reached them despite "Status: active" + DENY. This script filters in
 # Docker's own DOCKER-USER hook chain (the documented extension point that
 # survives container churn):

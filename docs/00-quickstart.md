@@ -1,4 +1,4 @@
-# 00. From zero to a working Coolify VPS (canonical, noninteractive)
+# 00. From zero to a working Nomad VPS (canonical, noninteractive)
 
 This is the canonical first-day path. It provisions a fresh VPS end to end
 with a single command — no reinstall walkthroughs, no KVM sessions, no browser
@@ -18,7 +18,7 @@ authorization), and every derived secret is escrowed back to OpenBao.
 - An SSH client. No pre-existing keypair is required (the runner generates +
   escrows one when absent); no Terraform values need hand-editing.
 - The SOLE dashboard prerequisite: R2 S3 keys escrowed at OpenBao
-  `COOLIFY_R2` (`access_key_id`, `secret_access_key`, `bucket`, `endpoint`).
+  `BACKUP_R2` (`access_key_id`, `secret_access_key`, `bucket`, `endpoint`).
   R2 key issuance has no Cloudflare API route (verified 10015 on every
   candidate path), so mint once in the dashboard (R2 -> Manage R2 API
   Tokens -> Object Read & Write, bucket-scoped) and escrow; everything else
@@ -40,8 +40,8 @@ bash scripts/run-remote-provision.sh
 ```
 
 This executes, in order, with per-stage verification: Ubuntu bootstrap
-(swap, hardening, Docker engine + hello-world proof), Coolify pinned release
-(first admin, dashboard FQDN, bootstrap-port closure, origin smoke check),
+(swap, hardening, Docker engine + hello-world proof), Nomad pinned release
+(ACL bootstrap + escrow, UI FQDN, bootstrap-port closure, origin smoke check),
 cloudflared + Tunnel/Access wiring (including fresh-edge DNS/ingress binding),
 and the nightly R2 backup schedule (instance database + application workloads,
 14-day retention, memory-only OpenBao pull — no credential file).
@@ -55,10 +55,10 @@ never retroactively): pick one before provisioning —
    `PROVISION_OVH_SERVICE=<service> bash scripts/run-remote-provision.sh --reinstall-with-key --i-confirm-host-is-fresh`
    (DESTRUCTIVE, refuses the preserved service). Without a working key the
    runner fails closed with this guidance instead of proceeding hopefully.
-First use without `ROOT_USER_PASSWORD` generates and escrows it.
+ACL bootstrap runs inside the nomad stage; the token is escrowed automatically.
 
 Dry-run first if you like: append `--dry-run` (no network touched), or limit
-with `--stages bootstrap,coolify,edge,backup`.
+with `--stages bootstrap,nomad,edge,backup`.
 
 ## Step 3 — Verify (no login required)
 
@@ -70,12 +70,12 @@ bash scripts/rehearse-fresh-environment.sh
 Machine verification (service token, HTTP 200 expected):
 
 ```bash
-# client id/secret from OpenBao secret/projects/ovhcloud/COOLIFY_ACCESS_SERVICE_TOKEN
+# client id/secret from OpenBao secret/projects/ovhcloud/EDGE_ACCESS_SERVICE_TOKEN
 curl -H "CF-Access-Client-Id: <id>" -H "CF-Access-Client-Secret: <secret>" \
-  https://coolify.<zone>/login -o /dev/null -w '%{http_code}\n'
+  https://nomad.<zone>/v1/status/leader -o /dev/null -w '%{http_code}\n'
 ```
 
-Human dashboard access stays `ksonny4@gmail.com` via Cloudflare Access OTP.
+Human UI access stays `ksonny4@gmail.com` via Cloudflare Access OTP.
 
 ## Step 4 — Terraform state (already reconciled for the preserved VPS)
 
@@ -98,16 +98,16 @@ A human must authorize any `terraform apply`.
 
 ## Step 5 — Backups and rollback
 
-- Nightly: Coolify instance database + application databases/volumes -> R2
-  (14-day retention), timer `coolify-backup.timer` on the host. R2 keys are
+- Nightly: Nomad snapshots + application databases/volumes -> R2
+  (14-day retention), timer `host-backup.timer` on the host. R2 keys are
   memory-only (OpenBao pull per run); no R2 credential file exists anywhere
   (sole file at rest: the least-privilege OpenBao accessor token, 0600).
 - Rollback (exact noninteractive invocations, on the host as root; both
-  scripts are installed at `/root/coolify-backup/` by the schedule):
-  - instance probe restore (production untouched):
-    `sudo bash /root/coolify-backup/fetch-r2-env.sh -- bash /root/coolify-backup/rollback-coolify-backup.sh`
+  scripts are installed at `/root/host-backup/` by the schedule):
+  - snapshot probe restore (production untouched):
+    `sudo bash /root/host-backup/fetch-r2-env.sh -- bash /root/host-backup/rollback-nomad-snapshot.sh`
   - application probe restore:
-    `sudo bash /root/coolify-backup/fetch-r2-env.sh -- bash /root/coolify-backup/rollback-app-workloads.sh [--stamp STAMP]`
+    `sudo bash /root/host-backup/fetch-r2-env.sh -- bash /root/host-backup/rollback-app-workloads.sh [--stamp STAMP]`
   - bring a destroyed workload back into service (refuses live targets),
     operator side with OpenBao-backed credential (explicit value, reuse of
     the escrowed per-workload entry, or fresh generation + escrow — never

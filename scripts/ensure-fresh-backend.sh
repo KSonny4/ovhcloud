@@ -23,13 +23,15 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 fresh_dir="${TERRAFORM_FRESH_DIR:-$repo_root/infra/terraform-fresh}"
 backend_file="$fresh_dir/backend.hcl"
-fresh_key='ovhcloud-coolify-fresh/terraform.tfstate'
-preserved_key='ovhcloud-coolify/terraform.tfstate'
+fresh_key='ovhcloud-nomad-fresh/terraform.tfstate'
 [ -d "$fresh_dir" ] || { echo "fresh dir missing: ${fresh_dir}." >&2; exit 2; }
 
 if [ -f "$backend_file" ]; then
-  if grep -qF "$preserved_key" "$backend_file"; then
-    echo "refusing: existing backend points at the PRESERVED state key ${preserved_key} (fresh adoption would corrupt production state)." >&2
+  # Era-agnostic production guard: a fresh backend key ALWAYS contains
+  # 'fresh/'; any existing backend without it is production state (any
+  # era) and fresh adoption into it would be catastrophic.
+  if ! grep -qF 'fresh/' "$backend_file"; then
+    echo 'refusing: existing backend key lacks fresh/ (production state; fresh adoption would corrupt it).' >&2
     exit 2
   fi
   if grep -qF "$fresh_key" "$backend_file"; then
@@ -42,10 +44,10 @@ fi
 
 command -v bao >/dev/null 2>&1 || { echo 'bao CLI is required.' >&2; exit 2; }
 export BAO_ADDR="${BAO_ADDR:-https://secrets.pkubelka.cz}"
-r2_bucket="$(bao kv get -field=bucket secret/projects/ovhcloud/COOLIFY_R2 2>/dev/null || true)"
-r2_endpoint="$(bao kv get -field=endpoint secret/projects/ovhcloud/COOLIFY_R2 2>/dev/null || true)"
+r2_bucket="$(bao kv get -field=bucket secret/projects/ovhcloud/BACKUP_R2 2>/dev/null || true)"
+r2_endpoint="$(bao kv get -field=endpoint secret/projects/ovhcloud/BACKUP_R2 2>/dev/null || true)"
 if [ -z "$r2_bucket" ] || [ -z "$r2_endpoint" ]; then
-  echo 'COOLIFY_R2 bucket/endpoint escrow incomplete in OpenBao (fail closed before any mutation).' >&2
+  echo 'BACKUP_R2 bucket/endpoint escrow incomplete in OpenBao (fail closed before any mutation).' >&2
   exit 2
 fi
 # Values substituted are names/URLs only — never keys (verified below).

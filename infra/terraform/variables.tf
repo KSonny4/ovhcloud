@@ -12,7 +12,7 @@ variable "cloudflare_account_id" {
 }
 
 variable "cloudflare_tunnel_secret" {
-  description = "Base64-encoded Cloudflare Tunnel secret for the PRESERVED tunnel, supplied ONLY from OpenBao secret/projects/ovhcloud/COOLIFY_TUNNEL_SECRET (field tunnel_secret) via TF_VAR_cloudflare_tunnel_secret env (memory-only, never files). Fresh per-target tunnels use COOLIFY_TUNNEL_<NAME> and never touch this variable."
+  description = "Base64-encoded Cloudflare Tunnel secret for the PRESERVED tunnel, supplied ONLY from OpenBao secret/projects/ovhcloud/EDGE_TUNNEL_SECRET (field tunnel_secret) via TF_VAR_cloudflare_tunnel_secret env (memory-only, never files). Fresh per-target tunnels use EDGE_TUNNEL_<NAME> and never touch this variable."
   type        = string
   sensitive   = true
 }
@@ -42,7 +42,7 @@ variable "ovh_service_name" {
 variable "ovh_display_name" {
   description = "Display name used only if provisioning a new OVH VPS."
   type        = string
-  default     = "ovh-coolify-platform"
+  default     = "ovh-nomad-platform"
 }
 
 variable "ovh_subsidiary" {
@@ -92,15 +92,15 @@ variable "manage_existing_vps" {
 }
 
 variable "r2_bucket_name" {
-  description = "Private Cloudflare R2 bucket name for Coolify and application backups."
+  description = "Private Cloudflare R2 bucket name for Nomad and application backups."
   type        = string
-  default     = "ovh-coolify-backups"
+  default     = "ovh-host-backups"
 }
 
 variable "access_service_token_name" {
   description = "Stable Cloudflare Access service-token name for noninteractive machine verification."
   type        = string
-  default     = "ovh-coolify-machine-verification"
+  default     = "ovh-nomad-machine-verification"
 }
 
 variable "access_service_token_duration" {
@@ -112,13 +112,13 @@ variable "access_service_token_duration" {
 }
 
 variable "manage_application_wildcard" {
-  description = "Whether Terraform should manage the optional Coolify application wildcard DNS record."
+  description = "Whether Terraform should manage the optional Nomad application wildcard DNS record."
   type        = bool
   default     = false
 }
 
 variable "admin_emails" {
-  description = "Human identities allowed to access the Coolify/SSH administrative Access policies."
+  description = "Human identities allowed to access the Nomad UI/SSH administrative Access policies."
   type        = set(string)
   default     = []
 

@@ -10,8 +10,8 @@
 # brief, ends up printed by tooling like `terraform fmt -diff`).
 #
 # Reads (OpenBao, by name only; values never printed):
-#   ADMIN_CLOUDFLARE / COOLIFY_TUNNEL_SECRET.tunnel_secret / runner token file
-#   COOLIFY_R2.{access_key_id,secret_access_key}
+#   ADMIN_CLOUDFLARE / EDGE_TUNNEL_SECRET.tunnel_secret / runner token file
+#   BACKUP_R2.{access_key_id,secret_access_key}
 #   OVH_API.{application_key,application_secret,consumer_key,endpoint}
 # The Terraform OVH provider consumes OVH_* natively; the OVH CLI goes
 # through ovh_cli (explicit HOME-redirected config from those same exports).
@@ -55,11 +55,11 @@ fi
 
 log 'retrieving provider authorization from OpenBao (names only)...'
 cf_token="$(bao kv get -field=ADMIN_CLOUDFLARE secret/projects/ovhcloud/ADMIN_CLOUDFLARE)"
-tunnel_secret="$(bao kv get -field=tunnel_secret secret/projects/ovhcloud/COOLIFY_TUNNEL_SECRET)"
-r2_ak="$(bao kv get -field=access_key_id secret/projects/ovhcloud/COOLIFY_R2)"
-r2_sk="$(bao kv get -field=secret_access_key secret/projects/ovhcloud/COOLIFY_R2)"
-r2_endpoint="$(bao kv get -field=endpoint secret/projects/ovhcloud/COOLIFY_R2)"
-r2_bucket="$(bao kv get -field=bucket secret/projects/ovhcloud/COOLIFY_R2)"
+tunnel_secret="$(bao kv get -field=tunnel_secret secret/projects/ovhcloud/EDGE_TUNNEL_SECRET)"
+r2_ak="$(bao kv get -field=access_key_id secret/projects/ovhcloud/BACKUP_R2)"
+r2_sk="$(bao kv get -field=secret_access_key secret/projects/ovhcloud/BACKUP_R2)"
+r2_endpoint="$(bao kv get -field=endpoint secret/projects/ovhcloud/BACKUP_R2)"
+r2_bucket="$(bao kv get -field=bucket secret/projects/ovhcloud/BACKUP_R2)"
 ovh_ak="$(bao kv get -field=application_key secret/projects/ovhcloud/OVH_API)"
 ovh_as="$(bao kv get -field=application_secret secret/projects/ovhcloud/OVH_API)"
 ovh_ck="$(bao kv get -field=consumer_key secret/projects/ovhcloud/OVH_API)"
@@ -88,9 +88,9 @@ printf 'export TF_VAR_domain=%s\n' "'pkubelka.cz'"
 printf 'export TF_VAR_ovh_ipv4=%s\n' "'$ipv4'"
 printf 'export TF_VAR_ovh_service_name=%s\n' "'$service_name'"
 printf 'export TF_VAR_admin_emails=%s\n' "'[\"ksonny4@gmail.com\"]'"
-printf 'export TF_VAR_r2_bucket_name=%s\n' "'ovh-coolify-backups'"
+printf 'export TF_VAR_r2_bucket_name=%s\n' "'ovh-host-backups'"
 printf 'export TF_VAR_manage_application_wildcard=%s\n' "'false'"
-printf 'export TF_VAR_access_service_token_name=%s\n' "'ovh-coolify-machine-verification'"
+printf 'export TF_VAR_access_service_token_name=%s\n' "'ovh-nomad-machine-verification'"
 printf 'export TF_VAR_access_service_token_duration=%s\n' "'8760h'"
 printf 'export TF_VAR_provision_ovh_vps=%s\n' "'false'"
 printf 'export TF_VAR_manage_existing_vps=%s\n' "'true'"

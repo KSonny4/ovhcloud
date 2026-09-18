@@ -5,7 +5,7 @@
 # routes: given a tunnel ID, the dashboard hostname (required) and the SSH
 # hostname (optional but wired by the runner for every fresh zone), this
 # script (all via the Cloudflare API with the OpenBao-escrowed ADMIN token):
-#  1. sets tunnel ingress: dashboard -> http://localhost:8000,
+#  1. sets tunnel ingress: UI -> http://localhost:4646,
 #     ssh -> ssh://localhost:22, catch-all -> http_status:404
 #     (idempotent: fetched first, PUT only on drift, existing rules kept);
 #  2. creates the DNS CNAMEs <host> -> <tunnel>.cfargotunnel.com, proxied,
@@ -14,7 +14,7 @@
 #     precedence 1, ksonny4@gmail.com precedence 2, OTP IdP, 24h session —
 #     mirroring the preserved apps) for each hostname;
 #  4. verifies end to end with propagation retries (fail closed):
-#     dashboard https://<host>/login -> exactly HTTP 200 with the
+#     UI https://<host>/v1/status/leader -> exactly HTTP 200 with the
 #     service-token pair; ssh https://<host> -> a gated status
 #     (301/302/401/403: route live and policy-gated, no token needed).
 #
@@ -84,13 +84,13 @@ if [ "$self_test" -eq 1 ]; then
   else
     echo 'self-test FAILED: covered route reported as drift.' >&2; exit 1
   fi
-  if ingress_covers "$pre" 'coolify.fresh.invalid=http://localhost:8000'; then
+  if ingress_covers "$pre" 'nomad.fresh.invalid=http://localhost:4646'; then
     echo 'self-test FAILED: missing route reported as covered.' >&2; exit 1
   else
     log 'self-test: drift detected on missing route.'
   fi
-  merged="$(merge_ingress "$pre" 'coolify.fresh.invalid=http://localhost:8000' 'ssh.fresh.invalid=ssh://localhost:22')"
-  if printf '%s' "$merged" | python3 -c 'import json,sys; h=[r.get("hostname") for r in json.load(sys.stdin)["config"]["ingress"]]; sys.exit(0 if {"other.example.com","coolify.fresh.invalid","ssh.fresh.invalid"} <= set(h) else 1)'; then
+  merged="$(merge_ingress "$pre" 'nomad.fresh.invalid=http://localhost:4646' 'ssh.fresh.invalid=ssh://localhost:22')"
+  if printf '%s' "$merged" | python3 -c 'import json,sys; h=[r.get("hostname") for r in json.load(sys.stdin)["config"]["ingress"]]; sys.exit(0 if {"other.example.com","nomad.fresh.invalid","ssh.fresh.invalid"} <= set(h) else 1)'; then
     log 'self-test: merge preserves unrelated routes. MERGE_OK'
   else
     echo 'self-test FAILED: merge discarded a route.' >&2; exit 1
@@ -110,7 +110,7 @@ fi
 hostnames="$EDGE_HOSTNAME"
 [ -n "${SSH_HOSTNAME:-}" ] && hostnames="$hostnames $SSH_HOSTNAME"
 service_for() {
-  if [ "$1" = "$EDGE_HOSTNAME" ]; then printf 'http://localhost:8000'; else printf 'ssh://localhost:22'; fi
+  if [ "$1" = "$EDGE_HOSTNAME" ]; then printf 'http://localhost:4646'; else printf 'ssh://localhost:22'; fi
 }
 
 if [ "$dry_run" -eq 1 ]; then
@@ -123,7 +123,7 @@ if [ "$dry_run" -eq 1 ]; then
     [ -n "$handoff_file" ] && log "DRY-RUN: write handoff JSON to ${handoff_file}"
   fi
   if [ "${skip_verify:-0}" -eq 0 ]; then
-    log 'DRY-RUN: verify dashboard 200 with service token + ssh gated status (propagation retries, fail closed)'
+    log 'DRY-RUN: verify UI 200 with service token + ssh gated status (propagation retries, fail closed)'
   else
     log 'DRY-RUN: verification deferred (connector not running yet)'
   fi
@@ -131,9 +131,9 @@ if [ "$dry_run" -eq 1 ]; then
 fi
 
 admin="$(bao kv get -field=ADMIN_CLOUDFLARE secret/projects/ovhcloud/ADMIN_CLOUDFLARE 2>/dev/null || true)"
-svc_id="$(bao kv get -field=client_id secret/projects/ovhcloud/COOLIFY_ACCESS_SERVICE_TOKEN 2>/dev/null || true)"
-svc_secret="$(bao kv get -field=client_secret secret/projects/ovhcloud/COOLIFY_ACCESS_SERVICE_TOKEN 2>/dev/null || true)"
-svc_token_id="$(bao kv get -field=token_id secret/projects/ovhcloud/COOLIFY_ACCESS_SERVICE_TOKEN 2>/dev/null || true)"
+svc_id="$(bao kv get -field=client_id secret/projects/ovhcloud/EDGE_ACCESS_SERVICE_TOKEN 2>/dev/null || true)"
+svc_secret="$(bao kv get -field=client_secret secret/projects/ovhcloud/EDGE_ACCESS_SERVICE_TOKEN 2>/dev/null || true)"
+svc_token_id="$(bao kv get -field=token_id secret/projects/ovhcloud/EDGE_ACCESS_SERVICE_TOKEN 2>/dev/null || true)"
 [ -n "$admin" ] && [ -n "$svc_id" ] && [ -n "$svc_secret" ] && [ -n "$svc_token_id" ] || { echo 'OpenBao escrow incomplete (admin + service-token triple required).' >&2; exit 2; }
 # Fail-closed envelope read: transport failure, empty body, bad JSON, or
 # "success":false all exit 2 BEFORE any caller can mistake absence for
@@ -197,7 +197,7 @@ for host in $hostnames; do
     fi
   fi
   # Access app (idempotent by domain) + two policies (idempotent by name).
-  if [ "$host" = "$EDGE_HOSTNAME" ]; then app_name="Coolify Dashboard"; else app_name="Coolify SSH Administration"; fi
+  if [ "$host" = "$EDGE_HOSTNAME" ]; then app_name="Nomad UI"; else app_name="Nomad SSH Administration"; fi
   app_id="$(api_must "https://api.cloudflare.com/client/v4/accounts/${acct}/access/apps?domain=${host}" | python3 -c 'import json,sys; r=json.load(sys.stdin).get("result",[]); print(r[0].get("id","") if r else "")' || { echo "Access app read failed for ${host} (fail closed)." >&2; exit 2; })"
   if [ -z "$app_id" ]; then
     app_id="$(apost -d '{"name":"'"${app_name}"'","domain":"'"${host}"'","type":"self_hosted","session_duration":"24h","auto_redirect_to_identity":false,"allowed_idps":[],"enable_binding_cookie":true}' "https://api.cloudflare.com/client/v4/accounts/${acct}/access/apps" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("result",{}).get("id",""))')"
@@ -233,14 +233,14 @@ ok_dash=0
 for attempt in 1 2 3 4 5 6; do
   code="$(curl -sS -o /dev/null -w '%{http_code}' --cookie-jar /dev/null --max-time 20 \
     -H "CF-Access-Client-Id: ${svc_id}" -H "CF-Access-Client-Secret: ${svc_secret}" \
-    "https://${EDGE_HOSTNAME}/login" 2>/dev/null || true)"
+    "https://${EDGE_HOSTNAME}/v1/status/leader" 2>/dev/null || true)"
   if [ "$code" = '200' ]; then ok_dash=1; break; fi
-  log "dashboard attempt ${attempt}: HTTP ${code:-none} (waiting for propagation)..."
+  log "UI attempt ${attempt}: HTTP ${code:-none} (waiting for propagation)..."
   sleep 20
 done
 svc_id=''; svc_secret=''; svc_token_id=''
-[ "$ok_dash" -eq 1 ] || { echo "dashboard verification failed after 6 attempts (required exactly 200)." >&2; exit 1; }
-log "edge verified: https://${EDGE_HOSTNAME}/login -> HTTP 200."
+[ "$ok_dash" -eq 1 ] || { echo "UI verification failed after 6 attempts (required exactly 200)." >&2; exit 1; }
+log "edge verified: https://${EDGE_HOSTNAME}/v1/status/leader -> HTTP 200."
 if [ -n "${SSH_HOSTNAME:-}" ]; then
   ok_ssh=0
   for attempt in 1 2 3 4 5 6; do

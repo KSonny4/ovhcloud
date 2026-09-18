@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Application-workload rollback/recovery proof (databases + volumes).
 #
-# Mirrors rollback-coolify-backup.sh for the application scope created by
+# Mirrors rollback-nomad-snapshot.sh for the application scope created by
 # backup-app-workloads.sh: given an R2 backup stamp (default: latest
 # manifest), downloads every app-database dump and app-volume snapshot of
 # that stamp and restores each into DISPOSABLE probes — databases via

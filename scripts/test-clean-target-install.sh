@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Clean-target non-dry-run test: proves the backup installer deploys BOTH
-# backup commands (instance DB + application workloads) without touching
+# backup commands (cluster snapshot + application workloads) without touching
 # production paths or host systemd.
 #
-# Mirrors exactly what the remote runner ships (schedule-coolify-backup.sh +
+# Mirrors exactly what the remote runner ships (schedule-host-backup.sh +
 # backup-app-workloads.sh side by side), then runs the installer NON-dry-run
 # into an isolated prefix (BACKUP_DIR/SYSTEMD_DIR overrides) with
 # --install-only, and asserts every artifact. Cleans up on every exit path.
@@ -34,10 +34,10 @@ if [ -n "$host" ]; then
   remote_stage="/tmp/clean-target-test-$$"
   # shellcheck disable=SC2029
   ssh "${ssh_opts[@]}" "$host" "mkdir -p $remote_stage"
-  scp "${ssh_opts[@]}" "$repo_root/scripts/schedule-coolify-backup.sh" \
+  scp "${ssh_opts[@]}" "$repo_root/scripts/schedule-host-backup.sh" \
     "$repo_root/scripts/backup-app-workloads.sh" \
     "$repo_root/scripts/fetch-r2-env.sh" \
-    "$repo_root/scripts/rollback-coolify-backup.sh" \
+    "$repo_root/scripts/rollback-nomad-snapshot.sh" \
     "$repo_root/scripts/rollback-app-workloads.sh" "$0" "$host:$remote_stage/"
   # shellcheck disable=SC2029
   ssh "${ssh_opts[@]}" "$host" "sudo bash $remote_stage/test-clean-target-install.sh --local-dir $remote_stage"
@@ -63,20 +63,20 @@ mkdir -p "$SYSTEMD_DIR"
 fail=0
 check() { if [ "$1" -ne 0 ]; then echo "FAIL: $2" >&2; fail=1; else echo "ok: $2"; fi; }
 
-bash "${stage_dir}/schedule-coolify-backup.sh" --install-only >/dev/null 2>&1
+bash "${stage_dir}/schedule-host-backup.sh" --install-only >/dev/null 2>&1
 check $? 'installer exits 0 non-dry-run into isolated prefix'
 [ -x "$BACKUP_DIR/backup-to-r2.sh" ]; check $? 'instance backup script installed executable'
 [ -x "$BACKUP_DIR/backup-app-workloads.sh" ]; check $? 'workload companion installed executable'
 [ -x "$BACKUP_DIR/fetch-r2-env.sh" ]; check $? 'fetch wrapper installed executable'
-[ -x "$BACKUP_DIR/rollback-coolify-backup.sh" ]; check $? 'instance rollback installed executable'
+[ -x "$BACKUP_DIR/rollback-nomad-snapshot.sh" ]; check $? 'snapshot rollback installed executable'
 [ -x "$BACKUP_DIR/rollback-app-workloads.sh" ]; check $? 'workload rollback installed executable'
-if grep -q 'EnvironmentFile' "$SYSTEMD_DIR/coolify-backup.service" 2>/dev/null; then echo 'FAIL: unit still references EnvironmentFile' >&2; fail=1; else echo 'ok: unit carries no EnvironmentFile (memory-only)'; fi
-if grep -q 'fetch-r2-env.sh -- ' "$SYSTEMD_DIR/coolify-backup.service" 2>/dev/null; then echo 'ok: unit execs through fetch wrapper'; else echo 'FAIL: unit bypasses fetch wrapper' >&2; fail=1; fi
-grep -q "fetch-r2-env.sh -- ${BACKUP_DIR}/backup-to-r2.sh" "$SYSTEMD_DIR/coolify-backup.service" 2>/dev/null; check $? 'unit carries instance ExecStart via wrapper'
-grep -q "fetch-r2-env.sh -- ${BACKUP_DIR}/backup-app-workloads.sh" "$SYSTEMD_DIR/coolify-backup.service" 2>/dev/null; check $? 'unit carries workload ExecStart via wrapper'
-[ -f "$SYSTEMD_DIR/coolify-backup.timer" ]; check $? 'timer unit installed'
+if grep -q 'EnvironmentFile' "$SYSTEMD_DIR/host-backup.service" 2>/dev/null; then echo 'FAIL: unit still references EnvironmentFile' >&2; fail=1; else echo 'ok: unit carries no EnvironmentFile (memory-only)'; fi
+if grep -q 'fetch-r2-env.sh -- ' "$SYSTEMD_DIR/host-backup.service" 2>/dev/null; then echo 'ok: unit execs through fetch wrapper'; else echo 'FAIL: unit bypasses fetch wrapper' >&2; fail=1; fi
+grep -q "fetch-r2-env.sh -- ${BACKUP_DIR}/backup-to-r2.sh" "$SYSTEMD_DIR/host-backup.service" 2>/dev/null; check $? 'unit carries instance ExecStart via wrapper'
+grep -q "fetch-r2-env.sh -- ${BACKUP_DIR}/backup-app-workloads.sh" "$SYSTEMD_DIR/host-backup.service" 2>/dev/null; check $? 'unit carries workload ExecStart via wrapper'
+[ -f "$SYSTEMD_DIR/host-backup.timer" ]; check $? 'timer unit installed'
 if command -v systemd-analyze >/dev/null 2>&1; then
-  systemd-analyze verify "$SYSTEMD_DIR/coolify-backup.service" >/dev/null 2>&1; check $? 'systemd-analyze verify passes'
+  systemd-analyze verify "$SYSTEMD_DIR/host-backup.service" >/dev/null 2>&1; check $? 'systemd-analyze verify passes'
 fi
 
 trap - EXIT

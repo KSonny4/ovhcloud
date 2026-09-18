@@ -1,21 +1,21 @@
 #!/usr/bin/env bash
-# R2 backup verification probe for the OVHcloud/Coolify redesign.
+# R2 backup verification probe for the OVHcloud/Nomad redesign.
 #
 # Contract:
 # - Bucket itself is owned by Terraform (cloudflare_r2_bucket.backups).
 # - Scoped R2 credentials are generated out-of-band and escrowed in OpenBao at
-#   secret/projects/ovhcloud/COOLIFY_R2
+#   secret/projects/ovhcloud/BACKUP_R2
 #   (access_key_id, secret_access_key, bucket, endpoint — all four required).
 # - This script never prints secret values; it reports redacted status only.
 # - Proves write/read/delete on a disposable probe object, then reports the
-#   retention/rollback expectations for Coolify and OVH layers.
+#   retention/rollback expectations for Nomad and OVH layers.
 #
 # Usage (two-step: a bare eval "$(...)" masks loader failure and falls back
 # to ambient credentials — capture first, then eval):
 #   loader_out="$(BAO_ADDR=https://secrets.pkubelka.cz bash scripts/tf-env-from-openbao.sh)" || exit 2
 #   eval "$loader_out" && bash scripts/backup-r2-probe.sh [--dry-run]
 # (the loader supplies R2_ENDPOINT, R2_BUCKET, AWS_ACCESS_KEY_ID and
-# AWS_SECRET_ACCESS_KEY from the escrowed COOLIFY_R2 entry).
+# AWS_SECRET_ACCESS_KEY from the escrowed BACKUP_R2 entry).
 set -euo pipefail
 
 dry_run=0
@@ -37,7 +37,7 @@ run() {
 }
 
 endpoint="${R2_ENDPOINT:-}"
-bucket="${R2_BUCKET:-ovh-coolify-backups}"
+bucket="${R2_BUCKET:-ovh-host-backups}"
 # R2's S3 API requires a region matching the bucket jurisdiction (ours is
 # EEUR); `auto` negotiates it and works for every jurisdiction.
 export AWS_DEFAULT_REGION="${AWS_DEFAULT_REGION:-auto}"
@@ -77,7 +77,7 @@ else
   payload="$(mktemp)"
   downloaded="$(mktemp)"
   trap 'rm -f "$payload" "$downloaded"' EXIT
-  printf 'ovh-coolify backup probe %s\n' "$(date -u +%FT%TZ)" >"$payload"
+  printf 'ovh-nomad backup probe %s\n' "$(date -u +%FT%TZ)" >"$payload"
   run aws --endpoint-url "$endpoint" s3api put-object --bucket "$bucket" --key "$probe_object" --body "$payload" >/dev/null
   run aws --endpoint-url "$endpoint" s3api head-object --bucket "$bucket" --key "$probe_object" >/dev/null
   run aws --endpoint-url "$endpoint" s3api get-object --bucket "$bucket" --key "$probe_object" "$downloaded" >/dev/null
@@ -92,10 +92,10 @@ else
 fi
 
 cat <<'EOF'
-retention/rollback expectations (enforced by runbook + Coolify schedule, verified by rehearsal):
-- Coolify instance database backup: daily to R2, retain >= 14 days.
+retention/rollback expectations (enforced by runbook + host schedule, verified by rehearsal):
+- Nomad snapshot backup: daily to R2, retain >= 14 days.
 - Application databases/volumes: daily or better to R2, retain 14-30 days.
 - Whole-VPS safety net: OVH Automated Backup enabled daily.
 - Pre-change rollback: OVH snapshot before risky changes (one active at a time).
-- Recovery requires the escrowed Coolify APP_KEY plus the R2 credential in OpenBao.
+- Recovery requires the escrowed Nomad bootstrap material plus the R2 credential in OpenBao.
 EOF

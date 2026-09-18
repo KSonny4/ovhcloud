@@ -3,7 +3,7 @@
 > for the single-command noninteractive provisioner. Keep this file for
 > emergencies only (total lockout, automation unreachable, OVH KVM/rescue).
 
-# 00. From zero to a working Coolify VPS
+# 00. From zero to a working Nomad VPS (legacy manual, break-glass only)
 
 Use this page the first time. The numbered documents contain the reasoning, recovery notes and edge cases.
 
@@ -12,7 +12,7 @@ Assumptions:
 - you have just bought an OVHcloud VPS;
 - nothing important is stored on it yet;
 - target OS is Ubuntu 24.04 LTS;
-- target platform is Coolify;
+- target platform is Nomad;
 - Cloudflare will provide DNS, Tunnel/Access for administration and R2 backup storage;
 - the baseline 4 GB VPS will use a 2 GB swap file.
 
@@ -99,7 +99,7 @@ Reconnect afterwards.
 
 ### 5. Give root the tested SSH public key
 
-Coolify manages its localhost server over SSH, so root key-based SSH is intentionally retained while password login is disabled.
+Root key-based SSH is intentionally retained while password login is disabled (break-glass access independent of any control plane).
 
 On the VPS:
 
@@ -230,7 +230,7 @@ sysctl vm.swappiness
 
 The 2 GB swap file is intentionally a safety buffer for temporary memory spikes. Regular heavy swapping or OOM kills means the machine needs tuning or more RAM.
 
-## Phase 3: install Coolify
+## Phase 3: install Nomad
 
 ### 10. Make sure Docker was not installed from Snap
 
@@ -238,7 +238,7 @@ The 2 GB swap file is intentionally a safety buffer for temporary memory spikes.
 snap list 2>/dev/null | grep -i docker || true
 ```
 
-If that prints a Snap Docker installation, remove it before continuing. The Coolify automatic installer does not support Docker installed through Snap.
+If that prints a Snap Docker installation, remove it before continuing. The Nomad Docker driver needs a normally-installed Docker Engine, never Snap.
 
 ### 11. Make the bootstrap ports reachable temporarily
 
@@ -248,14 +248,13 @@ You need:
 22/tcp    SSH during bootstrap
 80/tcp    HTTP / certificates
 443/tcp   HTTPS
-8000/tcp  initial Coolify dashboard
 ```
 
-Direct dashboard functionality can also use 6001/6002. If you need them during initial direct-IP access, expose them only temporarily and preferably only from your source IP.
+Nomad's API/UI (4646) stays loopback-only from the start — it is served through the Cloudflare Tunnel, never direct.
 
 Provider-level firewalling is preferred because Docker-published ports can bypass ordinary UFW input rules.
 
-### 12. Install Coolify
+### 12. Install Nomad (pinned, checksum-verified)
 
 Become root if needed:
 
@@ -263,86 +262,94 @@ Become root if needed:
 sudo -i
 ```
 
-Run the official installer:
+Install the pinned release (currently 2.0.6; confirm at
+https://releases.hashicorp.com/nomad/):
 
 ```bash
-curl -fsSL https://cdn.coollabs.io/coolify/install.sh | bash
+NOMAD_VERSION=2.0.6
+WORKDIR="$(mktemp -d)"; cd "$WORKDIR"
+curl -fsSLO "https://releases.hashicorp.com/nomad/${NOMAD_VERSION}/nomad_${NOMAD_VERSION}_linux_amd64.zip"
+curl -fsSLO "https://releases.hashicorp.com/nomad/${NOMAD_VERSION}/nomad_${NOMAD_VERSION}_SHA256SUMS"
+grep "nomad_${NOMAD_VERSION}_linux_amd64.zip" "nomad_${NOMAD_VERSION}_SHA256SUMS" | sha256sum -c -
+unzip -o "nomad_${NOMAD_VERSION}_linux_amd64.zip" -d /usr/local/bin
+chmod +x /usr/local/bin/nomad
+mkdir -p /opt/nomad /etc/nomad.d
 ```
+
+Write a single-node config in `/etc/nomad.d/nomad.hcl` (server +
+client, `bootstrap_expect = 1`, loopback bind, ACL enabled — see
+[03](03-nomad.md)), install the systemd unit, enable and start it.
 
 Verify:
 
 ```bash
+nomad server members
+nomad node status -short
 docker ps
 ss -lntup
 ```
 
-### 13. Create the Coolify administrator immediately
+### 13. ACL-bootstrap immediately
 
-Open:
-
-```text
-http://<VPS_IPV4>:8000
-```
-
-Create your administrator account immediately. Do not leave an unclaimed Coolify registration page on the public Internet.
-
-### 14. Save the Coolify recovery secret
-
-On the VPS:
+With nothing else listening, bootstrap once:
 
 ```bash
-sudo ls -l /data/coolify/source/.env
+export NOMAD_ADDR=http://127.0.0.1:4646
+nomad acl bootstrap -json
 ```
 
-Store the `APP_KEY`, or an encrypted copy of this file, in your external password/secrets manager.
+Escrow the bootstrap token + gossip key in OpenBao
+(`secret/projects/ovhcloud/NOMAD_BOOTSTRAP`) at once — without them a
+rebuilt cluster cannot be re-administered. Do not leave an unclaimed
+cluster API on the network.
 
-Never commit `/data/coolify/source/.env`.
+### 14. Save the Nomad recovery material
 
-## Phase 4: give Coolify a proper domain
+The escrowed ACL token and gossip key are the recovery secret. Verify
+they exist outside the VPS (OpenBao readback of field names only).
+
+Never commit token or key material to Git.
+
+## Phase 4: give Nomad a proper domain
 
 ### 15. Create DNS records in Cloudflare
 
-Example, using `example.com`:
+Example, using `example.com` (tunnel hostnames — no origin A records):
 
 ```text
-A  coolify  <VPS_IPV4>
-A  *        <VPS_IPV4>    # optional wildcard for apps
+CNAME  nomad  <tunnel-id>.cfargotunnel.com  (proxied)
+CNAME  *      <tunnel-id>.cfargotunnel.com  # optional wildcard for apps (proxied)
 ```
-
-Start with **DNS only** while validating the origin.
 
 Do not add an `AAAA` record until IPv6 has deliberately been tested.
 
-### 16. Configure the Coolify instance URL
+### 16. Point the tunnel at Nomad
 
-In Coolify set the instance URL to:
+Tunnel ingress for the UI hostname:
 
 ```text
-https://coolify.example.com
+nomad.example.com -> http://localhost:4646
 ```
 
-Verify:
+Verify through Cloudflare (service-token headers for machine checks):
 
 ```bash
-curl -I https://coolify.example.com
+curl -I https://nomad.example.com/v1/status/leader
 ```
 
-Once origin HTTPS works, enable Cloudflare proxying if desired. If enabled, use **Full (strict)** SSL/TLS mode.
-
-For the dashboard, adding a Cloudflare Access policy gives an additional identity gate in front of Coolify's own authentication.
+Use **Full (strict)** SSL/TLS mode. Put a Cloudflare Access policy in
+front of the UI hostname for human authentication.
 
 ### 17. Close bootstrap/admin ports
 
-Once Coolify works at its HTTPS domain and SSH through Cloudflare is verified, remove direct public access to:
+Once the UI serves at its HTTPS domain and SSH through Cloudflare is verified, remove direct public access to:
 
 ```text
 22/tcp
-8000/tcp
-6001/tcp
-6002/tcp
 ```
 
-Keep the SSH daemon itself running because Coolify uses SSH locally and the Cloudflare tunnel forwards to `localhost:22`.
+Nomad ports 4646/4647/4648 were never opened — they stay loopback-only.
+Keep the SSH daemon itself running because the Cloudflare tunnel forwards to `localhost:22`.
 
 Normal public surface for this baseline remains:
 
@@ -355,20 +362,21 @@ A later fully-tunnelled web architecture can remove those inbound ports too, but
 
 ## Phase 5: prove deployment works
 
-### 18. Deploy a disposable nginx app
+### 18. Deploy a disposable nginx job
 
-In Coolify:
+Jobspec `smoke.nomad.hcl` (Docker driver, `nginx:alpine`, one group,
+service check on `/`):
 
-1. create project `platform-smoke-test`;
-2. add a Docker Image application;
-3. image: `nginx:alpine`;
-4. container port: `80`;
-5. deploy;
-6. open its generated/custom domain.
+```bash
+export NOMAD_ADDR=http://127.0.0.1:4646 NOMAD_TOKEN=<bootstrap-token>
+nomad job run smoke.nomad.hcl
+nomad job status smoke
+```
 
-Delete it afterwards if you do not need it.
+Expose it through the edge job + DNS, open its domain, then stop and
+purge it (`nomad job stop -purge smoke`) if you do not need it.
 
-If this succeeds, Coolify, Docker, proxying, DNS and TLS are basically working.
+If this succeeds, Nomad, Docker, proxying, DNS and TLS are basically working.
 
 ## Phase 6: configure off-machine backups
 
@@ -377,7 +385,7 @@ If this succeeds, Coolify, Docker, proxying, DNS and TLS are basically working.
 Suggested name:
 
 ```text
-ovh-coolify-backups
+ovh-host-backups
 ```
 
 Create an R2 token scoped to that bucket with Object Read & Write access.
@@ -390,25 +398,24 @@ Store:
 
 in your external secrets manager.
 
-### 20. Add R2 to Coolify
+### 20. Keep R2 out of the control plane
 
-In:
-
-`S3 Storages -> Add`
-
-enter the R2 bucket, endpoint and credentials, then validate it.
+Do NOT attach the R2 bucket to any control-plane storage feature: the
+host timer is the single backup plane and pulls credentials memory-only
+from OpenBao on every run. A second destination would reintroduce an
+at-rest credential copy for zero coverage gain.
 
 ### 21. Configure three different backup types
 
 Do all of these separately:
 
-1. **Coolify instance backup -> R2**
+1. **Nomad snapshots -> R2**
 2. **each important database backup -> R2**
 3. **each irreplaceable persistent volume/directory -> R2**
 
-The Coolify instance backup does not contain all application/database/volume data.
+A Nomad snapshot does not contain application/database/volume data — those ride the same timer separately.
 
-For OmniRoute specifically, back up its `/app/data` persistent mount daily to R2. Because it contains SQLite state, enable **Stop containers while creating the archive** for a safer file-level backup. Keep approximately 30 remote backups and a small number of local copies. See [07. Deploy OmniRoute safely](07-omniroute.md).
+For OmniRoute specifically, back up its `/app/data` host volume daily to R2. Because it contains SQLite state, stop the allocation while creating the archive for a safer file-level backup. Keep approximately 30 remote backups and a small number of local copies. See [07. Deploy OmniRoute safely](07-omniroute.md).
 
 ### 22. Verify OVH Automated Backup
 
@@ -444,28 +451,25 @@ Remember that Docker-published ports can bypass normal UFW input filtering.
 
 ### 24. Enable notifications
 
-In Coolify configure an external notification channel and enable at least:
+Configure an external notification channel (the plane has no built-in
+notifier) and alert on at least:
 
-- Backup Failure;
-- Deployment Failure;
+- Backup Failure (timer unit + nightly R2 keys);
+- Deployment Failure (failed/degraded allocations);
 - Server Disk Usage;
 - Server Unreachable;
-- Container Status Changes.
+- Allocation status changes.
 
 ### 25. Configure conservative Docker cleanup
 
-In:
-
-`Servers -> localhost -> Docker Cleanup`
-
-Baseline:
+Nomad GC handles dead allocations; for Docker artifacts keep this
+baseline (manual or a small timer, never blind):
 
 ```text
-daily check
-80% disk threshold
-unused volume deletion: OFF
-unused network deletion: OFF
-application image retention: ON
+weekly or at 80% disk
+unused volume deletion: NEVER automatically
+unused network deletion: only when understood
+image retention: running jobs' images + one previous
 ```
 
 Do not casually run `docker system prune -a --volumes` on a server containing state.
@@ -478,17 +482,17 @@ Clone this repository on your workstation or server if desired, then:
 bash scripts/healthcheck.sh
 ```
 
-It is deliberately read-only and does not print Coolify `.env` contents.
+It is deliberately read-only and never prints secret material.
 
 ## Phase 8: test recovery before trusting the server
 
 Before moving anything important onto the VPS:
 
-- trigger one Coolify instance backup and verify it exists in R2;
+- trigger one Nomad snapshot backup and verify it exists in R2;
 - trigger one database backup and verify it exists in R2;
 - back up one persistent mount if you use one;
 - for OmniRoute, restore `/app/data` into a disposable test deployment at least once;
-- confirm the `APP_KEY` exists outside the VPS;
+- confirm the bootstrap token + gossip key exist outside the VPS;
 - confirm OVH Automated Backup exists;
 - perform at least one disposable application-data restore test.
 
@@ -510,8 +514,8 @@ OVH VPS
    |-- Ubuntu 24.04
    |-- 2 GB swap on the 4 GB baseline
    |-- cloudflared outbound admin tunnel
-   |-- Coolify
-   |-- Docker workloads
+   |-- Nomad (server + client)
+   |-- Docker workloads (Nomad jobs)
    `-- backups ----------> Cloudflare R2
 
 Human SSH: Cloudflare Access -> Tunnel -> localhost:22
@@ -523,7 +527,7 @@ Whole-server safety net: OVH Automated Backup
 
 - [OVH-specific details](01-ovh-vps.md)
 - [Host hardening details](02-host-bootstrap.md)
-- [Coolify details](03-coolify.md)
+- [Nomad details](03-nomad.md)
 - [Cloudflare/R2 details](04-cloudflare.md)
 - [Backup and restore details](05-backup-recovery.md)
 - [Operations and upgrades](06-operations.md)

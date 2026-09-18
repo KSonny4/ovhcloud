@@ -15,12 +15,12 @@ variable "cloudflare_zone_id" {
 }
 
 variable "service_token_id" {
-  description = "Shared machine service-token UUID (OpenBao COOLIFY_ACCESS_SERVICE_TOKEN.token_id); referenced by nested policies, never managed here."
+  description = "Shared machine service-token UUID (OpenBao EDGE_ACCESS_SERVICE_TOKEN.token_id); referenced by nested policies, never managed here."
   type        = string
 }
 
 variable "admin_emails" {
-  description = "Human dashboard identities (must retain ksonny4@gmail.com)."
+  description = "Human UI identities (must retain ksonny4@gmail.com)."
   type        = list(string)
 
   validation {

@@ -21,7 +21,7 @@ bao token create -policy=root -ttl=768h -renewable -orphan \
 open(os.path.expanduser("~/.vault-token.new"),"w").write(d["auth"]["client_token"])'
 chmod 600 ~/.vault-token.new
 # 2. Verify capability before trusting it.
-VAULT_TOKEN=$(cat ~/.vault-token.new) bao kv get -field=bucket secret/projects/ovhcloud/COOLIFY_R2
+VAULT_TOKEN=$(cat ~/.vault-token.new) bao kv get -field=bucket secret/projects/ovhcloud/BACKUP_R2
 VAULT_TOKEN=$(cat ~/.vault-token.new) bao kv put -mount=secret projects/ovhcloud/ROTATION_PROBE probe_field=probe_value
 VAULT_TOKEN=$(cat ~/.vault-token.new) bao kv metadata delete -mount=secret projects/ovhcloud/ROTATION_PROBE
 # 3. Swap and revoke the old accessor (look it up first: bao token lookup).
@@ -36,7 +36,7 @@ Renew before the 768h TTL elapses (`bao token renew`), or re-mint.
 
 ```bash
 BAO_ADDR=https://secrets.pkubelka.cz \
-DASHBOARD_LOGIN_URL="https://coolify.pkubelka.cz/login" \
+NOMAD_LEADER_URL="https://nomad.pkubelka.cz/v1/status/leader" \
 bash scripts/ensure-service-token.sh --rotate
 ```
 
@@ -47,13 +47,13 @@ Terraform is unaffected (secret version is ignored in config and state).
 
 Fresh generation happens inside `scripts/run-remote-provision.sh` when
 `PROVISION_SSH_KEY` is absent (ed25519, escrowed to
-`COOLIFY_SSH_PRIVATE_KEY`/`COOLIFY_SSH_PUBLIC_KEY`, public half registered at
+`PROVISION_SSH_PRIVATE_KEY`/`PROVISION_SSH_PUBLIC_KEY`, public half registered at
 the OVH account). Manual equivalent:
 
 ```bash
-ssh-keygen -t ed25519 -N '' -C ovh-coolify-provisioning -f /tmp/rotated-key
-bao kv put -mount=secret projects/ovhcloud/COOLIFY_SSH_PRIVATE_KEY value=@/tmp/rotated-key
-bao kv put -mount=secret projects/ovhcloud/COOLIFY_SSH_PUBLIC_KEY value=@/tmp/rotated-key.pub
+ssh-keygen -t ed25519 -N '' -C ovh-nomad-provisioning -f /tmp/rotated-key
+bao kv put -mount=secret projects/ovhcloud/PROVISION_SSH_PRIVATE_KEY value=@/tmp/rotated-key
+bao kv put -mount=secret projects/ovhcloud/PROVISION_SSH_PUBLIC_KEY value=@/tmp/rotated-key.pub
 # then authorize the public half on the target + register at OVH (runner does both)
 ```
 
@@ -76,18 +76,18 @@ Why dashboard: `POST /user/tokens` returns 403 under the deployment token
 
 Why dashboard: R2 token routes return 404 under the deployment token.
 
-1. Dashboard: R2 -> bucket `ovh-coolify-backups` -> Manage API Tokens ->
+1. Dashboard: R2 -> bucket `ovh-host-backups` -> Manage API Tokens ->
    delete the old key, create Object Read & Write scoped to the bucket.
 2. Escrow (all four fields — preflight and `fetch-r2-env.sh` fail closed
    when `endpoint` is absent):
-   `bao kv put -mount=secret projects/ovhcloud/COOLIFY_R2
-   access_key_id=<id> secret_access_key=<secret> bucket=ovh-coolify-backups
+   `bao kv put -mount=secret projects/ovhcloud/BACKUP_R2
+   access_key_id=<id> secret_access_key=<secret> bucket=ovh-host-backups
    endpoint=https://<account-id>.r2.cloudflarestorage.com`
 3. Verify (nothing to rewire):
-   - Coolify holds NO R2 copy: the `s3_storages` destination row was deleted
-     2026-09-14 after proving zero references (no schedules, no avatars or
-     icons point at it). Do NOT re-create it — the host timer is the single
-     backup plane, and a new row would reintroduce an at-rest credential.
+   - No control plane holds an R2 copy: the retired plane's `s3_storages`
+     destination row was deleted 2026-09-14 after proving zero references.
+     Do NOT re-create one — the host timer is the single backup plane, and
+     a new destination would reintroduce an at-rest credential.
    - Host: nothing to rewrite — the timer pulls memory-only via
      `fetch-r2-env.sh` on every run, so new keys take effect automatically.
    - `loader_out="$(BAO_ADDR=https://secrets.pkubelka.cz bash scripts/tf-env-from-openbao.sh)" || exit 2`
@@ -98,11 +98,11 @@ Why dashboard: R2 token routes return 404 under the deployment token.
 
 ### OpenBao R2-reader accessor (host-side secret at rest)
 
-The single file on the host is `/root/coolify-backup/openbao-token` (0600,
-policy `coolify-r2-reader`: read-only on the R2 entry). To rotate:
-1. `bao token create -policy=coolify-r2-reader -period=720h -orphan` (operator).
+The single file on the host is `/root/host-backup/openbao-token` (0600,
+policy `backup-r2-reader`: read-only on the R2 entry). To rotate:
+1. `bao token create -policy=backup-r2-reader -period=720h -orphan` (operator).
 2. Pipe the new `client_token` to the host file (stdin pipe, 0600).
-3. `sudo systemctl start coolify-backup.service` must complete both backups.
+3. `sudo systemctl start host-backup.service` must complete all backups.
 4. Revoke the old accessor: `bao token revoke -accessor <old>`. Unrenewed
    periodic tokens also self-expire after their period.
 
@@ -118,7 +118,7 @@ otherwise the documented decision is to leave it.
 
 ## Verification invariant
 
-After any rotation: service-token machine check HTTP 200, human check 302,
+After any rotation: service-token machine check HTTP 200 on the Nomad leader endpoint, human check 302,
 `bash scripts/validate-repository.sh` passes, and the rotated credential's
 old value is confirmed dead (revoked accessor lookup fails, old API key
 returns 403/invalid-token).

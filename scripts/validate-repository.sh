@@ -27,17 +27,18 @@ PY
 
 python3 scripts/validate-iac.py
 bash -n scripts/bootstrap-vps.sh
-bash -n scripts/provision-coolify.sh
+bash -n scripts/provision-nomad.sh
+bash -n scripts/verify-nomad-live.sh
 bash -n scripts/configure-tunnel-access.sh
 bash -n scripts/backup-r2-probe.sh
 bash -n scripts/rehearse-fresh-environment.sh
 bash -n scripts/healthcheck.sh
 bash -n scripts/run-remote-provision.sh
-bash -n scripts/schedule-coolify-backup.sh
+bash -n scripts/schedule-host-backup.sh
 bash -n scripts/lib/preserved-guard.sh
 bash -n scripts/ensure-service-token.sh
 bash -n scripts/tf-env-from-openbao.sh
-bash -n scripts/rollback-coolify-backup.sh
+bash -n scripts/rollback-nomad-snapshot.sh
 bash -n scripts/rollback-app-workloads.sh
 bash -n scripts/backup-app-workloads.sh
 bash -n scripts/ensure-tunnel.sh
@@ -46,7 +47,30 @@ bash -n scripts/wire-fresh-edge.sh
 bash -n scripts/fetch-r2-env.sh
 bash -n scripts/emit-fresh-imports.sh
 bash -n scripts/adopt-fresh-edge.sh
-shellcheck scripts/bootstrap-vps.sh scripts/provision-coolify.sh scripts/configure-tunnel-access.sh scripts/backup-r2-probe.sh scripts/rehearse-fresh-environment.sh scripts/healthcheck.sh scripts/validate-repository.sh scripts/run-remote-provision.sh scripts/schedule-coolify-backup.sh scripts/lib/preserved-guard.sh scripts/ensure-service-token.sh scripts/tf-env-from-openbao.sh scripts/rollback-coolify-backup.sh scripts/rollback-app-workloads.sh scripts/backup-app-workloads.sh scripts/ensure-tunnel.sh scripts/test-clean-target-install.sh scripts/wire-fresh-edge.sh scripts/fetch-r2-env.sh scripts/emit-fresh-imports.sh scripts/adopt-fresh-edge.sh
+bash -n scripts/ensure-fresh-backend.sh
+bash -n scripts/fetch-app-secrets.sh
+bash -n scripts/ensure-omniroute-secrets.sh
+bash -n scripts/recreate-workload.sh
+bash -n scripts/collect-live-evidence.sh
+bash -n scripts/collect-stage-proofs.sh
+shellcheck scripts/bootstrap-vps.sh scripts/provision-nomad.sh scripts/verify-nomad-live.sh scripts/configure-tunnel-access.sh scripts/backup-r2-probe.sh scripts/rehearse-fresh-environment.sh scripts/healthcheck.sh scripts/validate-repository.sh scripts/run-remote-provision.sh scripts/schedule-host-backup.sh scripts/lib/preserved-guard.sh scripts/ensure-service-token.sh scripts/tf-env-from-openbao.sh scripts/rollback-nomad-snapshot.sh scripts/rollback-app-workloads.sh scripts/backup-app-workloads.sh scripts/ensure-tunnel.sh scripts/test-clean-target-install.sh scripts/wire-fresh-edge.sh scripts/fetch-r2-env.sh scripts/emit-fresh-imports.sh scripts/adopt-fresh-edge.sh scripts/ensure-fresh-backend.sh scripts/fetch-app-secrets.sh scripts/ensure-omniroute-secrets.sh scripts/recreate-workload.sh scripts/collect-live-evidence.sh scripts/collect-stage-proofs.sh
+
+# Nomad-only gate: no tracked reference to the retired plane may remain in
+# the active tree (history lives in git log + evidence-archive/, which this
+# gate deliberately does not scan). The needle is assembled at runtime so
+# this very gate does not itself contain the literal — including the
+# deleted-script filenames, which are matched by pattern, not spelled out.
+needle="cool""ify"
+if git ls-files "scripts/*${needle}*" 'docs/03-*.md' 2>/dev/null | grep -v 'docs/03-nomad.md' | grep -q .; then
+  echo 'retired-plane scripts/docs present:' >&2
+  git ls-files "scripts/*${needle}*" 'docs/03-*.md' 2>/dev/null | grep -v 'docs/03-nomad.md' >&2
+  exit 1
+fi
+if git grep -i -l "$needle" -- CONTEXT.md README.md AGENTS.md docs scripts infra/terraform infra/terraform-fresh .github 2>/dev/null | grep -q .; then
+  echo 'retired-plane references remain in the active tree:' >&2
+  git grep -i -l "$needle" -- CONTEXT.md README.md AGENTS.md docs scripts infra/terraform infra/terraform-fresh .github 2>/dev/null >&2
+  exit 1
+fi
 
 git diff --check
 

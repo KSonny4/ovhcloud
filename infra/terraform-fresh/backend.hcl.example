@@ -1,6 +1,6 @@
 # Copy to backend.hcl (ignored). MUST differ from the preserved key.
 bucket         = "REPLACE_WITH_TERRAFORM_STATE_BUCKET"
-key            = "ovhcloud-coolify-fresh/terraform.tfstate"
+key            = "ovhcloud-nomad-fresh/terraform.tfstate"
 region         = "REPLACE_WITH_STATE_REGION"
 endpoints      = { s3 = "REPLACE_WITH_S3_COMPATIBLE_ENDPOINT" }
 encrypt        = true

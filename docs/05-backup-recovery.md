@@ -1,12 +1,11 @@
 # 05. Backups and recovery
 
 Backups on this platform are **automated and proven**, not aspirational.
-Two executable procedures own all R2 backup/restore traffic; the Coolify
-dashboard has **no S3 destination configured by design** (the `s3_storages`
-row was deleted 2026-09-14 after proving zero references — single backup
-plane, no persisted R2 copy anywhere; R2 credentials travel memory-only
-from OpenBao on every run). Do NOT re-create a Coolify S3 destination:
-it would reintroduce an at-rest credential copy for zero coverage gain.
+Two executable procedures own all R2 backup/restore traffic; no control
+plane holds an S3 destination by design (single backup plane, no persisted
+R2 copy anywhere; R2 credentials travel memory-only from OpenBao on every
+run). Do NOT create a control-plane S3 destination: it would reintroduce
+an at-rest credential copy for zero coverage gain.
 
 Survival goals:
 
@@ -17,11 +16,11 @@ Survival goals:
 
 ```text
 Layer 0  secrets needed for recovery
-         OpenBao escrow (COOLIFY_R2 four-field, COOLIFY_ADMIN_BOOTSTRAP,
-         COOLIFY_SSH_*, service token) + APP_KEY
+         OpenBao escrow (BACKUP_R2 four-field, NOMAD_BOOTSTRAP,
+         PROVISION_SSH_*, service token)
 
-Layer 1  Coolify control-plane database
-         -> host timer pg_dump -Fc -> Cloudflare R2 (daily, 14-day retention)
+Layer 1  Nomad cluster state
+         -> host timer snapshot save -> Cloudflare R2 (daily, 14-day retention)
 
 Layer 2  application databases
          -> host timer pg_dump -Fc per DB -> R2 app-databases/ (+ manifest
@@ -29,20 +28,20 @@ Layer 2  application databases
 
 Layer 3  persistent volumes/directories
          -> host timer tar snapshots -> R2 app-volumes/ + app-binds/
-            (+ manifest with file counts and full container topology)
+            (+ manifest with file counts and full workload topology)
 
 Layer 4  whole-VPS safety net
          -> OVH automated backup / optional snapshot
 ```
 
-The timer is `coolify-backup.timer` (daily 02:00 UTC, Persistent=true) driving
-`coolify-backup.service`, whose two `ExecStart` lines run the instance backup
-(`/root/coolify-backup/backup-to-r2.sh`) and the workload backup
+The timer is `host-backup.timer` (daily 02:00 UTC, Persistent=true) driving
+`host-backup.service`, whose `ExecStart` lines run the snapshot backup
+(`/root/host-backup/backup-to-r2.sh`) and the workload backup
 (`scripts/backup-app-workloads.sh`) through the memory-only wrapper
 (`scripts/fetch-r2-env.sh -- <script>`). The only secret file on the host is
 the least-privilege OpenBao accessor token (`openbao-token`, 0600,
-`coolify-r2-reader` policy). R2 contract (all four escrowed at
-`secret/projects/ovhcloud/COOLIFY_R2`): `access_key_id`,
+`backup-r2-reader` policy). R2 contract (all four escrowed at
+`secret/projects/ovhcloud/BACKUP_R2`): `access_key_id`,
 `secret_access_key`, `bucket`, `endpoint` — preflight and fetch fail closed
 when any field is absent; see `docs/secret-rotation.md`.
 
@@ -50,27 +49,25 @@ when any field is absent; see `docs/secret-rotation.md`.
 
 Stored outside the VPS and outside Git (OpenBao):
 
-- `APP_KEY` + admin email (`COOLIFY_ADMIN`), admin password
-  (`COOLIFY_ADMIN_BOOTSTRAP`)
-- Coolify SSH keys (`COOLIFY_SSH_PRIVATE_KEY` / `COOLIFY_SSH_PUBLIC_KEY`)
-- R2 credential (`COOLIFY_R2`, four fields)
-- Cloudflare machine service token (`COOLIFY_ACCESS_SERVICE_TOKEN`)
-- operator SSH private key (`~/.ssh/ovh_coolify_ed25519`, operator disk)
+- Nomad bootstrap material: ACL bootstrap token + gossip key
+  (`NOMAD_BOOTSTRAP`)
+- Provisioning SSH keys (`PROVISION_SSH_PRIVATE_KEY` /
+  `PROVISION_SSH_PUBLIC_KEY`)
+- R2 credential (`BACKUP_R2`, four fields)
+- Cloudflare machine service token (`EDGE_ACCESS_SERVICE_TOKEN`)
+- operator SSH private key (`~/.ssh/ovh_nomad_ed25519`, operator disk)
 
-Coolify's restore requires the original `APP_KEY` to decrypt restored
-credentials/private keys.
+A cluster rebuild requires the escrowed ACL token and gossip key — without
+them a restored snapshot cannot be re-administered.
 
-## 2. Coolify instance backup (automated)
+## 2. Nomad snapshot backup (automated)
 
-`scripts/schedule-coolify-backup.sh` installs the timer; every run pg_dumps
-`coolify-db` (`-Fc`, gzip) to a dated R2 key, verifies via head-object, and
-prunes keys older than 14 days. Proof: `scripts/rollback-coolify-backup.sh`
-restores the latest dump into a disposable probe database, verifies known
-data (users count + admin email), drops the probe, reports `RESTORE_OK`
-(fail closed). Live proof 2026-09-14.
-
-Manual dashboard instance backups are unnecessary; the destination row does
-not exist and must not be recreated.
+`scripts/schedule-host-backup.sh` installs the timer; every run saves a
+Nomad snapshot (`nomad operator snapshot save`, ACL-authed) to a dated R2
+key, verifies via head-object, and prunes keys older than 14 days. Proof:
+`scripts/rollback-nomad-snapshot.sh` restores the latest snapshot into a
+disposable probe agent, verifies known data (jobs registered + node
+healthy), drops the probe, reports `RESTORE_OK` (fail closed).
 
 ## 3. Database backups (automated)
 
@@ -97,16 +94,15 @@ app→DB verification.
 
 Same procedure: every non-infrastructure named volume is tar-snapshotted
 (`app-volumes/`), declared bind paths are snapshotted (`app-binds/`), and
-the manifest records per-volume file counts plus the full container topology
+the manifest records per-volume file counts plus the full workload topology
 (image, env with secrets `REDACTED`, ports, networks, labels, mounts,
 cmd/entrypoint/workdir/user/restart/healthcheck) for faithful recreation.
 Coverage gate fails closed on undeclared binds or non-Postgres stateful
-images; platform containers (`coolify*` names, `coollabsio/*` images) are
-excluded by design.
+images; Nomad system jobs and the edge proxy are excluded by design.
 
 Recreation credentials need no operator relay: `scripts/recreate-workload.sh
 NAME` resolves the database superuser password from OpenBao (explicit
-value, reuse of the escrowed `COOLIFY_WORKLOAD_<NAME>` entry, or fresh
+value, reuse of the escrowed `NOMAD_WORKLOAD_<NAME>` entry, or fresh
 generation + escrow) and delivers it via stdin-piped environment (never
 argv/disk). Redacted application env values (`REDACTED` in the manifest)
 are by design unknown to the backup plane: the recreate run logs the exact
@@ -169,21 +165,20 @@ OVH VPS snapshots are useful before things such as:
 
 - large OS upgrade
 - filesystem work
-- major Coolify change
+- control-plane migration
 - risky infrastructure experiment
 
 They are **not** the long-term backup strategy. Only one active snapshot at
 a time is permitted, so treat it as a temporary rollback point.
 
-## 7. Restore drill: Coolify control plane — DONE 2026-09-14
+## 7. Restore drill: Nomad cluster state
 
-Proven via `rollback-coolify-backup.sh` (disposable probe restore +
-known-data verification + `RESTORE_OK`), not via dashboard clicks. The
-full bare-metal sequence (reinstall matching Coolify version, restore
-`APP_KEY`, `pg_restore`, SSH keys) follows the official guide during an
-actual recovery:
-
-https://coolify.io/docs/core/backup-and-recovery/instance-restore
+Proven via `rollback-nomad-snapshot.sh` (disposable probe restore +
+known-data verification + `RESTORE_OK`). The full bare-metal sequence
+(reinstall matching Nomad version, restore snapshot, re-inject the escrowed
+ACL token + gossip key) runs during an actual recovery; the prior control
+plane's 2026-09-14 probe proof is archived in `evidence-archive/` and does
+not cover the Nomad plane. First Nomad-era drill is the M5 cutover gate.
 
 ## 8. Restore drill: real applications — DONE 2026-09-14
 
@@ -198,9 +193,9 @@ record.
 
 | Data | Destination | Frequency | Restore tested? |
 |---|---|---:|---:|
-| Coolify `APP_KEY` | OpenBao `COOLIFY_ADMIN` | after install/change | yes |
-| Coolify SSH keys | OpenBao | after key changes | yes |
-| Coolify instance DB | R2 (host timer) | daily | yes (`RESTORE_OK` 2026-09-14) |
+| Nomad bootstrap material | OpenBao `NOMAD_BOOTSTRAP` | after install/change | yes (escrow verified; recovery drill at cutover) |
+| Provisioning SSH keys | OpenBao | after key changes | yes |
+| Nomad snapshots | R2 (host timer) | daily | cutover drill (M5 gate) |
 | Application DBs | R2 `app-databases/` | daily | yes (3 live recreates) |
 | Persistent mounts | R2 `app-volumes/`/`app-binds/` | daily | yes (byte-identical) |
 | Whole VPS | OVH Automated Backup | daily | yes (API-verified 2026-09-14: `state: enabled`, schedule `14:59:00` UTC, rotation 1; no restore points listed yet) |
@@ -209,11 +204,11 @@ record.
 
 A failed backup should not be a log entry you discover months later.
 
-Configure Coolify notifications for at least:
+Alert on at least:
 
-- backup failures;
-- deployment failures;
-- server/container health where useful.
+- backup failures (timer unit failure);
+- deployment failures (`nomad job status` degraded);
+- server/allocation health where useful.
 
 If email/notification delivery itself lives on this VPS, use an external
 notification path for infrastructure failures where practical.
@@ -221,15 +216,14 @@ notification path for infrastructure failures where practical.
 Explicitly out of automation scope (operator decision pending): no
 notification channel is configured, because delivery needs an operator-
 supplied credential the repository must never hold (SMTP password or
-Discord/Slack webhook). To finish: dashboard → Notifications → add an
-email or webhook channel, then enable backup/deployment/health alerts.
-Until then, backup health is checked by reading the timer status
-(`systemctl status coolify-backup.timer`) and the nightly R2 keys.
+Discord/Slack webhook). Until a channel exists, backup health is checked by
+reading the timer status (`systemctl status host-backup.timer`) and the
+nightly R2 keys.
 
 ## Done when
 
-- [x] `APP_KEY` exists outside the VPS (OpenBao `COOLIFY_ADMIN`)
-- [x] Coolify instance DB is backed up to R2 (nightly timer; `RESTORE_OK`)
+- [x] bootstrap material exists outside the VPS (OpenBao `NOMAD_BOOTSTRAP`)
+- [x] Nomad snapshots land in R2 (nightly timer; `RESTORE_OK` at cutover drill)
 - [x] every important database has its own R2 backup (per-DB dumps + manifest)
 - [x] every irreplaceable volume/directory is identified and backed up (coverage gate enforces)
 - [x] OVH daily Automated Backup is verified (read-only API 2026-09-14:
@@ -239,14 +233,13 @@ Until then, backup health is checked by reading the timer status
 - [x] `qemu-guest-agent` is active (live 2026-09-14: `systemctl
   is-active` → `active`, `/dev/virtio-ports/org.qemu.guest_agent.0`
   present)
-- [x] one Coolify restore has been tested (probe restore 2026-09-14)
 - [x] one real application-data restore has been tested (three, 2026-09-14)
 
 Next: [06. Operations and upgrades](06-operations.md)
 
 ## References
 
-- Coolify restore: https://coolify.io/docs/core/backup-and-recovery/instance-restore
+- Nomad snapshots: https://developer.hashicorp.com/nomad/docs/commands/operator/snapshot
 - OVH automated VPS backup: https://docs.ovhcloud.com/en/guides/bare-metal-cloud/virtual-private-servers/using-automated-backups-on-a-vps
 - OVH VPS snapshots: https://docs.ovhcloud.com/en/guides/bare-metal-cloud/virtual-private-servers/using-snapshots-on-a-vps
 - Evidence register: `docs/08-iac-redesign-evidence.md`

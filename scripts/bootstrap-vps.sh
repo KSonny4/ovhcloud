@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Noninteractive fresh-VPS bootstrap for the OVHcloud/Coolify redesign.
+# Noninteractive fresh-VPS bootstrap for the OVHcloud/Nomad redesign.
 #
 # Design contract (see docs/iac-interfaces.md):
 # - Runs unattended after an authorized operator supplies provider authorization.
@@ -10,7 +10,7 @@
 # - Version-aware: refuses unsupported Ubuntu releases before changing anything.
 # - Installs Docker Engine from the official apt repository when absent,
 #   then verifies it (engine version + hello-world), because the official
-#   Coolify installer assumes a working Docker.
+#   The Nomad Docker driver assumes a working Docker.
 #
 # Usage:
 #   BOOTSTRAP_TARGET_HOST=fresh-host.example \
@@ -101,7 +101,7 @@ run apt-get install -y --no-install-recommends \
   ca-certificates curl git jq vim htop tmux \
   openssh-server unattended-upgrades python3
 
-run hostnamectl set-hostname ovh-coolify-fresh || true
+run hostnamectl set-hostname ovh-nomad-fresh || true
 run timedatectl set-timezone UTC || true
 
 for user_home in /home/ubuntu /root; do
@@ -188,7 +188,7 @@ if ! command -v docker >/dev/null 2>&1; then
     run bash -c 'echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list >/dev/null'
     run apt-get update -qq
     run apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-    command -v docker >/dev/null 2>&1 || { echo 'Docker engine not installable on this release (Coolify requires Docker).' >&2; exit 2; }
+    command -v docker >/dev/null 2>&1 || { echo 'Docker engine not installable on this release (Nomad Docker driver requires Docker).' >&2; exit 2; }
     log 'Docker Engine installed from the official repository.'
   fi
 else

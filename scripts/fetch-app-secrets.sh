@@ -31,22 +31,23 @@ if [ "$mode" != 'latest' ] && [ -z "$stamp" ]; then echo '--stamp is required.' 
 command -v bao >/dev/null 2>&1 || { echo 'bao CLI is required.' >&2; exit 2; }
 command -v aws >/dev/null 2>&1 || { echo 'awscli is required.' >&2; exit 2; }
 export BAO_ADDR="${BAO_ADDR:-https://secrets.pkubelka.cz}"
-AWS_ACCESS_KEY_ID="$(bao kv get -field=access_key_id secret/projects/ovhcloud/COOLIFY_R2 2>/dev/null || true)"
+AWS_ACCESS_KEY_ID="$(bao kv get -field=access_key_id secret/projects/ovhcloud/BACKUP_R2 2>/dev/null || true)"
 export AWS_ACCESS_KEY_ID
-AWS_SECRET_ACCESS_KEY="$(bao kv get -field=secret_access_key secret/projects/ovhcloud/COOLIFY_R2 2>/dev/null || true)"
+AWS_SECRET_ACCESS_KEY="$(bao kv get -field=secret_access_key secret/projects/ovhcloud/BACKUP_R2 2>/dev/null || true)"
 export AWS_SECRET_ACCESS_KEY
-r2_ep="$(bao kv get -field=endpoint secret/projects/ovhcloud/COOLIFY_R2 2>/dev/null || true)"
+r2_ep="$(bao kv get -field=endpoint secret/projects/ovhcloud/BACKUP_R2 2>/dev/null || true)"
+r2_bucket="$(bao kv get -field=bucket secret/projects/ovhcloud/BACKUP_R2 2>/dev/null || true)"
 export AWS_DEFAULT_REGION=auto
-if [ -z "$AWS_ACCESS_KEY_ID" ] || [ -z "$AWS_SECRET_ACCESS_KEY" ] || [ -z "$r2_ep" ]; then
-  echo 'COOLIFY_R2 escrow incomplete (fail closed).' >&2; exit 2
+if [ -z "$AWS_ACCESS_KEY_ID" ] || [ -z "$AWS_SECRET_ACCESS_KEY" ] || [ -z "$r2_ep" ] || [ -z "$r2_bucket" ]; then
+  echo 'BACKUP_R2 escrow incomplete (fail closed).' >&2; exit 2
 fi
 if [ "$mode" = 'latest' ]; then
-  AWS_DEFAULT_REGION=auto aws --endpoint-url "$r2_ep" s3 ls 's3://ovh-coolify-backups/app-manifests/' 2>/dev/null | awk '{print $4}' | grep -oE '[0-9]{8}T[0-9]{6}Z' | sort | tail -n1
+  AWS_DEFAULT_REGION=auto aws --endpoint-url "$r2_ep" s3 ls "s3://${r2_bucket}/app-manifests/" 2>/dev/null | awk '{print $4}' | grep -oE '[0-9]{8}T[0-9]{6}Z' | sort | tail -n1
   exit 0
 fi
 manifest="$(mktemp /tmp/app-secrets-manifest.XXXXXX.json)"
 trap 'rm -f "$manifest"' EXIT
-AWS_DEFAULT_REGION=auto aws --endpoint-url "$r2_ep" s3api get-object --bucket ovh-coolify-backups --key "app-manifests/${stamp}.json" "$manifest" >/dev/null 2>&1 \
+AWS_DEFAULT_REGION=auto aws --endpoint-url "$r2_ep" s3api get-object --bucket "$r2_bucket" --key "app-manifests/${stamp}.json" "$manifest" >/dev/null 2>&1 \
   || { echo "manifest ${stamp} not retrievable from R2 (fail closed)." >&2; exit 2; }
 # Build TAB-delimited var/path/field triples (values never touch this layer;
 # TAB is safe: var names, entry paths, and field names never contain tabs).

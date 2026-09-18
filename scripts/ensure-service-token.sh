@@ -4,17 +4,17 @@
 # The API never reveals a token secret after creation/rotation, so OpenBao is
 # the sole record: this script ensures the token exists (creating it when
 # absent), escrows every derived value, rotates on demand, and proves the
-# escrowed pair is accepted by the dashboard. Every stage fails closed.
+# escrowed pair is accepted by the UI leader endpoint. Every stage fails closed.
 #
 # - Reads: Cloudflare admin token ONLY from OpenBao
 #   (secret/projects/ovhcloud/ADMIN_CLOUDFLARE field ADMIN_CLOUDFLARE).
-# - Writes: secret/projects/ovhcloud/COOLIFY_ACCESS_SERVICE_TOKEN fields
+# - Writes: secret/projects/ovhcloud/EDGE_ACCESS_SERVICE_TOKEN fields
 #   client_id, client_secret, token_id, duration (never printed, never disk).
 # - Never touches the preserved VPS; only Cloudflare API + OpenBao + HTTPS.
 #
 # Usage:
 #   BAO_ADDR=https://secrets.pkubelka.cz CLOUDFLARE_ACCOUNT_ID=... \
-#   DASHBOARD_LOGIN_URL=https://coolify.example.com/login \
+#   NOMAD_LEADER_URL=https://nomad.example.com/v1/status/leader \
 #   bash scripts/ensure-service-token.sh [--dry-run] [--rotate]
 set -euo pipefail
 
@@ -33,24 +33,24 @@ done
 
 log() { printf '%s\n' "$*"; }
 
-token_name="${SERVICE_TOKEN_NAME:-ovh-coolify-machine-verification}"
+token_name="${SERVICE_TOKEN_NAME:-ovh-nomad-machine-verification}"
 duration="${SERVICE_TOKEN_DURATION:-8760h}"
 account="${CLOUDFLARE_ACCOUNT_ID:-5eb3ea3a84b37564cfd8739f32ffb559}"
-login_url="${DASHBOARD_LOGIN_URL:-}"
+login_url="${NOMAD_LEADER_URL:-}"
 bao_addr="${BAO_ADDR:-https://secrets.pkubelka.cz}"
 # Ensure-only mode (first-time flow): create + escrow WITHOUT verification,
 # so downstream steps can consume the escrow before any route exists to verify
-# against. DASHBOARD_LOGIN_URL is required only when verifying.
+# against. NOMAD_LEADER_URL is required only when verifying.
 if [ -z "$login_url" ] && [ "$dry_run" -eq 0 ] && [ "$ensure_only" -eq 0 ]; then
-  echo 'DASHBOARD_LOGIN_URL must be set (proves the escrowed pair is accepted).' >&2
+  echo 'NOMAD_LEADER_URL must be set (proves the escrowed pair is accepted).' >&2
   exit 2
 fi
 
 if [ "$dry_run" -eq 1 ]; then
   log 'DRY-RUN: read Cloudflare admin token from OpenBao by name only (value never printed)'
   log 'DRY-RUN: list Access service tokens, match by name, create when absent (fail closed on API error)'
-  log 'DRY-RUN: escrow client_id/client_secret/token_id/duration to OpenBao COOLIFY_ACCESS_SERVICE_TOKEN (fail closed when escrow unavailable)'
-  log 'DRY-RUN: verify escrowed pair against DASHBOARD_LOGIN_URL, require HTTP 200 (fail closed)'
+  log 'DRY-RUN: escrow client_id/client_secret/token_id/duration to OpenBao EDGE_ACCESS_SERVICE_TOKEN (fail closed when escrow unavailable)'
+  log 'DRY-RUN: verify escrowed pair against NOMAD_LEADER_URL, require HTTP 200 (fail closed)'
   exit 0
 fi
 
@@ -92,7 +92,7 @@ def api(method, path, body=None):
 
 def bao_escrow(cid, sec, tid):
     p = subprocess.run(
-        ['bao', 'kv', 'put', '-mount=secret', 'projects/ovhcloud/COOLIFY_ACCESS_SERVICE_TOKEN',
+        ['bao', 'kv', 'put', '-mount=secret', 'projects/ovhcloud/EDGE_ACCESS_SERVICE_TOKEN',
          f'client_id={cid}', f'client_secret={sec}',
          f'token_id={tid}', f'duration={dur}'],
         capture_output=True, text=True, env={**os.environ, 'BAO_ADDR': bao_addr})
@@ -106,7 +106,7 @@ def verify(cid, sec):
     # honestly as the lifecycle checker.
     req = urllib.request.Request(
         login, headers={'CF-Access-Client-Id': cid, 'CF-Access-Client-Secret': sec,
-                        'User-Agent': 'ovh-coolify-lifecycle-check/1.0'})
+                        'User-Agent': 'ovh-nomad-lifecycle-check/1.0'})
     try:
         with urllib.request.urlopen(req, timeout=30) as r:
             code = r.status
@@ -141,7 +141,7 @@ else:
         print(f'token {name!r} exists ({tid}); verifying escrowed pair.')
         cur = subprocess.run(
             ['bao', 'kv', 'get', '-field=client_secret',
-             'secret/projects/ovhcloud/COOLIFY_ACCESS_SERVICE_TOKEN'],
+             'secret/projects/ovhcloud/EDGE_ACCESS_SERVICE_TOKEN'],
             capture_output=True, text=True, env={**os.environ, 'BAO_ADDR': bao_addr})
         if cur.returncode != 0 or not cur.stdout.strip():
             sys.exit('OpenBao escrow missing client_secret for the existing token; refusing to continue.')

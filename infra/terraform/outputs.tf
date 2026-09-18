@@ -19,6 +19,6 @@ output "cloudflare_tunnel_id" {
 }
 
 output "backup_bucket_name" {
-  description = "Private Cloudflare R2 bucket used for Coolify/application backups."
+  description = "Private Cloudflare R2 bucket used for Nomad/application backups."
   value       = cloudflare_r2_bucket.backups.name
 }

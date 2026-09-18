@@ -9,13 +9,13 @@
 # - Reads secrets only from environment/stdin; never prints them and never
 #   passes them as command arguments (token lives in a 0600 --token-file
 #   read by an owned systemd unit, mirroring the preserved host).
-# - Fail-closed: cloudflared must be active and the dashboard must answer
-#   exactly HTTP 200 to the service-token pair (a 302 means rejection).
+# - Fail-closed: cloudflared must be active and the UI leader endpoint must
+#   answer exactly HTTP 200 to the service-token pair (a 302 means rejection).
 # - Idempotent; refuses to target the preserved production VPS.
 #
 # Usage:
 #   TUNNEL_TARGET_HOST=fresh-host.example \
-#   TUNNEL_DOMAIN=coolify.example \
+#   TUNNEL_DOMAIN=example.com \
 #   CLOUDFLARED_TUNNEL_TOKEN='<from OpenBao>' \
 #   CF_ACCESS_CLIENT_ID='<from OpenBao>' CF_ACCESS_CLIENT_SECRET='<from OpenBao>' \
 #   sudo -E bash scripts/configure-tunnel-access.sh [--dry-run]
@@ -128,23 +128,23 @@ fi
 
 if [ -z "$client_id" ] || [ -z "$client_secret" ]; then
   if [ "$dry_run" -eq 1 ]; then
-    log 'DRY-RUN: verify dashboard availability with CF-Access service-token headers (values not printed)'
+    log 'DRY-RUN: verify UI availability with CF-Access service-token headers (values not printed)'
   else
     echo 'CF_ACCESS_CLIENT_ID and CF_ACCESS_CLIENT_SECRET must be supplied from OpenBao.' >&2
     exit 2
   fi
 else
   if [ "$dry_run" -eq 1 ]; then
-    log 'DRY-RUN: curl dashboard login with CF-Access service-token headers'
+    log 'DRY-RUN: curl UI leader endpoint with CF-Access service-token headers'
   else
     code="$(curl -sS -o /dev/null -w '%{http_code}' --cookie-jar /dev/null --max-time 20 \
       -H "CF-Access-Client-Id: ${client_id}" \
       -H "CF-Access-Client-Secret: ${client_secret}" \
-      "https://coolify.${domain}/login")"
+      "https://nomad.${domain}/v1/status/leader")"
     # Exactly 200: a 302 is a redirect to the Access login page, which means
     # the service token was NOT accepted and must fail the verification.
     if [ "$code" = '200' ]; then
-      log "dashboard machine verification HTTP 200 (service token accepted; clean cookie jar used)."
+      log "UI machine verification HTTP 200 (service token accepted; clean cookie jar used)."
     else
       echo "machine verification failed with HTTP ${code} (required exactly 200)" >&2
       exit 1

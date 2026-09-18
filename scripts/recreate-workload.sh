@@ -18,7 +18,7 @@ set -euo pipefail
 stamp=''
 name=''
 db_password=''
-ssh_key="${HOME}/.ssh/ovh_coolify_ed25519"
+ssh_key="${HOME}/.ssh/ovh_nomad_ed25519"
 host='ubuntu@57.129.155.203'
 resolve_only=0
 bao_addr="${BAO_ADDR:-https://secrets.pkubelka.cz}"
@@ -44,7 +44,7 @@ command -v bao >/dev/null 2>&1 || { echo 'bao CLI is required.' >&2; exit 2; }
 command -v openssl >/dev/null 2>&1 || { echo 'openssl is required to generate passwords.' >&2; exit 2; }
 
 # Escrow path is derived from the workload name (stable, auditable).
-esc_path="secret/projects/ovhcloud/COOLIFY_WORKLOAD_$(printf '%s' "$name" | tr '[:lower:]' '[:upper:]' | tr -c '[:upper:]0-9_' '_')"
+esc_path="secret/projects/ovhcloud/NOMAD_WORKLOAD_$(printf '%s' "$name" | tr '[:lower:]' '[:upper:]' | tr -c '[:upper:]0-9_' '_')"
 export BAO_ADDR="$bao_addr"
 if [ -n "$db_password" ]; then
   pw_source='explicit-flag (escrowed entry, if any, left untouched)'
@@ -56,7 +56,7 @@ else
   stamp_for_escrow="${stamp:-latest}"
   # password=- reads the value from stdin: never in argv (ps-visible),
   # never on disk; the other fields are non-secret metadata.
-  printf '%s' "$db_password" | bao kv put -mount=secret "projects/ovhcloud/COOLIFY_WORKLOAD_$(printf '%s' "$name" | tr '[:lower:]' '[:upper:]' | tr -c '[:upper:]0-9_' '_')" 'password=-' "stamp=${stamp_for_escrow}" "rotated_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >/dev/null \
+  printf '%s' "$db_password" | bao kv put -mount=secret "projects/ovhcloud/NOMAD_WORKLOAD_$(printf '%s' "$name" | tr '[:lower:]' '[:upper:]' | tr -c '[:upper:]0-9_' '_')" 'password=-' "stamp=${stamp_for_escrow}" "rotated_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >/dev/null \
     || { echo "password escrow to ${esc_path} failed (fail closed)." >&2; exit 2; }
   pw_source="generated + escrowed at ${esc_path}"
 fi
@@ -93,7 +93,7 @@ fi
 qline() { printf 'export %s=%s\n' "$1" "$(printf '%s' "$2" | sed 's/[^A-Za-z0-9_.\/=+@:-]/\\&/g')"; }
 secrets_blob="$({ BAO_ADDR="$bao_addr" bash "$repo_root/fetch-app-secrets.sh" --stamp "$stamp" --exports; qline APP_DB_PASSWORD "$db_password"; } | base64)"
 printf '%s' "$secrets_blob" | ssh -i "$ssh_key" -o BatchMode=yes -o ConnectTimeout=20 "$host" \
-  "sudo bash -c 'eval \"\$(base64 -d)\"; exec /root/coolify-backup/fetch-r2-env.sh -- bash /tmp/rollback-app-workloads.sh ${stamp_part} --recreate $name'"
+  "sudo bash -c 'eval \"\$(base64 -d)\"; exec /root/host-backup/fetch-r2-env.sh -- bash /tmp/rollback-app-workloads.sh ${stamp_part} --recreate $name'"
 rc=$?
 db_password=''; secrets_blob=''; unset APP_DB_PASSWORD 2>/dev/null || true
 ssh -i "$ssh_key" -o BatchMode=yes -o ConnectTimeout=20 "$host" 'rm -f /tmp/rollback-app-workloads.sh /tmp/fetch-r2-env.sh' >/dev/null 2>&1 || true

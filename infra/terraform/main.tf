@@ -64,14 +64,14 @@ resource "ovh_vps" "platform" {
   }]
 }
 
-resource "cloudflare_dns_record" "coolify" {
+resource "cloudflare_dns_record" "nomad" {
   zone_id = data.cloudflare_zone.canonical.id
-  name    = "coolify.${var.domain}"
+  name    = "nomad.${var.domain}"
   type    = "CNAME"
   content = "${cloudflare_zero_trust_tunnel_cloudflared.admin.id}.cfargotunnel.com"
   ttl     = 1
   proxied = true
-  comment = "Coolify dashboard through the Cloudflare Tunnel; managed by Terraform."
+  comment = "Nomad UI through the Cloudflare Tunnel; managed by Terraform."
 }
 
 resource "cloudflare_dns_record" "applications" {
@@ -82,12 +82,12 @@ resource "cloudflare_dns_record" "applications" {
   content = var.ovh_ipv4
   ttl     = 1
   proxied = true
-  comment = "Coolify application wildcard; enable only when the wildcard is approved."
+  comment = "Nomad application wildcard; enable only when the wildcard is approved."
 }
 
 resource "cloudflare_zero_trust_tunnel_cloudflared" "admin" {
   account_id    = var.cloudflare_account_id
-  name          = "coolify-admin"
+  name          = "nomad-admin"
   config_src    = "cloudflare"
   tunnel_secret = var.cloudflare_tunnel_secret
 
@@ -109,7 +109,7 @@ resource "cloudflare_dns_record" "ssh" {
 }
 
 resource "cloudflare_dns_record" "omni" {
-  # Production cutover 2026-09-14: serves the Coolify deployment (was the
+  # Production cutover 2026-09-14: serves the Nomad deployment (was the
   # manually-managed Pi-tunnel record; adopted into Terraform, no Access app).
   zone_id = data.cloudflare_zone.canonical.id
   name    = "omni.${var.domain}"
@@ -117,11 +117,11 @@ resource "cloudflare_dns_record" "omni" {
   content = "${cloudflare_zero_trust_tunnel_cloudflared.admin.id}.cfargotunnel.com"
   ttl     = 1
   proxied = true
-  comment = "OmniRoute production (Coolify, cut over from Pi 20260914)"
+  comment = "OmniRoute production (Nomad, cut over from Pi 20260914)"
 }
 
 resource "cloudflare_dns_record" "omniroute" {
-  # OmniRoute staging hostname (Pi migration; serves the Coolify deployment).
+  # OmniRoute staging hostname (Pi migration; serves the Nomad deployment).
   # No Access app fronts it: the gateway API must stay machine-accessible.
   zone_id = data.cloudflare_zone.canonical.id
   name    = "omniroute.${var.domain}"
@@ -129,7 +129,7 @@ resource "cloudflare_dns_record" "omniroute" {
   content = "${cloudflare_zero_trust_tunnel_cloudflared.admin.id}.cfargotunnel.com"
   ttl     = 1
   proxied = true
-  comment = "OmniRoute Coolify staging (Pi migration 20260914)"
+  comment = "OmniRoute Nomad staging (Pi migration 20260914)"
 }
 
 resource "cloudflare_dns_record" "fabric" {
@@ -154,7 +154,7 @@ resource "cloudflare_dns_record" "registry" {
   content = "${cloudflare_zero_trust_tunnel_cloudflared.admin.id}.cfargotunnel.com"
   ttl     = 1
   proxied = true
-  comment = "Private Docker registry (Coolify registry:2)"
+  comment = "Private Docker registry (Nomad registry:2)"
 }
 
 resource "cloudflare_zero_trust_access_identity_provider" "one_time_pin" {
@@ -197,29 +197,11 @@ resource "cloudflare_zero_trust_tunnel_cloudflared_config" "admin" {
   config = {
     ingress = [
       {
-        # Dashboard realtime websocket (Soketi): the dashboard page dials
-        # wss://<host>/app/<key> (same-origin 443 — getRealtime() returns
-        # null for port-less URLs), and the web terminal dials
-        # wss://<host>/terminal/ws. The tunnel bypasses Traefik (which has
-        # the matching PathPrefix routes for direct-origin access), so
-        # these paths must fan out to the realtime ports here. Path rules
-        # MUST precede the bare-hostname rule (first match wins).
-        # cloudflared matches path as a PREFIX: "/app/" (trailing slash)
-        # covers /app/<key> but must NOT steal /applications* (API) — a
-        # "/app/*" pattern was proven live to hijack every /app*-prefixed
-        # path (API 404s from Soketi instead of Laravel).
-        hostname = "coolify.${var.domain}"
-        path     = "/app/"
-        service  = "http://localhost:6001"
-      },
-      {
-        hostname = "coolify.${var.domain}"
-        path     = "/terminal/ws/*"
-        service  = "http://localhost:6002"
-      },
-      {
-        hostname = "coolify.${var.domain}"
-        service  = "http://localhost:8000"
+        # Nomad UI/API origin (loopback-only on the host; served solely
+        # through this tunnel hostname). Single rule: the UI, API, and
+        # event stream all share :4646 — no path fan-out needed.
+        hostname = "nomad.${var.domain}"
+        service  = "http://localhost:4646"
       },
       {
         hostname = "ssh.${var.domain}"
@@ -233,7 +215,7 @@ resource "cloudflare_zero_trust_tunnel_cloudflared_config" "admin" {
       },
       {
         # OmniRoute staging (Pi migration 20260914): same origin-proxy
-        # pattern as fabric; traefik routes by Host to the app. No Access
+        # pattern as fabric; the Nomad edge job routes by Host to the app. No Access
         # policy here — the gateway API stays machine-accessible.
         hostname = "omniroute.${var.domain}"
         service  = "http://localhost:80"
@@ -245,8 +227,8 @@ resource "cloudflare_zero_trust_tunnel_cloudflared_config" "admin" {
         service  = "http://localhost:80"
       },
       {
-        # Private Docker registry (Coolify registry:2; plan-only): same
-        # origin-proxy pattern; Traefik routes by Host to the app. No Access
+        # Private Docker registry (Nomad registry:2; plan-only): same
+        # origin-proxy pattern; the Nomad edge job routes by Host to the app. No Access
         # policy here — docker clients are machines, like the OmniRoute API.
         hostname = "registry.${var.domain}"
         service  = "http://localhost:80"
@@ -258,10 +240,10 @@ resource "cloudflare_zero_trust_tunnel_cloudflared_config" "admin" {
   }
 }
 
-resource "cloudflare_zero_trust_access_application" "coolify" {
+resource "cloudflare_zero_trust_access_application" "nomad" {
   account_id                = var.cloudflare_account_id
-  name                      = "Coolify Dashboard"
-  domain                    = "coolify.${var.domain}"
+  name                      = "Nomad UI"
+  domain                    = "nomad.${var.domain}"
   type                      = "self_hosted"
   allowed_idps              = []
   auto_redirect_to_identity = false
@@ -296,7 +278,7 @@ resource "cloudflare_zero_trust_access_application" "coolify" {
 
 resource "cloudflare_zero_trust_access_application" "ssh" {
   account_id                = var.cloudflare_account_id
-  name                      = "Coolify SSH Administration"
+  name                      = "Nomad SSH Administration"
   domain                    = "ssh.${var.domain}"
   type                      = "self_hosted"
   allowed_idps              = []

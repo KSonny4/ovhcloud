@@ -106,7 +106,7 @@ main.append('  }')
 main.append('}')
 for r in h['routes']:
     s = slug(r['hostname'])
-    title = 'Coolify Dashboard' if r['service'].startswith('http') else 'Coolify SSH Administration'
+    title = 'Nomad UI' if r['service'].startswith('http') else 'Nomad SSH Administration'
     main.append('')
     main.append(f'resource "cloudflare_dns_record" "fresh_{s}" {{')
     main.append('  zone_id = var.cloudflare_zone_id')

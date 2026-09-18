@@ -15,7 +15,7 @@ set -euo pipefail
 
 root_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$root_dir"
-artifact_dir="${REHEARSAL_ARTIFACT_DIR:-/tmp/ovh-coolify-rehearsal}"
+artifact_dir="${REHEARSAL_ARTIFACT_DIR:-/tmp/ovh-nomad-rehearsal}"
 mkdir -p "$artifact_dir"
 report="$artifact_dir/rehearsal-report.json"
 : > "$artifact_dir/phases.log"
@@ -34,7 +34,7 @@ log '== origin_identity =='
 # two-literal comparisons: every fresh-host entry point sources it, and none
 # may retain the old literal IP/hostname OR-comparison.
 if [ ! -f scripts/lib/preserved-guard.sh ]; then echo 'guard library missing.' >&2; exit 1; fi
-for script in scripts/bootstrap-vps.sh scripts/provision-coolify.sh scripts/configure-tunnel-access.sh scripts/run-remote-provision.sh; do
+for script in scripts/bootstrap-vps.sh scripts/provision-nomad.sh scripts/configure-tunnel-access.sh scripts/run-remote-provision.sh; do
   if ! grep -q 'lib/preserved-guard.sh' "$script"; then
     echo "shared guard not sourced in ${script}." >&2
     exit 1
@@ -130,14 +130,14 @@ fi
 log 'bootstrap dry-run idempotent across two passes.'
 phase_ok guest_ready | tee -a "$artifact_dir/phases.log"
 
-log '== coolify_ready (dry-run twice) =='
+log '== nomad_ready (dry-run twice) =='
 for pass in 1 2; do
-  COOLIFY_TARGET_HOST=rehearsal.invalid COOLIFY_DOMAIN=coolify.invalid \
-    bash scripts/provision-coolify.sh --dry-run >/tmp/rehearsal-coolify-"$pass".log 2>&1
+  NOMAD_VERSION=2.0.6 NOMAD_GOSSIP_KEY=rehearsal-gossip-key \
+    bash scripts/provision-nomad.sh --dry-run >/tmp/rehearsal-nomad-"$pass".log 2>&1
 done
-cmp -s /tmp/rehearsal-coolify-1.log /tmp/rehearsal-coolify-2.log || { echo 'coolify dry-run is not idempotent.' >&2; exit 1; }
-log 'coolify dry-run idempotent across two passes.'
-phase_ok coolify_ready | tee -a "$artifact_dir/phases.log"
+cmp -s /tmp/rehearsal-nomad-1.log /tmp/rehearsal-nomad-2.log || { echo 'nomad dry-run is not idempotent.' >&2; exit 1; }
+log 'nomad dry-run idempotent across two passes.'
+phase_ok nomad_ready | tee -a "$artifact_dir/phases.log"
 
 log '== edge_ready (dry-run twice) =='
 for pass in 1 2; do
@@ -151,7 +151,7 @@ fi
 if grep -q '302)' scripts/configure-tunnel-access.sh || grep -q '|| true' scripts/configure-tunnel-access.sh; then
   echo 'tunnel script still tolerates redirects or suppresses health failure.' >&2; exit 1
 fi
-DASHBOARD_LOGIN_URL='https://coolify.rehearsal.invalid/login' \
+NOMAD_LEADER_URL='https://nomad.rehearsal.invalid/v1/status/leader' \
   bash scripts/ensure-service-token.sh --dry-run >/tmp/rehearsal-lifecycle.log 2>&1
 log 'tunnel/access dry-run idempotent across two passes; 200-only verification enforced; lifecycle dry-run clean.'
 phase_ok edge_ready | tee -a "$artifact_dir/phases.log"
@@ -163,21 +163,21 @@ for pass in 1 2; do
     || { echo 'runner dry-run unexpectedly requires live access.' >&2; exit 1; }
 done
 cmp -s /tmp/rehearsal-runner-1.log /tmp/rehearsal-runner-2.log || { echo 'runner dry-run is not idempotent.' >&2; exit 1; }
-for stage in bootstrap coolify edge backup; do
+for stage in bootstrap nomad edge backup; do
   grep -q "$stage" /tmp/rehearsal-runner-1.log || { echo "runner dry-run omits stage: ${stage}." >&2; exit 1; }
 done
 # End-to-end domain-contract test: zone rehearsal.invalid must derive the
-# dashboard hostname coolify.rehearsal.invalid everywhere (FQDN, ingress,
+# UI hostname nomad.rehearsal.invalid everywhere (FQDN, ingress,
 # verification) — never the bare zone, never a doubled prefix.
-grep -q 'dashboard hostname: coolify.rehearsal.invalid' /tmp/rehearsal-runner-1.log || { echo 'runner domain contract broken.' >&2; exit 1; }
-if grep -q 'coolify.coolify\.' /tmp/rehearsal-runner-1.log; then echo 'doubled dashboard prefix.' >&2; exit 1; fi
+grep -q 'UI hostname: nomad.rehearsal.invalid' /tmp/rehearsal-runner-1.log || { echo 'runner domain contract broken.' >&2; exit 1; }
+if grep -q 'nomad.nomad\.' /tmp/rehearsal-runner-1.log; then echo 'doubled UI prefix.' >&2; exit 1; fi
 # Removed hostname override fails closed (single-domain contract). Capture
 # once (pipefail would mask the expected nonzero exit in a pipeline).
-PROVISION_HOST=runner-rehearsal.invalid PROVISION_ZONE=rehearsal.invalid PROVISION_DASHBOARD_HOST=other.example.com bash scripts/run-remote-provision.sh --dry-run >/tmp/rehearsal-override.log 2>&1 || rc=$?
-[ "${rc:-0}" -ne 0 ] || { echo 'removed dashboard-host override accepted.' >&2; exit 1; }
+PROVISION_HOST=runner-rehearsal.invalid PROVISION_ZONE=rehearsal.invalid PROVISION_UI_HOST=other.example.com bash scripts/run-remote-provision.sh --dry-run >/tmp/rehearsal-override.log 2>&1 || rc=$?
+[ "${rc:-0}" -ne 0 ] || { echo 'removed UI-host override accepted.' >&2; exit 1; }
 grep -q 'was removed' /tmp/rehearsal-override.log || { echo 'override refusal message missing.' >&2; exit 1; }
 rm -f /tmp/rehearsal-override.log
-log 'dashboard-host override refused fail-closed (single domain contract).'
+log 'UI-host override refused fail-closed (single domain contract).'
 # Loader-failure masking: a bare eval "$(...)" returns eval's own status,
 # silently falling back to ambient credentials. Only the two-step form
 # (capture, check, then eval) may appear outside comments.
@@ -199,12 +199,12 @@ log 'backendless --apply refused fail-closed (validation/plan only without backe
 # stage the workload companion alongside the schedule script, and the
 # schedule script must install both timer commands.
 grep -q 'backup-app-workloads.sh' scripts/run-remote-provision.sh || { echo 'runner does not stage backup-app-workloads.sh.' >&2; exit 1; }
-grep -q "fetch-r2-env.sh -- \${app_installed}" scripts/schedule-coolify-backup.sh || { echo 'schedule script omits the workload ExecStart via fetch wrapper.' >&2; exit 1; }
+grep -q "fetch-r2-env.sh -- \${app_installed}" scripts/schedule-host-backup.sh || { echo 'schedule script omits the workload ExecStart via fetch wrapper.' >&2; exit 1; }
 # Secret-delivery gates: no script may (re)create a static R2 credential file;
 # delivery is memory-only via fetch-r2-env.sh, and the unit must exec through it.
-grep -q 'fetch-r2-env.sh' scripts/schedule-coolify-backup.sh || { echo 'schedule script omits the fetch wrapper.' >&2; exit 1; }
+grep -q 'fetch-r2-env.sh' scripts/schedule-host-backup.sh || { echo 'schedule script omits the fetch wrapper.' >&2; exit 1; }
 if grep -rnE '(tee|>)[^|]*r2\.env' scripts/*.sh | grep -v test-clean-target-install >/dev/null; then echo 'a script still writes r2.env.' >&2; exit 1; fi
-if grep -q 'EnvironmentFile=.*r2' scripts/schedule-coolify-backup.sh; then echo 'unit still consumes a credential EnvironmentFile.' >&2; exit 1; fi
+if grep -q 'EnvironmentFile=.*r2' scripts/schedule-host-backup.sh; then echo 'unit still consumes a credential EnvironmentFile.' >&2; exit 1; fi
 grep -q 'wire-fresh-edge.sh' scripts/run-remote-provision.sh || { echo 'runner omits fresh-edge wiring.' >&2; exit 1; }
 # Two-phase edge ordering: the runner's own dry-run emits the shipped edge
 # sequence line by line; wiring must precede the connector install and every
@@ -227,16 +227,16 @@ print(f'edge order proven: wire@{w} adopt@{a} connector@{c} token@{s} verify@{v}
 PYEOF
 sv_out="$(CLOUDFLARE_ACCOUNT_ID=rehearsal CLOUDFLARE_ZONE_ID=rehearsal TUNNEL_ID=rehearsal-tunnel EDGE_HOSTNAME=wire.rehearsal.invalid bash scripts/wire-fresh-edge.sh --dry-run --skip-verify 2>&1 || true)"
 printf '%s' "$sv_out" | grep -q 'verification deferred' || { echo 'skip-verify mode omits the deferral marker.' >&2; exit 1; }
-printf '%s' "$sv_out" | grep -q 'verify dashboard 200' && { echo 'skip-verify mode still verifies.' >&2; exit 1; } || true
+printf '%s' "$sv_out" | grep -q 'verify UI 200' && { echo 'skip-verify mode still verifies.' >&2; exit 1; } || true
 vo_out="$(CLOUDFLARE_ACCOUNT_ID=rehearsal CLOUDFLARE_ZONE_ID=rehearsal TUNNEL_ID=rehearsal-tunnel EDGE_HOSTNAME=wire.rehearsal.invalid bash scripts/wire-fresh-edge.sh --dry-run --verify-only 2>&1 || true)"
-printf '%s' "$vo_out" | grep -q 'verify dashboard 200' || { echo 'verify-only mode omits verification.' >&2; exit 1; }
+printf '%s' "$vo_out" | grep -q 'verify UI 200' || { echo 'verify-only mode omits verification.' >&2; exit 1; }
 printf '%s' "$vo_out" | grep -q 'DRY-RUN: DNS CNAME' && { echo 'verify-only mode still mutates.' >&2; exit 1; } || true
 log 'wire mode partition proven: skip-verify wires without verifying, verify-only verifies without wiring.'
 # Dedicated tunnel identity: per-target secret path, preserved name refused,
 # preserved singleton escrow never consumed on the fresh path.
 grep -q 'TUNNEL_SECRET_PATH=' scripts/run-remote-provision.sh || { echo 'runner omits per-target tunnel secret path.' >&2; exit 1; }
-grep -q "coolify-admin'" scripts/run-remote-provision.sh || { echo 'runner omits preserved-tunnel-name refusal.' >&2; exit 1; }
-if grep -n 'bao_get COOLIFY_TUNNEL_TOKEN' scripts/run-remote-provision.sh | grep -q .; then echo 'runner still consumes the preserved tunnel singleton.' >&2; exit 1; fi
+grep -q "nomad-admin'" scripts/run-remote-provision.sh || { echo 'runner omits preserved-tunnel-name refusal.' >&2; exit 1; }
+if grep -n 'bao_get EDGE_TUNNEL_TOKEN' scripts/run-remote-provision.sh | grep -q .; then echo 'runner still consumes the preserved tunnel singleton.' >&2; exit 1; fi
 grep -q 'TUNNEL_SECRET_PATH' scripts/ensure-tunnel.sh || { echo 'ensure-tunnel omits per-target secret path.' >&2; exit 1; }
 # OVH authorization boundary: no script may touch the AMBIENT credential
 # file (~/.ovh.conf or an unredirected $HOME read); the only permitted
@@ -254,19 +254,19 @@ log 'ambient Cloudflare auth proven absent (TF_VAR-only provider authorization).
 # Tunnel secret contract, three disjoint entries (executed consistency, not
 # prose): preserved Terraform credential, preserved cold recovery escrow,
 # per-target fresh entries — each with exactly one documented consumer.
-grep -q 'bao kv get -field=tunnel_secret secret/projects/ovhcloud/COOLIFY_TUNNEL_SECRET' scripts/tf-env-from-openbao.sh || { echo 'loader does not read COOLIFY_TUNNEL_SECRET.tunnel_secret.' >&2; exit 1; }
+grep -q 'bao kv get -field=tunnel_secret secret/projects/ovhcloud/EDGE_TUNNEL_SECRET' scripts/tf-env-from-openbao.sh || { echo 'loader does not read EDGE_TUNNEL_SECRET.tunnel_secret.' >&2; exit 1; }
 grep -q 'TF_VAR_cloudflare_tunnel_secret' scripts/tf-env-from-openbao.sh || { echo 'loader does not emit TF_VAR_cloudflare_tunnel_secret.' >&2; exit 1; }
-grep -q 'COOLIFY_TUNNEL_SECRET' infra/terraform/variables.tf || { echo 'tunnel variable doc names the wrong OpenBao path.' >&2; exit 1; }
+grep -q 'EDGE_TUNNEL_SECRET' infra/terraform/variables.tf || { echo 'tunnel variable doc names the wrong OpenBao path.' >&2; exit 1; }
 grep -q 'tunnel_secret = var.cloudflare_tunnel_secret' infra/terraform/main.tf || { echo 'tunnel config does not consume the tunnel var.' >&2; exit 1; }
 grep -q 'TUNNEL_SECRET_PATH:?' scripts/ensure-tunnel.sh || { echo 'ensure-tunnel omits the per-target path requirement.' >&2; exit 1; }
-if grep -rn 'bao kv \(get\|put\).*COOLIFY_TUNNEL_TOKEN' scripts/*.sh scripts/lib/*.sh 2>/dev/null | grep -v 'rehearse-fresh-environment.sh' | grep -q .; then echo 'automation reads the cold recovery escrow COOLIFY_TUNNEL_TOKEN.' >&2; exit 1; fi
+if grep -rn 'bao kv \(get\|put\).*EDGE_TUNNEL_TOKEN' scripts/*.sh scripts/lib/*.sh 2>/dev/null | grep -v 'rehearse-fresh-environment.sh' | grep -q .; then echo 'automation reads the cold recovery escrow EDGE_TUNNEL_TOKEN.' >&2; exit 1; fi
 grep -q "tunnel_token.*secret_path\|secret_path.*tunnel_token" scripts/ensure-tunnel.sh || { echo 'ensure-tunnel does not bind tunnel_token to the per-target path.' >&2; exit 1; }
 log 'tunnel contract proven: preserved loader path, cold recovery untouched, per-target fresh entries.'
 # ensure-tunnel self-refusal (executed, hermetic: refusal precedes any API
 # call, so dummy env suffices and no network is touched).
-if BAO_ADDR=https://rehearsal.invalid CLOUDFLARE_ACCOUNT_ID=rehearsal TUNNEL_NAME=coolify-admin TUNNEL_SECRET_PATH=COOLIFY_TUNNEL_X bash scripts/ensure-tunnel.sh >/dev/null 2>&1; then echo 'ensure-tunnel accepts the preserved tunnel name.' >&2; exit 1; fi
-if BAO_ADDR=https://rehearsal.invalid CLOUDFLARE_ACCOUNT_ID=rehearsal TUNNEL_NAME=fresh-test TUNNEL_SECRET_PATH=COOLIFY_TUNNEL_TOKEN bash scripts/ensure-tunnel.sh >/dev/null 2>&1; then echo 'ensure-tunnel accepts the cold recovery entry.' >&2; exit 1; fi
-if BAO_ADDR=https://rehearsal.invalid CLOUDFLARE_ACCOUNT_ID=rehearsal TUNNEL_NAME=fresh-test TUNNEL_SECRET_PATH=COOLIFY_TUNNEL_SECRET bash scripts/ensure-tunnel.sh >/dev/null 2>&1; then echo 'ensure-tunnel accepts the preserved Terraform entry.' >&2; exit 1; fi
+if BAO_ADDR=https://rehearsal.invalid CLOUDFLARE_ACCOUNT_ID=rehearsal TUNNEL_NAME=nomad-admin TUNNEL_SECRET_PATH=EDGE_TUNNEL_X bash scripts/ensure-tunnel.sh >/dev/null 2>&1; then echo 'ensure-tunnel accepts the preserved tunnel name.' >&2; exit 1; fi
+if BAO_ADDR=https://rehearsal.invalid CLOUDFLARE_ACCOUNT_ID=rehearsal TUNNEL_NAME=fresh-test TUNNEL_SECRET_PATH=EDGE_TUNNEL_TOKEN bash scripts/ensure-tunnel.sh >/dev/null 2>&1; then echo 'ensure-tunnel accepts the cold recovery entry.' >&2; exit 1; fi
+if BAO_ADDR=https://rehearsal.invalid CLOUDFLARE_ACCOUNT_ID=rehearsal TUNNEL_NAME=fresh-test TUNNEL_SECRET_PATH=EDGE_TUNNEL_SECRET bash scripts/ensure-tunnel.sh >/dev/null 2>&1; then echo 'ensure-tunnel accepts the preserved Terraform entry.' >&2; exit 1; fi
 log 'ensure-tunnel preserved-entry refusals proven (name + both singletons).'
 grep -q 'OVH_API' scripts/tf-env-from-openbao.sh || { echo 'loader omits the OVH_API escrow.' >&2; exit 1; }
 grep -q 'export OVH_APPLICATION_KEY' scripts/tf-env-from-openbao.sh scripts/run-remote-provision.sh || { echo 'OVH_* env emission missing.' >&2; exit 1; }
@@ -342,10 +342,10 @@ if [ "$3" = '-field=bucket' ]; then printf 'rehearsal-bucket'; elif [ "$3" = '-f
 STUBEOF
 chmod +x /tmp/rehearsal-bkbin/bao
 TERRAFORM_FRESH_DIR=/tmp/rehearsal-fresh PATH="/tmp/rehearsal-bkbin:$PATH" bash scripts/ensure-fresh-backend.sh >/dev/null 2>&1 || { echo 'backend generation failed.' >&2; exit 1; }
-grep -qF 'ovhcloud-coolify-fresh/terraform.tfstate' /tmp/rehearsal-fresh/backend.hcl || { echo 'generated backend lost the fresh key.' >&2; exit 1; }
+grep -qF 'ovhcloud-nomad-fresh/terraform.tfstate' /tmp/rehearsal-fresh/backend.hcl || { echo 'generated backend lost the fresh key.' >&2; exit 1; }
 if grep -qiE 'access_key|secret_key|AKIA|password|token' /tmp/rehearsal-fresh/backend.hcl; then echo 'generated backend contains secret-like strings.' >&2; exit 1; fi
 TERRAFORM_FRESH_DIR=/tmp/rehearsal-fresh PATH="/tmp/rehearsal-bkbin:$PATH" bash scripts/ensure-fresh-backend.sh >/dev/null 2>&1 || { echo 'backend rerun not idempotent.' >&2; exit 1; }
-mkdir -p /tmp/rehearsal-freshbad && printf 'key = "terraform/ovhcloud-coolify/terraform.tfstate"\n' > /tmp/rehearsal-freshbad/backend.hcl
+mkdir -p /tmp/rehearsal-freshbad && printf 'key = "terraform/ovhcloud-nomad/terraform.tfstate"\n' > /tmp/rehearsal-freshbad/backend.hcl
 if TERRAFORM_FRESH_DIR=/tmp/rehearsal-freshbad PATH="/tmp/rehearsal-bkbin:$PATH" bash scripts/ensure-fresh-backend.sh >/dev/null 2>&1; then echo 'backend accepted the preserved key.' >&2; exit 1; fi
 mkdir -p /tmp/rehearsal-freshunk && printf 'key = "something/else.tfstate"\n' > /tmp/rehearsal-freshunk/backend.hcl
 if TERRAFORM_FRESH_DIR=/tmp/rehearsal-freshunk PATH="/tmp/rehearsal-bkbin:$PATH" bash scripts/ensure-fresh-backend.sh >/dev/null 2>&1; then echo 'backend clobbered an unknown key.' >&2; exit 1; fi
@@ -396,8 +396,8 @@ done
 grep -q 'Deterministic options' scripts/run-remote-provision.sh || { echo 'runner omits fail-closed first-access guidance.' >&2; exit 1; }
 # Memory-only enforcement gates: no backup/rollback path may accept or read
 # a credential file, ever.
-if grep -rn -- '--env-file' scripts/backup-app-workloads.sh scripts/rollback-coolify-backup.sh scripts/schedule-coolify-backup.sh scripts/fetch-r2-env.sh >/dev/null; then echo 'a backup/rollback script still accepts --env-file.' >&2; exit 1; fi
-if grep -rn "source \"\\\$env_file\"" scripts/backup-app-workloads.sh scripts/rollback-coolify-backup.sh >/dev/null; then echo 'a backup/rollback script still sources a credential file.' >&2; exit 1; fi
+if grep -rn -- '--env-file' scripts/backup-app-workloads.sh scripts/rollback-nomad-snapshot.sh scripts/schedule-host-backup.sh scripts/fetch-r2-env.sh >/dev/null; then echo 'a backup/rollback script still accepts --env-file.' >&2; exit 1; fi
+if grep -rn "source \"\\\$env_file\"" scripts/backup-app-workloads.sh scripts/rollback-nomad-snapshot.sh >/dev/null; then echo 'a backup/rollback script still sources a credential file.' >&2; exit 1; fi
 # Complete administration path: the runner must wire BOTH dashboard and SSH
 # routes (DNS + ingress + Access), and record the Terraform handoff.
 for gate in 'SSH_HOSTNAME=' '--handoff-file' 'emit-fresh-imports.sh'; do
@@ -405,10 +405,10 @@ for gate in 'SSH_HOSTNAME=' '--handoff-file' 'emit-fresh-imports.sh'; do
 done
 # Rollback on fresh targets: the runner must stage both rollback scripts and
 # the schedule must install them (or fail closed); coverage gaps fail closed.
-for gate in 'rollback-coolify-backup.sh' 'rollback-app-workloads.sh'; do
+for gate in 'rollback-nomad-snapshot.sh' 'rollback-app-workloads.sh'; do
   grep -q -- "$gate" scripts/run-remote-provision.sh || { echo "runner omits rollback staging: ${gate}." >&2; exit 1; }
 done
-grep -q 'rollback-less schedule' scripts/schedule-coolify-backup.sh || { echo 'schedule omits rollback install gate.' >&2; exit 1; }
+grep -q 'rollback-less schedule' scripts/schedule-host-backup.sh || { echo 'schedule omits rollback install gate.' >&2; exit 1; }
 grep -q 'WORKLOAD COVERAGE GAP' scripts/backup-app-workloads.sh || { echo 'backup omits coverage fail-closed gate.' >&2; exit 1; }
 grep -q -- '--recreate' scripts/rollback-app-workloads.sh || { echo 'rollback omits in-service recreate.' >&2; exit 1; }
 for gate in 'SSH_HOSTNAME' 'ssh://localhost:22' 'access_app_id' 'emit-fresh-imports'; do
@@ -419,7 +419,7 @@ done
 ensure_line="$(grep -n 'ensure-service-token.sh. --ensure-only' scripts/run-remote-provision.sh | cut -d: -f1)"
 retrieval_line="$(grep -n 'retrieving stage credentials' scripts/run-remote-provision.sh | cut -d: -f1)"
 wire_line="$(grep -n 'wire-fresh-edge.sh.*--skip-verify.*--handoff-file' scripts/run-remote-provision.sh | cut -d: -f1)"
-verify_line="$(grep -n 'DASHBOARD_LOGIN_URL=' scripts/run-remote-provision.sh | cut -d: -f1)"
+verify_line="$(grep -n 'NOMAD_LEADER_URL=' scripts/run-remote-provision.sh | cut -d: -f1)"
 for l in "$ensure_line" "$retrieval_line" "$wire_line" "$verify_line"; do
   [ -n "$l" ] || { echo 'service-token flow ordering unresolvable.' >&2; exit 1; }
 done
@@ -431,15 +431,15 @@ log '== edge_routes (dry-run, zero network) =='
 bash scripts/wire-fresh-edge.sh --self-test-merge >/dev/null 2>&1 || { echo 'ingress merge self-test failed (routes would be discarded).' >&2; exit 1; }
 log 'ingress merge self-test passed on live code (no-drift, drift, preservation).'
 CLOUDFLARE_ACCOUNT_ID=rehearsal CLOUDFLARE_ZONE_ID=rehearsal TUNNEL_ID=rehearsal-tunnel \
-  EDGE_HOSTNAME=coolify.rehearsal.invalid SSH_HOSTNAME=ssh.rehearsal.invalid \
+  EDGE_HOSTNAME=nomad.rehearsal.invalid SSH_HOSTNAME=ssh.rehearsal.invalid \
   bash scripts/wire-fresh-edge.sh --dry-run --handoff-file /tmp/rehearsal-handoff.json > /tmp/rehearsal-edge.log 2>&1 \
   || { echo 'wire dry-run failed.' >&2; exit 1; }
-for host in coolify.rehearsal.invalid ssh.rehearsal.invalid; do
+for host in nomad.rehearsal.invalid ssh.rehearsal.invalid; do
   grep -q "$host" /tmp/rehearsal-edge.log || { echo "wire dry-run omits route: ${host}." >&2; exit 1; }
 done
 grep -q 'ssh://localhost:22' /tmp/rehearsal-edge.log || { echo 'wire dry-run omits the ssh ingress route.' >&2; exit 1; }
 rm -f /tmp/rehearsal-handoff.json
-printf '{"tunnel_id":"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee","tunnel_name":"rehearsal","routes":[{"hostname":"coolify.rehearsal.invalid","service":"http://localhost:8000","dns_record_id":"d","access_app_id":"a","policy_ids":["p"]},{"hostname":"ssh.rehearsal.invalid","service":"ssh://localhost:22","dns_record_id":"e","access_app_id":"b","policy_ids":["q"]}]}' > /tmp/rehearsal-handoff.json
+printf '{"tunnel_id":"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee","tunnel_name":"rehearsal","routes":[{"hostname":"nomad.rehearsal.invalid","service":"http://localhost:4646","dns_record_id":"d","access_app_id":"a","policy_ids":["p"]},{"hostname":"ssh.rehearsal.invalid","service":"ssh://localhost:22","dns_record_id":"e","access_app_id":"b","policy_ids":["q"]}]}' > /tmp/rehearsal-handoff.json
 rm -rf /tmp/rehearsal-fresh-out
 CLOUDFLARE_ACCOUNT_ID=rehearsal CLOUDFLARE_ZONE_ID=rehearsal \
   bash scripts/emit-fresh-imports.sh --handoff /tmp/rehearsal-handoff.json --out-dir /tmp/rehearsal-fresh-out > /tmp/rehearsal-imports.log 2>&1 \
@@ -448,8 +448,8 @@ CLOUDFLARE_ACCOUNT_ID=rehearsal CLOUDFLARE_ZONE_ID=rehearsal \
 grep -q 'non_identity' /tmp/rehearsal-fresh-out/main.tf || { echo 'generated apps diverge from the nested non_identity convention.' >&2; exit 1; }
 # Exactness: generated config must mirror API-created resources attribute for
 # attribute (live converged shape), so post-adoption plan is empty.
-grep -q 'name                      = "Coolify Dashboard"' /tmp/rehearsal-fresh-out/main.tf || { echo 'generated dashboard app name diverges from live.' >&2; exit 1; }
-grep -q 'name                      = "Coolify SSH Administration"' /tmp/rehearsal-fresh-out/main.tf || { echo 'generated ssh app name diverges from live.' >&2; exit 1; }
+grep -q 'name                      = "Nomad UI"' /tmp/rehearsal-fresh-out/main.tf || { echo 'generated UI app name diverges from live.' >&2; exit 1; }
+grep -q 'name                      = "Nomad SSH Administration"' /tmp/rehearsal-fresh-out/main.tf || { echo 'generated ssh app name diverges from live.' >&2; exit 1; }
 grep -q '"Fresh ' /tmp/rehearsal-fresh-out/main.tf && { echo 'generated config carries Fresh-prefixed names.' >&2; exit 1; } || true
 grep -q 'allowed_idps              = \[\]' /tmp/rehearsal-fresh-out/main.tf || { echo 'generated apps diverge from converged empty allowed_idps.' >&2; exit 1; }
 grep -q 'comment = "Fresh ' /tmp/rehearsal-fresh-out/main.tf && { echo 'generated DNS carries comments wire never creates.' >&2; exit 1; } || true
@@ -486,7 +486,7 @@ ssh_keys_match /tmp/rehearsal-k1.pub 'not-a-key' && { echo 'ssh_keys_match accep
 rm -f /tmp/rehearsal-sshfn.sh /tmp/rehearsal-k1 /tmp/rehearsal-k1.pub /tmp/rehearsal-k2 /tmp/rehearsal-k2.pub
 log 'ssh key identity gate proven: identical accepted, different/garbage rejected.'
 note_evidence edge_ready dryrun_hostnames=2
-log 'edge routes proven in dry-run: dashboard + ssh ingress/DNS/Access planned, handoff import blocks emit.'
+log 'edge routes proven in dry-run: UI + ssh ingress/DNS/Access planned, handoff import blocks emit.'
 log 'runner dry-run idempotent across two passes; all four stages present; backup companion staged + scheduled; fileless R2 delivery enforced; fresh edge wired; no network touched.'
 note_evidence runner_channel dryrun_lines="$(wc -l < /tmp/rehearsal-runner-1.log | tr -d " ")"
 note_evidence runner_channel dryrun_sha256="$(sha256sum /tmp/rehearsal-runner-1.log 2>/dev/null | cut -d" " -f1 || shasum -a 256 /tmp/rehearsal-runner-1.log | cut -d" " -f1)"
@@ -495,7 +495,7 @@ phase_ok runner_channel | tee -a "$artifact_dir/phases.log"
 log '== backup_ready (dry-run) =='
 {
 bash scripts/backup-r2-probe.sh --dry-run
-bash scripts/rollback-coolify-backup.sh --dry-run
+bash scripts/rollback-nomad-snapshot.sh --dry-run
 bash scripts/rollback-app-workloads.sh --dry-run
 bash scripts/rollback-app-workloads.sh --dry-run --recreate demo --db-password dry-run-only
 # Topology unit test: the EXACT live extractor against synthetic inspect JSON.
@@ -522,6 +522,9 @@ log 'database flag builder proven offline (topology restored; fresh credential +
 # Recreate credential resolution, executed with stubbed bao (no network,
 # no SSH): explicit flag wins, escrowed entry reused, else generated +
 # escrowed — and the value never reaches stdout in any mode.
+# Hermetic SSH key: credential resolution must not depend on the
+# operator's ~/.ssh state (the old default key no longer exists by design).
+mkdir -p /tmp/rehearsal-ssh && ssh-keygen -t ed25519 -N '' -f /tmp/rehearsal-ssh/id_ed25519 -q
 mkdir -p /tmp/rehearsal-bin
 cat > /tmp/rehearsal-bin/bao <<'STUBEOF'
 #!/usr/bin/env bash
@@ -532,40 +535,37 @@ elif [ "$1" = 'kv' ] && [ "$2" = 'put' ]; then
 else exit 1; fi
 STUBEOF
 chmod +x /tmp/rehearsal-bin/bao
-res_out="$(PATH="/tmp/rehearsal-bin:$PATH" bash scripts/recreate-workload.sh demo --db-password explicit-test-pw --resolve-only 2>&1 || true)"
+res_out="$(PATH="/tmp/rehearsal-bin:$PATH" bash scripts/recreate-workload.sh demo --db-password explicit-test-pw --ssh-key /tmp/rehearsal-ssh/id_ed25519 --resolve-only 2>&1 || true)"
 printf '%s' "$res_out" | grep -q 'explicit-flag' || { echo 'credential resolution ignores explicit flag.' >&2; exit 1; }
-res_out="$(STUB_BAO_PW=reused-test-pw PATH="/tmp/rehearsal-bin:$PATH" bash scripts/recreate-workload.sh demo --resolve-only 2>&1 || true)"
+res_out="$(STUB_BAO_PW=reused-test-pw PATH="/tmp/rehearsal-bin:$PATH" bash scripts/recreate-workload.sh demo --ssh-key /tmp/rehearsal-ssh/id_ed25519 --resolve-only 2>&1 || true)"
 printf '%s' "$res_out" | grep -q 'reused OpenBao' || { echo 'credential resolution ignores escrowed entry.' >&2; exit 1; }
 rm -f /tmp/rehearsal-bao-puts.log
-res_out="$(STUB_BAO_PW='' PATH="/tmp/rehearsal-bin:$PATH" bash scripts/recreate-workload.sh demo --resolve-only 2>&1 || true)"
+res_out="$(STUB_BAO_PW='' PATH="/tmp/rehearsal-bin:$PATH" bash scripts/recreate-workload.sh demo --ssh-key /tmp/rehearsal-ssh/id_ed25519 --resolve-only 2>&1 || true)"
 printf '%s' "$res_out" | grep -q 'generated + escrowed' || { echo 'credential generation path broken.' >&2; exit 1; }
-grep -q 'COOLIFY_WORKLOAD_DEMO' /tmp/rehearsal-bao-puts.log || { echo 'generation escrows to wrong path.' >&2; exit 1; }
+grep -q 'NOMAD_WORKLOAD_DEMO' /tmp/rehearsal-bao-puts.log || { echo 'generation escrows to wrong path.' >&2; exit 1; }
 [ "$(printf '%s\n' "$res_out" | grep -c .)" -eq 1 ] || { echo 'resolution leaks extra output (possible secret).' >&2; exit 1; }
-rm -rf /tmp/rehearsal-bin /tmp/rehearsal-bao-puts.log
+rm -rf /tmp/rehearsal-bin /tmp/rehearsal-ssh /tmp/rehearsal-bao-puts.log
 log 'recreate credential resolution proven: explicit > escrowed reuse > generate+escrow, value never on stdout.'
-# Onboarding verifier fails closed on transport failure (never reports
-# success on empty output): refused localhost SSH must exit nonzero.
-if bash scripts/verify-coolify-onboarding.sh --host ubuntu@127.0.0.1 >/dev/null 2>&1; then echo 'onboarding verifier accepts transport failure.' >&2; exit 1; fi
-log 'onboarding verifier proven fail-closed on transport failure.'
-# Onboarding completeness chain (all executed against this repo, no network
-# except the localhost-refused case): the provisioner reconciles project +
-# environment (exact SQL present), the gate requires all four signals, and
-# the runner invokes the read-only verifier before the coolify stage can
-# finish (dry-run order asserted on the runner's own output).
-grep -q 'INSERT INTO projects' scripts/provision-coolify.sh || { echo 'provisioner omits project reconciliation.' >&2; exit 1; }
-grep -q 'INSERT INTO environments' scripts/provision-coolify.sh || { echo 'provisioner omits environment reconciliation.' >&2; exit 1; }
-grep -q "FROM projects)>=1" scripts/provision-coolify.sh || { echo 'onboarding gate ignores projects.' >&2; exit 1; }
-grep -q "FROM environments WHERE name='production')>=1" scripts/provision-coolify.sh || { echo 'onboarding gate ignores the production environment.' >&2; exit 1; }
-grep -q 'verify-coolify-onboarding.sh' scripts/run-remote-provision.sh || { echo 'runner never invokes the onboarding verifier.' >&2; exit 1; }
+# Bootstrap gate fails closed without a target (never reports success on
+# empty output): missing PROVISION_HOST must exit nonzero with no network.
+if PROVISION_HOST='' bash scripts/verify-nomad-live.sh >/dev/null 2>&1; then echo 'live verifier accepts a missing target.' >&2; exit 1; fi
+log 'live verifier proven fail-closed without a target.'
+# Bootstrap completeness chain (all executed against this repo, no network):
+# the provisioner ACL-bootstraps idempotently (BOOTSTRAP_EXISTS) and emits
+# the escrow line, and the runner captures + escrows + gates on it before
+# the nomad stage can finish (dry-run order asserted on the runner's own
+# output).
+grep -q 'BOOTSTRAP_EXISTS' scripts/provision-nomad.sh || { echo 'provisioner omits bootstrap idempotence.' >&2; exit 1; }
+grep -q 'NOMAD_BOOTSTRAP_ESCROW' scripts/provision-nomad.sh || { echo 'provisioner omits the escrow line.' >&2; exit 1; }
+grep -q 'bootstrap gate' scripts/run-remote-provision.sh || { echo 'runner never gates on bootstrap.' >&2; exit 1; }
 python3 - <<'PYEOF' || exit 1
 log = open('/tmp/rehearsal-runner-1.log').read().splitlines()
-cool = [i for i, l in enumerate(log) if 'DRY-RUN: remote sudo COOLIFY' in l]
-assert cool, 'coolify stage missing from runner dry-run'
-assert 'verify-coolify-onboarding' in log[cool[0]], 'verifier missing from coolify stage plan'
-print('runner-verifier chain proven: coolify stage cannot finish without the verifier.')
+nomad = [i for i, l in enumerate(log) if 'DRY-RUN: remote sudo NOMAD_VERSION' in l]
+assert nomad, 'nomad stage missing from runner dry-run'
+assert 'bootstrap' in log[nomad[0]], 'bootstrap missing from nomad stage plan'
+print('runner-bootstrap chain proven: nomad stage cannot finish while bootstrap is unescrowed.')
 PYEOF
-bash scripts/verify-coolify-onboarding.sh --help 2>&1 | grep -q -- '--admin-email' || { echo 'verifier omits the admin-email override.' >&2; exit 1; }
-log 'onboarding chain proven: reconcile + four-signal gate + runner verifier.'
+log 'bootstrap chain proven: idempotent bootstrap + escrow line + runner gate.'
 # Rollback accepts the env credential and reports its source in dry-run.
 env_out="$(APP_DB_PASSWORD=env-test-pw bash scripts/rollback-app-workloads.sh --dry-run 2>&1 || true)"
 printf '%s' "$env_out" | grep -q 'credential source: env' || { echo 'rollback ignores APP_DB_PASSWORD.' >&2; exit 1; }
@@ -660,7 +660,7 @@ log 'fetch-app-secrets proven: resolve + channels + fail-closed, values never on
 # cannot carry arbitrary app-secret vars (fixed channel allowlist). The old
 # ubuntu-eval + sudo -E shape would strip every app secret at sudo.
 grep -q "sudo bash -c 'eval" scripts/recreate-workload.sh || { echo 'recreate wrapper lost sudo-first delivery.' >&2; exit 1; }
-if grep -q 'sudo -E bash /root/coolify-backup/fetch-r2-env' scripts/recreate-workload.sh; then echo 'recreate wrapper regressed to sudo -E delivery (strips app secrets).' >&2; exit 1; fi
+if grep -q 'sudo -E bash /root/host-backup/fetch-r2-env' scripts/recreate-workload.sh; then echo 'recreate wrapper regressed to sudo -E delivery (strips app secrets).' >&2; exit 1; fi
 log 'sudo-first delivery proven present (blob survives sudo for any var).'
 # Runner integration: ensure step precedes backup work in live order and
 # appears in the dry-run plan.
@@ -754,7 +754,7 @@ with open(phases_path) as handle:
             entry['evidence'] = evidence.get(entry['phase'], {})
             phases.append(entry)
 with open(report_path, 'w') as handle:
-    json.dump({'rehearsal': 'ovh-coolify-fresh-environment', 'dry_run': True,
+    json.dump({'rehearsal': 'ovh-nomad-fresh-environment', 'dry_run': True,
                'git_head': git_head, 'code_tree_scripts': code_tree_scripts, 'code_tree_infra': code_tree_infra, "started_utc": started_utc, "finished_utc": finished_utc, 'phases': phases}, handle, indent=2)
 PY
 

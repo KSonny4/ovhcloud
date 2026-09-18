@@ -36,14 +36,14 @@ Operational thresholds used by this runbook:
 > 85%   urgent on a small production host
 ```
 
-These are operating recommendations, not OVH/Coolify guarantees.
+These are operating recommendations, not OVH/Nomad guarantees.
 
 Check:
 
 ```bash
 df -hT
 docker system df
-du -xh /data/coolify --max-depth=2 2>/dev/null | sort -h | tail -30
+du -xh /opt/nomad --max-depth=2 2>/dev/null | sort -h | tail -30
 ```
 
 ### Memory
@@ -66,41 +66,40 @@ ps -eo pid,ppid,cmd,%mem,%cpu --sort=-%cpu | head -20
 
 Short build spikes are fine. Sustained saturation that affects the control plane is a reason to add resources or move heavy builds/workloads elsewhere.
 
-## 3. Coolify notifications
+## 3. Alerting
 
-Configure at least one external notification channel and enable:
+There is no built-in notification center on this plane — alerting is the
+operator's external channel (see [05](05-backup-recovery.md) section 10).
+At minimum, watch:
 
-- Deployment Failure
-- Backup Failure
-- Container Status Changes
-- Server Disk Usage
-- Server Unreachable
-- Docker Cleanup Failure
-- Server Patching
+- Deployment failures (`nomad job status` degraded/failed allocations)
+- Backup failures (`host-backup.timer` unit failure, missing nightly R2 keys)
+- Allocation status changes and restarts
+- Server disk usage (thresholds in section 2)
+- Server unreachable (tunnel + Access checks)
+- Docker cleanup failures
+- Pending OS security updates
 
-Coolify supports different event selections per notification channel.
-
-A backup that fails its S3 upload is treated as a backup failure by current Coolify notification behaviour, which is exactly what we want.
+A backup that fails its R2 upload is a backup failure — treat the timer
+unit and the nightly R2 keys as the alert source until an external channel
+exists.
 
 ## 4. Docker cleanup
 
-Use Coolify's built-in Docker Cleanup rather than aggressive ad-hoc pruning.
-
-In:
-
-`Servers -> localhost -> Docker Cleanup`
-
-A safe baseline is:
+Prefer conservative, explicit cleanup over aggressive ad-hoc pruning.
+Nomad's own GC handles dead allocations; for Docker artifacts keep a safe
+baseline:
 
 ```text
-check frequency: daily
-threshold: 80%
-delete unused volumes: OFF
-delete unused networks: OFF
-application image retention: ON
+prune cadence: weekly or at 80% disk
+delete unused volumes: NEVER automatically
+delete unused networks: only when unreferenced and understood
+image retention: keep the running jobs' images + one previous
 ```
 
-Current Coolify guidance explicitly warns that an "unused" Docker volume can still contain valuable data from a stopped/removed container.
+An "unused" Docker volume can still contain valuable data from a
+stopped/removed allocation — treat every volume as guilty of holding data
+until proven otherwise.
 
 Do **not** casually run:
 
@@ -118,7 +117,7 @@ docker ps -a
 docker volume ls
 ```
 
-Then use Coolify cleanup or a targeted cleanup whose effects you understand.
+Then use a targeted cleanup whose effects you understand.
 
 ## 5. OS patching
 
@@ -153,27 +152,27 @@ After reconnecting through Cloudflare Access:
 systemctl --failed
 systemctl status cloudflared --no-pager
 docker ps
-curl -I https://coolify.example.com
+curl -I https://nomad.example.com
 ```
 
 Then check a few real applications.
 
-## 6. Coolify updates
+## 6. Nomad updates
 
-For a host that matters, use controlled updates rather than surprise auto-updates.
+For a host that matters, use controlled updates rather than surprise
+auto-updates. Nomad has no auto-updater — updates are a deliberate binary
+swap.
 
-Before updating Coolify:
+Before updating Nomad:
 
-1. verify the latest R2 instance backup;
+1. verify the latest R2 snapshot backup;
 2. verify important DB backups;
-3. review release notes;
+3. review the Nomad upgrade guide for the target version;
 4. ensure no active deployment;
-5. note current Coolify version;
+5. note the current Nomad version;
 6. take an OVH snapshot if the change feels risky and the option is enabled;
-7. update;
-8. verify dashboard, localhost server, proxy, apps and backups.
-
-Coolify's current documentation says self-hosted automatic updates are supported and can be disabled while update checks continue.
+7. replace the binary (checksum-verified, same procedure as install), restart the agent;
+8. verify UI, server members, allocations, edge job, apps and backups.
 
 ## 7. When to upgrade VPS-1 -> VPS-2
 
@@ -182,7 +181,7 @@ Upgrade when the constraint is persistent rather than a one-off spike. Examples:
 - builds regularly cause the VPS to swap heavily;
 - OOM kills happen;
 - CPU stays saturated during normal traffic;
-- Coolify becomes sluggish while builds run;
+- the Nomad UI/API becomes sluggish while builds run;
 - disk is too small even after sensible Docker cleanup/log retention;
 - several databases/services now share the host.
 
@@ -239,7 +238,7 @@ That means:
 
 1. provision smaller VPS;
 2. bootstrap securely;
-3. restore/migrate Coolify and workloads;
+3. restore/migrate Nomad state and workloads;
 4. switch DNS;
 5. verify;
 6. keep the old VPS until recovery confidence is high;
@@ -256,7 +255,7 @@ sudo ss -lntup
 docker ps --format 'table {{.Names}}\t{{.Ports}}'
 ```
 
-For normal Coolify web apps, public reachability lives at the Cloudflare edge; the origin host exposes no public web ports (UFW denies 80/443, tunneled traffic only). Public TCP 22 should not be part of the steady-state path because SSH administration goes through Cloudflare Tunnel + Access.
+For normal Nomad web apps, public reachability lives at the Cloudflare edge; the origin host exposes no public web ports (UFW denies 80/443, tunneled traffic only). Public TCP 22 should not be part of the steady-state path because SSH administration goes through Cloudflare Tunnel + Access.
 
 Treat entries like these as a reason to investigate:
 
@@ -273,7 +272,7 @@ Remember: Docker-published ports can bypass normal UFW input rules.
 ## 11. Monthly checklist
 
 - [ ] package updates reviewed/applied
-- [ ] Coolify update status reviewed
+- [ ] Nomad update status reviewed
 - [ ] R2 backup executions inspected
 - [ ] one recent DB/volume backup spot-checked
 - [ ] OVH Automated Backup present
@@ -304,9 +303,8 @@ Do not make a destructive storage/firewall/SSH change if those answers are unkno
 ## References
 
 - OVH VPS upgrade: https://docs.ovhcloud.com/en/guides/bare-metal-cloud/virtual-private-servers/upgrade-resources
-- Coolify updates: https://coolify.io/docs/core/instance-management/update
-- Coolify Docker cleanup: https://coolify.io/docs/core/infrastructure/servers/automated-docker-cleanup
-- Coolify notification events: https://coolify.io/docs/core/notifications/events
+- Nomad upgrades: https://developer.hashicorp.com/nomad/docs/upgrade
+- Nomad Docker driver GC: https://developer.hashicorp.com/nomad/docs/drivers/docker#garbage-collection
 - Cloudflare Tunnel: https://developers.cloudflare.com/tunnel/
 - Cloudflare SSH through Access: https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/use-cases/ssh/ssh-cloudflared-authentication/
 - Docker firewall behaviour: https://docs.docker.com/engine/network/packet-filtering-firewalls/

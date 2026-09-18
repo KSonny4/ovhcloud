@@ -10,7 +10,7 @@ approved domain and operator authorisation — never apply from an adoption task
 
 Profile: platform-security / L1 informative (hosting platform runbook).
 Adopted revision: `KSonny4/engineering-guidance@474b8c21108d06309c6dde6bd492f200779a84e4`
-(reviewed merge, main; PR #58 Coolify-primary + secrets-domain, adopted 2026-09-17; prior pin `656d5569f261afb75f7c7685bea55e1e71518f9b`). Load `AGENTS.md` plus task-triggered playbooks (operations, secrets,
+(reviewed merge, main; PR #58 deployment-control-plane + secrets-domain, adopted 2026-09-17; control plane since migrated to Nomad-only 2026-09-18; prior pin `656d5569f261afb75f7c7685bea55e1e71518f9b`). Load `AGENTS.md` plus task-triggered playbooks (operations, secrets,
 orchestration as triggered) at that revision; record files actually loaded.
 Existing active sessions keep their valid pins.
 

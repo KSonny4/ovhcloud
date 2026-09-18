@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -u
 
-# Read-only health summary for the OVH/Coolify host.
-# This script intentionally does not mutate packages, Docker, firewall or Coolify.
+# Read-only health summary for the OVH/Nomad host.
+# This script intentionally does not mutate packages, Docker, firewall or Nomad.
 
 echo '== timestamp =='
 date -Is
@@ -85,46 +85,26 @@ else
 fi
 
 echo
-echo '== coolify =='
-if [ -d /data/coolify ]; then
-  echo '/data/coolify exists'
-  if [ -f /data/coolify/source/.env ]; then
-    echo 'Coolify .env exists (contents intentionally not printed)'
-  else
-    echo 'WARNING: /data/coolify/source/.env not found'
-  fi
-  du -sh /data/coolify 2>/dev/null || true
+echo '== nomad =='
+export NOMAD_ADDR='http://127.0.0.1:4646'
+if command -v nomad >/dev/null 2>&1; then
+  nomad server members 2>/dev/null || echo 'WARNING: no server members (agent down?)'
+  nomad node status -short 2>/dev/null || echo 'WARNING: no client nodes (agent down?)'
+  nomad --version 2>/dev/null || true
 else
-  echo 'Coolify not installed at /data/coolify'
+  echo 'WARNING: nomad not installed'
 fi
 
 echo
-echo '== coolify realtime websocket =='
-# The dashboard dials wss://<host>/app/<key> (same-origin 443); the tunnel
-# fans /app/* to :6001 and /terminal/ws* to :6002 (see infra ingress).
-# A 101 here proves the realtime container answers WS handshakes.
-AID=''
-if command -v docker >/dev/null 2>&1; then
-  AID=$(docker exec coolify-realtime printenv SOKETI_DEFAULT_APP_ID 2>/dev/null || true)
-fi
-if [ -n "$AID" ]; then
-  printf 'WS upgrade /app/<key> on :6001 => '
-  curl -s -o /dev/null -w '%{http_code}\n' --max-time 8 --http1.1 \
-    -H 'Connection: Upgrade' -H 'Upgrade: websocket' \
-    -H 'Sec-WebSocket-Version: 13' -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' \
-    "http://127.0.0.1:6001/app/$AID?protocol=7&client=js&version=8&flash=false" || echo 'FAILED'
-else
-  echo 'WARNING: could not read Soketi app id (realtime container down?)'
-fi
-AID=''
+echo '== nomad leader endpoint (loopback) =='
+# A 200 here proves the local agent answers; the edge check (via tunnel +
+# service token) lives in verify-nomad-live.sh.
+curl -s -o /dev/null -w 'leader endpoint: %{http_code}\n' --max-time 8 \
+  http://127.0.0.1:4646/v1/status/leader || echo 'FAILED'
 
-echo '== coolify proxy version =='
-# Coolify manages the proxy image; the dashboard warns on newer minor
-# branches (traefik_outdated_info). Drift here means a pending upgrade.
-if command -v docker >/dev/null 2>&1; then
-  docker inspect coolify-proxy --format 'proxy image: {{.Config.Image}}' 2>/dev/null || echo 'WARNING: coolify-proxy not found'
-else
-  echo 'docker unavailable'
+echo '== nomad jobs =='
+if command -v nomad >/dev/null 2>&1; then
+  nomad job status 2>/dev/null || echo 'job list needs a token or agent is down (see verify-nomad-live.sh)'
 fi
 
 echo '== recent OOM indicators =='

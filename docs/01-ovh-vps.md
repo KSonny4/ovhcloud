@@ -16,7 +16,7 @@ PROVISION_HOST=<vps-hostname> PROVISION_ZONE=<zone> \
   bash scripts/run-remote-provision.sh
 ```
 
-The runner refuses preserved targets, verifies Docker, installs Coolify,
+The runner refuses preserved targets, verifies Docker, installs Nomad,
 wires Tunnel/DNS/Access, schedules backups, and adopts everything into
 Terraform with a zero-change plan assertion. Nothing below needs to be
 done by hand on a fresh host.
@@ -46,7 +46,7 @@ recovery route work.
 ## Done when
 
 - [x] VPS ordered with the provisioning public key injected
-- [x] provisioner completes (Docker verified, Coolify live, edge wired)
+- [x] provisioner completes (Docker verified, Nomad live, edge wired)
 - [x] KVM/rescue path is known
 - [x] no secrets were committed to Git
 
@@ -58,7 +58,7 @@ First connection only (key injected at install; password login is a
 last resort via KVM):
 
 ```bash
-ssh -i ~/.ssh/ovh_coolify_ed25519 ubuntu@<VPS_IPV4>
+ssh -i ~/.ssh/ovh_nomad_ed25519 ubuntu@<VPS_IPV4>
 cat /etc/os-release && nproc && free -h && lsblk
 ```
 
@@ -68,6 +68,6 @@ Handy workstation alias (`~/.ssh/config`):
 Host ovh-vps
     HostName <VPS_IPV4>
     User ubuntu
-    IdentityFile ~/.ssh/ovh_coolify_ed25519
+    IdentityFile ~/.ssh/ovh_nomad_ed25519
     IdentitiesOnly yes
 ```

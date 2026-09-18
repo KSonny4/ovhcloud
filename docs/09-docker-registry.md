@@ -1,6 +1,6 @@
-# 09. Private Docker registry on Coolify
+# 09. Private Docker registry on Nomad
 
-A private Docker registry (`registry:2`) running as a Coolify application (dashboard Path A: **New Resource → Application → Docker Image**). It stores private images for workloads deployed through Coolify; pulls and pushes go over the Cloudflare Tunnel, so the VPS still opens no public web ports.
+A private Docker registry (`registry:2`) running as a Nomad job. It stores private images for Nomad-deployed workloads; pulls and pushes go over the Cloudflare Tunnel, so the VPS still opens no public web ports.
 
 Its public hostname must use the approved canonical domain recorded in `docs/deployment-plan.md`; `example.com` below is only a documentation placeholder.
 
@@ -11,9 +11,9 @@ docker push/pull clients
       |
 Cloudflare DNS + proxy/TLS (registry.pkubelka.cz)
       |
-Cloudflare Tunnel coolify-admin -> localhost:80
+Cloudflare Tunnel nomad-admin -> localhost:80
       |
-Coolify reverse proxy (Traefik, routes by Host)
+Nomad edge job (routes by Host)
       |
 registry:2 :5000 (/v2/ API)
       |
@@ -26,13 +26,13 @@ registry:2 :5000 (/v2/ API)
 
 Do NOT front the registry hostname with a Cloudflare Access policy. Docker clients are machines, not interactive users — the same rule as the OmniRoute API hostnames (`omni.`/`omniroute.`). Access would break `docker login`/`push`/`pull`. Authentication is the registry's own htpasswd auth (section 3); TLS is the Cloudflare edge.
 
-## 2. Coolify deploy steps (Path A)
+## 2. Nomad deploy steps
 
-Dashboard → `production` environment → **New Resource → Application → Docker Image**:
+Jobspec `jobs/registry.nomad.hcl` (see `docs/03-nomad.md` for the pattern):
 
 - Image: `registry:2` (pin a digest once chosen; record it in the operator's secure notes, not here).
-- Container port: `5000`; domain: `registry.<approved-domain>` (e.g. `registry.pkubelka.cz`).
-- Persistent volume: mount at `/var/lib/registry` (single replica only — the filesystem storage backend assumes one writer).
+- Service port: `5000`; domain: `registry.<approved-domain>` (e.g. `registry.pkubelka.cz`).
+- Host volume: mount at `/var/lib/registry` (count 1 only — the filesystem storage backend assumes one writer).
 - Environment:
   - `REGISTRY_STORAGE_FILESYSTEM_ROOTDIRECTORY=/var/lib/registry`
   - `REGISTRY_AUTH=htpasswd`
@@ -50,14 +50,14 @@ Generate credentials off-host (bcrypt format, as required by `registry:2`):
 docker run --rm --entrypoint htpasswd httpd:2 -Bbn <username> <password>
 ```
 
-Escrow the resulting file content in OpenBao at `secret/projects/ovhcloud/REGISTRY` (memory-only handling, fail closed). Rotation: generate a new file, update the escrow entry, redeploy the Coolify app, then verify `docker login` with the new credentials and revoke the old ones.
+Escrow the resulting file content in OpenBao at `secret/projects/ovhcloud/REGISTRY` (memory-only handling, fail closed). Rotation: generate a new file, update the escrow entry, redeploy the Nomad job (`nomad job run`), then verify `docker login` with the new credentials and revoke the old ones.
 
 ## 4. Large-layer push tolerance
 
 `docker push` of large layers needs proxy tolerance for long-lived, chunked request bodies along the whole path (client → Cloudflare edge → cloudflared → Traefik → registry):
 
 - Prefer chunked push behavior (default in modern Docker clients); avoid proxy buffering that spools entire layers to disk or times out idle streams.
-- If pushes stall or reset, check Traefik request timeouts/body handling on the Coolify reverse proxy and cloudflared idle-stream behavior before blaming the registry — `registry:2` itself accepts arbitrarily large layers when the path passes them through.
+- If pushes stall or reset, check request timeouts/body handling on the Nomad edge job and cloudflared idle-stream behavior before blaming the registry — `registry:2` itself accepts arbitrarily large layers when the path passes them through.
 - Keep pushes on a reliable link for the first large image; once stored, pulls are ordinary GETs.
 
 ## 5. Verification
@@ -87,12 +87,11 @@ Terraform (plan-only) already declares the `registry.<domain>` CNAME and the tun
 
 ## 7. Live deployment record (2026-09-17)
 
-Deployed and proven live the same day via Coolify + Cloudflare APIs (no browser available in the automation session):
+Deployed and proven live 2026-09-17 under the retired plane, re-registered as a Nomad job at the migration (same image `registry:2.8.3`, port `5000`, host volume `/var/lib/registry`, htpasswd file mount `/auth/htpasswd` with content from OpenBao escrow):
 
-- Coolify app `registry` (`uttlrzcrskrudfpwuxfhml3e`), project `omniroute`, environment `production`, server `localhost`; image `registry:2.8.3`, port `5000`, persistent volume `/var/lib/registry`, htpasswd file mount `/auth/htpasswd` (content from OpenBao escrow).
-- Cloudflare: proxied CNAME `registry` → `coolify-admin` tunnel hostname; tunnel ingress `registry.${domain} → http://localhost:80` inserted before the catch-all (prior config backed up before the change).
+- Cloudflare: proxied CNAME `registry` → `nomad-admin` tunnel hostname; tunnel ingress `registry.${domain} → http://localhost:80` inserted before the catch-all (prior config backed up before the change).
 - Live proof: `docker login` OK, pushed `hello-world`, deleted all local copies, pulled back digest-identical (`sha256:5099b89d…`), container ran (`Hello from Docker!`), catalog listed the repo. Proof repo removed afterwards; credentials scrubbed from the operator machine.
-- Two API-path gotchas recorded for the next operator: (a) the public Coolify API has no domains endpoint, and Coolify does not generate Traefik routers from the `fqdn` string on docker-image apps — the Host router (`traefik.enable`, `traefik.docker.network`, gzip middleware, Host+PathPrefix rule, port-5000 service) was supplied via base64 `custom_labels` and took effect on redeploy; (b) `REGISTRY_HTTP_HOST` is mandatory (see section 2).
+- Two gotchas carried over: (a) Host routing for the registry hostname is supplied by the Nomad edge job's service stanza (no dashboard label tricks); (b) `REGISTRY_HTTP_HOST` is mandatory (see section 2).
 - Escrow `secret/projects/ovhcloud/REGISTRY` now holds `htpasswd`, `http_secret`, `username`, `password` (plaintext kept for smoke/rotation verify; vault-only, never Git).
 - **Terraform drift note:** DNS + tunnel ingress were created via Cloudflare API, outside Terraform state. Before the next `terraform apply`, the operator must import both (exact resource addresses in `infra/terraform/main.tf`):
 
@@ -102,4 +101,4 @@ terraform import cloudflare_zero_trust_tunnel_cloudflared_config.admin <account-
 ```
 
   then `terraform plan` must show no changes. IDs above are the live objects created 2026-09-17 (zone/account/tunnel IDs per the existing configuration).
-- **Duplicate note:** a separate `docker-registry` project (service `registry`, image `registry:3`) already exists on the host, predating this deployment. Consolidate on one registry later; the proven one is this app (`registry.pkubelka.cz`, `registry:2.8.3`).
+- **Duplicate note:** a separate `registry:3` instance already exists on the host, predating this deployment. Consolidate on one registry later; the proven one is this job (`registry.pkubelka.cz`, `registry:2.8.3`).

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Shared preserved-host guard for the OVHcloud/Coolify fresh-host tooling.
+# Shared preserved-host guard for the OVHcloud/Nomad fresh-host tooling.
 #
 # Why a library, not two literal string comparisons: the preserved production
 # VPS can be reached through many names — its OVH service hostname, its IPv4,

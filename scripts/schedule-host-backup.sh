@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
-# Nightly Coolify instance-database backup to Cloudflare R2.
+# Nightly Nomad snapshot backup to Cloudflare R2.
 #
 # Contract:
 # - Runs as root ON the target host (preserved VPS or a fresh provision).
-# - R2 credentials are memory-only: the timer execs every backup through
-#   fetch-r2-env.sh (OpenBao pull per run); no credential file is used, ever.
-#   This script never prints secret values.
-# - Installs: awscli + bao CLI (if missing), /root/coolify-backup/ scripts
-#   (instance backup, workload backup, fetch wrapper, both rollback
+# - R2 credentials AND the Nomad ACL token are memory-only: the timer execs
+#   every backup through fetch-r2-env.sh (OpenBao pull per run); no
+#   credential file is used, ever. This script never prints secret values.
+# - Installs: awscli + bao CLI (if missing), /root/host-backup/ scripts
+#   (snapshot backup, workload backup, fetch wrapper, both rollback
 #   procedures — a rollback-less schedule is refused),
 #   a systemd oneshot service + daily timer (02:00 UTC), 14-day retention.
 # - Runs the first backup immediately and verifies the object in R2.
 #
 # Usage (on the host, as root):
-#   bash scripts/schedule-coolify-backup.sh [--dry-run] [--install-only]
+#   bash scripts/schedule-host-backup.sh [--dry-run] [--install-only]
 #
 # Testability: BACKUP_DIR and SYSTEMD_DIR override the install prefixes so a
 # clean-target test can run the NON-dry-run installer into an isolated prefix
@@ -28,7 +28,7 @@ while [ "$#" -gt 0 ]; do
   case "$1" in
     --dry-run) dry_run=1; shift ;;
     --install-only) install_only=1; shift ;;
-    -h|--help) echo 'usage: schedule-coolify-backup.sh [--dry-run] [--install-only]'; exit 0 ;;
+    -h|--help) echo 'usage: schedule-host-backup.sh [--dry-run] [--install-only]'; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -63,21 +63,21 @@ if ! command -v bao >/dev/null 2>&1 && [ "$dry_run" -eq 0 ]; then
   run rm -f /tmp/openbao.deb
   bao version >/dev/null || { echo 'bao install verification failed.' >&2; exit 2; }
 fi
-if ! command -v docker >/dev/null 2>&1 && [ "$dry_run" -eq 0 ]; then
-  echo 'docker not found on this host; cannot dump coolify-db.' >&2
+if ! command -v nomad >/dev/null 2>&1 && [ "$dry_run" -eq 0 ]; then
+  echo 'nomad not found on this host; cannot snapshot cluster state.' >&2
   exit 2
 fi
 
-backup_dir="${BACKUP_DIR:-/root/coolify-backup}"
+backup_dir="${BACKUP_DIR:-/root/host-backup}"
 systemd_dir="${SYSTEMD_DIR:-/etc/systemd/system}"
 backup_script="${backup_dir}/backup-to-r2.sh"
 app_installed="${backup_dir}/backup-app-workloads.sh"
 log "backup dir: ${backup_dir}"
 
 if [ "$dry_run" -eq 1 ]; then
-  log "DRY-RUN: write ${backup_script} (pg_dump -Fc coolify-db | gzip -> R2 dated key, prune keys older than 14 days)"
-  log 'DRY-RUN: install coolify-backup.service + coolify-backup.timer (daily 02:00 UTC, Persistent=true)'
-  log 'DRY-RUN: systemctl daemon-reload, enable --now coolify-backup.timer'
+  log "DRY-RUN: write ${backup_script} (nomad snapshot save -> R2 dated key, prune keys older than 14 days)"
+  log 'DRY-RUN: install host-backup.service + host-backup.timer (daily 02:00 UTC, Persistent=true)'
+  log 'DRY-RUN: systemctl daemon-reload, enable --now host-backup.timer'
   log 'DRY-RUN: run first backup now and verify with s3api head-object'
   exit 0
 fi
@@ -85,7 +85,7 @@ fi
 run mkdir -p "$backup_dir"
 run chmod 700 "$backup_dir"
 
-# The application-workload companion must live beside the instance script:
+# The application-workload companion must live beside the snapshot script:
 # install it from alongside this script when present, keep the existing copy
 # when already deployed, fail closed when found nowhere.
 app_src="$(cd "$(dirname "$0")" && pwd)/backup-app-workloads.sh"
@@ -112,7 +112,7 @@ fi
 
 # Rollback procedures ship with the schedule (fresh targets must be able to
 # roll back noninteractively): same install-or-fail-closed companion pattern.
-for rollback_src in rollback-coolify-backup.sh rollback-app-workloads.sh; do
+for rollback_src in rollback-nomad-snapshot.sh rollback-app-workloads.sh; do
   src_path="$(cd "$(dirname "$0")" && pwd)/${rollback_src}"
   if [ -f "$src_path" ]; then
     run cp "$src_path" "${backup_dir}/${rollback_src}"
@@ -126,23 +126,25 @@ done
 
 cat >"$backup_script" <<'BACKUP_EOF'
 #!/usr/bin/env bash
-# Nightly Coolify instance DB backup. Credentials arrive ONLY via environment
+# Nightly Nomad snapshot backup. Credentials arrive ONLY via environment
 # from fetch-r2-env.sh (memory-only OpenBao pull). No credential file.
 set -euo pipefail
 : "${R2_ENDPOINT:?R2 credentials required via environment (fetch-r2-env.sh)}"; : "${R2_BUCKET:?}"
+: "${NOMAD_TOKEN:?Nomad ACL token required via environment (fetch-r2-env.sh)}"
 export AWS_ACCESS_KEY_ID="${R2_ACCESS_KEY_ID:?}" AWS_SECRET_ACCESS_KEY="${R2_SECRET_ACCESS_KEY:?}"
 export AWS_DEFAULT_REGION="${AWS_DEFAULT_REGION:-auto}"
+export NOMAD_ADDR="${NOMAD_ADDR:-http://127.0.0.1:4646}"
 stamp="$(date -u +%Y%m%dT%H%M%SZ)"
-key="coolify-db-${stamp}.dump.gz"
+key="nomad-snapshot-${stamp}.snap"
 tmp="$(mktemp)"
 trap 'rm -f "$tmp"' EXIT
-docker exec coolify-db pg_dump -Fc -U coolify coolify | gzip >"$tmp"
+nomad operator snapshot save "$tmp"
 aws --endpoint-url "$R2_ENDPOINT" s3api put-object --bucket "$R2_BUCKET" --key "$key" --body "$tmp" >/dev/null
 aws --endpoint-url "$R2_ENDPOINT" s3api head-object --bucket "$R2_BUCKET" --key "$key" >/dev/null
 cutoff="$(date -u -d '14 days ago' +%Y%m%d)"
-old="$(aws --endpoint-url "$R2_ENDPOINT" s3 ls "s3://${R2_BUCKET}/coolify-db-" 2>/dev/null | awk '{print $4}')"
+old="$(aws --endpoint-url "$R2_ENDPOINT" s3 ls "s3://${R2_BUCKET}/nomad-snapshot-" 2>/dev/null | awk '{print $4}')"
 for k in $old; do
-  day="$(printf '%s' "$k" | sed -E 's/coolify-db-([0-9]{8})T.*/\1/')"
+  day="$(printf '%s' "$k" | sed -E 's/nomad-snapshot-([0-9]{8})T.*/\1/')"
   if [ "$day" \< "$cutoff" ]; then
     aws --endpoint-url "$R2_ENDPOINT" s3api delete-object --bucket "$R2_BUCKET" --key "$k" >/dev/null
     echo "pruned ${k} (older than 14 days)"
@@ -167,14 +169,14 @@ elif [ ! -f "${backup_dir}/fetch-r2-env.sh" ] && [ "$dry_run" -eq 0 ]; then
   exit 2
 fi
 
-# The application-workload script must sit beside the instance script (the
+# The snapshot script must sit beside the workload script (the
 # runner/live operator scp's it there); the unit runs both sequentially and
 # fails if either fails.
-cat >"${systemd_dir}/coolify-backup.service" <<SERVICE_EOF
+cat >"${systemd_dir}/host-backup.service" <<SERVICE_EOF
 [Unit]
-Description=Nightly Coolify instance + application workload backup to R2
+Description=Nightly Nomad snapshot + application workload backup to R2
 Wants=network-online.target
-After=network-online.target docker.service
+After=network-online.target docker.service nomad.service
 
 [Service]
 Type=oneshot
@@ -182,9 +184,9 @@ ExecStart=${backup_dir}/fetch-r2-env.sh -- ${backup_script}
 ExecStart=${backup_dir}/fetch-r2-env.sh -- ${app_installed}
 SERVICE_EOF
 
-cat >"${systemd_dir}/coolify-backup.timer" <<'TIMER_EOF'
+cat >"${systemd_dir}/host-backup.timer" <<'TIMER_EOF'
 [Unit]
-Description=Run Coolify R2 backup daily at 02:00 UTC
+Description=Run Nomad R2 backup daily at 02:00 UTC
 
 [Timer]
 OnCalendar=*-*-* 02:00:00 UTC
@@ -198,15 +200,15 @@ TIMER_EOF
 # unit files parse instead of touching host systemd.
 if [ "$systemd_dir" != '/etc/systemd/system' ]; then
   if command -v systemd-analyze >/dev/null 2>&1; then
-    systemd-analyze verify "${systemd_dir}/coolify-backup.service" \
-      && log 'unit verified: coolify-backup.service parses (isolated prefix, host systemd untouched).'
+    systemd-analyze verify "${systemd_dir}/host-backup.service" \
+      && log 'unit verified: host-backup.service parses (isolated prefix, host systemd untouched).'
   else
     log 'systemd-analyze unavailable; unit content asserted by the caller (host systemd untouched).'
   fi
 else
   run systemctl daemon-reload
-  run systemctl enable --now coolify-backup.timer
-  log 'timer enabled: coolify-backup.timer (daily 02:00 UTC)'
+  run systemctl enable --now host-backup.timer
+  log 'timer enabled: host-backup.timer (daily 02:00 UTC)'
 fi
 
 if [ "$install_only" -eq 1 ]; then

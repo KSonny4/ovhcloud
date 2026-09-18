@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Application-workload backup to Cloudflare R2 (databases + persistent volumes).
 #
-# Scope: the actual supported application scope beyond the Coolify control-plane
-# database (which scripts/schedule-coolify-backup.sh covers). This script backs
+# Scope: the actual supported application scope beyond the Nomad cluster
+# state (which scripts/schedule-host-backup.sh covers). This script backs
 # up, for every application workload on the host:
 # - PostgreSQL databases in postgres-image containers (pg_dump custom format),
 # - Docker named volumes (tar.gz snapshots),
@@ -10,8 +10,8 @@
 # 14-day retention pruning.
 #
 # Excluded by default (infrastructure-owned, documented rationale):
-# - coolify-db volume: covered authoritatively by pg_dump in schedule-coolify-backup.sh.
-# - coolify-redis volume: ephemeral cache, safe to lose by design.
+# - Nomad data dir: covered authoritatively by snapshot in schedule-host-backup.sh.
+# - cache volumes: ephemeral, safe to lose by design.
 # Override with APP_VOLUME_EXCLUDE="vol1 vol2".
 #
 # Contract: runs as root ON the target host; R2 credentials ONLY from
@@ -52,7 +52,7 @@ topology_entry() {
 allowlist="${ESCROW_ALLOWLIST:-}"
 if [ -z "$allowlist" ]; then
   _tdir="$(cd "$(dirname "$0")" && pwd)"
-  for _cand in "${_tdir}/escrowed-app-envs" "${_tdir}/lib/escrowed-app-envs" '/root/coolify-backup/escrowed-app-envs'; do
+  for _cand in "${_tdir}/escrowed-app-envs" "${_tdir}/lib/escrowed-app-envs" '/root/host-backup/escrowed-app-envs'; do
     if [ -f "$_cand" ]; then allowlist="$_cand"; break; fi
   done
   [ -n "$allowlist" ] || allowlist='/dev/null'
@@ -112,7 +112,7 @@ if [ "$(id -u)" -ne 0 ] && [ "$dry_run" -eq 0 ]; then
   exit 2
 fi
 
-exclude="${APP_VOLUME_EXCLUDE:-coolify-db coolify-redis}"
+exclude="${APP_VOLUME_EXCLUDE:-}"
 stamp="$(date -u +%Y%m%dT%H%M%SZ)"
 
 if [ "$dry_run" -eq 1 ]; then
@@ -145,19 +145,20 @@ FAILED=0
 
 # --- workload coverage contract (fail closed on gaps) ---
 # Covered: PostgreSQL databases (native dump), Docker named volumes
-# (snapshots, except documented infra exclusions), and host directories
+# (snapshots; APP_VOLUME_EXCLUDE opts individual volumes out), and host directories
 # listed in APP_BIND_PATHS (tar snapshots, e.g. SQLite directories).
-# Platform-owned coolify* containers are skipped by design (control-plane DB
-# covered authoritatively by schedule-coolify-backup.sh; redis is ephemeral
-# cache; proxy/sentinel/realtime are stateless). Anything else stateful that
-# this script cannot back up fails the run with an explicit gap list.
+# Coverage: every Docker named volume is backed up (cluster state lives in
+# /opt/nomad on the host, covered authoritatively by
+# schedule-host-backup.sh — it is never a Docker volume, so no exclusion
+# is needed). Anything stateful that this script cannot back up fails the
+# run with an explicit gap list.
 system_binds='/etc/hostname /etc/hosts /etc/resolv.conf /etc/resolve.conf /run/docker.sock'
 gaps=''
 for cname in $(docker ps --format '{{.Names}}' 2>/dev/null || true); do
-  case "$cname" in coolify*) continue ;; esac
+  case "$cname" in rollback-app-probe-db) continue ;; esac
   [ -n "$cname" ] || continue
   image="$(docker inspect "$cname" --format '{{.Config.Image}}' 2>/dev/null || true)"
-  case "$image" in *coollabsio/*) continue ;; esac  # platform control plane (hash-named helpers are stateless)
+  # No platform-image exclusion: every workload image is in scope.
   case "$image" in
     *mysql*|*mariadb*|*mongo*|*redis*|*memcached*|*cassandra*|*couchdb*|*elasticsearch*|*clickhouse*)
       gaps="${gaps} container ${cname} image ${image}: no native dumper (only postgres supported);" ;;
@@ -278,17 +279,16 @@ for bpath in ${APP_BIND_PATHS:-}; do
 done
 
 # --- container topology (for faithful service recreation) ---
-# Records every non-platform container's full topology. Env VALUES are
+# Records every workload container's full topology. Env VALUES are
 # recorded except sensitive-looking keys (*PASS*, *SECRET*, *TOKEN*, *KEY*,
 # *CREDENTIAL*), which are stored as REDACTED with names listed: recreation
 # restores topology + data, and reports exactly which secrets to re-inject.
 # Topology entries are produced by topology_entry() (defined near the top).
 for cname in $(docker ps --format '{{.Names}}' 2>/dev/null || true); do
-  case "$cname" in coolify*|rollback-app-probe-db) continue ;; esac
+  case "$cname" in rollback-app-probe-db) continue ;; esac
   [ -n "$cname" ] || continue
   cspec="$(docker inspect "$cname" 2>/dev/null || true)"
   [ -n "$cspec" ] || { echo "FAILED inspect ${cname}." >&2; FAILED=1; continue; }
-  case "$(printf '%s' "$cspec" | python3 -c 'import json,sys; print(json.load(sys.stdin)[0].get("Config",{}).get("Image",""))')" in *coollabsio/*) continue ;; esac
   printf '%s' "$cspec" >"$workdir/inspect.json"
   centry="$(topology_entry "$workdir/inspect.json" || true)"
   rm -f "$workdir/inspect.json"

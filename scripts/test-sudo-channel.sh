@@ -15,7 +15,7 @@
 # mutation): [--ssh-key PATH] [--host USER@HOST]
 set -euo pipefail
 
-ssh_key="${HOME}/.ssh/ovh_coolify_ed25519"
+ssh_key="${HOME}/.ssh/ovh_nomad_ed25519"
 host='ubuntu@57.129.155.203'
 while [ "$#" -gt 0 ]; do
   case "$1" in

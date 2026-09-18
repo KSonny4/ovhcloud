@@ -20,7 +20,7 @@
 # }
 
 # import {
-#   # Live Tunnel: coolify-admin. Retrieve the canonical ID from Cloudflare
+#   # Live Tunnel: nomad-admin. Retrieve the canonical ID from Cloudflare
 #   # before use; do not hardcode it. Verified import format (provider v5.25):
 #   # "ACCOUNT_ID/TUNNEL_ID" (no accounts/ prefix).
 #   to = cloudflare_zero_trust_tunnel_cloudflared.admin
@@ -28,9 +28,9 @@
 # }
 #
 # import {
-#   # Live DNS: coolify.<domain> CNAME to the Tunnel.
-#   to = cloudflare_dns_record.coolify
-#   id = "REPLACE_WITH_ZONE_ID/REPLACE_WITH_COOLIFY_DNS_RECORD_ID"
+#   # Live DNS: nomad.<domain> CNAME to the Tunnel.
+#   to = cloudflare_dns_record.nomad
+#   id = "REPLACE_WITH_ZONE_ID/REPLACE_WITH_NOMAD_DNS_RECORD_ID"
 # }
 #
 # import {
@@ -42,8 +42,8 @@
 # import {
 #   # Existing Access apps. Verified import format (provider v5.25):
 #   # "accounts/ACCOUNT_ID/APP_ID" (accounts/ prefix required).
-#   to = cloudflare_zero_trust_access_application.coolify
-#   id = "accounts/REPLACE_WITH_ACCOUNT_ID/REPLACE_WITH_COOLIFY_ACCESS_APP_ID"
+#   to = cloudflare_zero_trust_access_application.nomad
+#   id = "accounts/REPLACE_WITH_ACCOUNT_ID/REPLACE_WITH_NOMAD_ACCESS_APP_ID"
 # }
 #
 # import {
