@@ -66,9 +66,9 @@ else
 fi
 
 # OpenBao-sourced API inputs (memory-only; unset at the end with the rest).
-admin="$(bao kv get -field=ADMIN_CLOUDFLARE secret/projects/ovhcloud/ADMIN_CLOUDFLARE 2>/dev/null || true)"
-svc_id="$(bao kv get -field=client_id secret/projects/ovhcloud/EDGE_ACCESS_SERVICE_TOKEN 2>/dev/null || true)"
-svc_secret="$(bao kv get -field=client_secret secret/projects/ovhcloud/EDGE_ACCESS_SERVICE_TOKEN 2>/dev/null || true)"
+admin="$(bao kv get -field=ADMIN_CLOUDFLARE secret/projects/nomad/ADMIN_CLOUDFLARE 2>/dev/null || true)"
+svc_id="$(bao kv get -field=client_id secret/projects/nomad/EDGE_ACCESS_SERVICE_TOKEN 2>/dev/null || true)"
+svc_secret="$(bao kv get -field=client_secret secret/projects/nomad/EDGE_ACCESS_SERVICE_TOKEN 2>/dev/null || true)"
 zone='0fcca39cc6516b8e23971bd717c0e9ca'
 if [ -z "$admin" ] || [ -z "$svc_id" ] || [ -z "$svc_secret" ]; then echo 'OpenBao API escrow incomplete.' >&2; exit 2; fi
 
@@ -83,10 +83,10 @@ else
 fi
 
 # R2 handles (memory-only env, same pattern as the collectors).
-r2_ak="$(bao kv get -field=access_key_id secret/projects/ovhcloud/BACKUP_R2 2>/dev/null || true)"
-r2_sk="$(bao kv get -field=secret_access_key secret/projects/ovhcloud/BACKUP_R2 2>/dev/null || true)"
-r2_ep="$(bao kv get -field=endpoint secret/projects/ovhcloud/BACKUP_R2 2>/dev/null || true)"
-r2_bucket="$(bao kv get -field=bucket secret/projects/ovhcloud/BACKUP_R2 2>/dev/null || true)"
+r2_ak="$(bao kv get -field=access_key_id secret/projects/nomad/BACKUP_R2 2>/dev/null || true)"
+r2_sk="$(bao kv get -field=secret_access_key secret/projects/nomad/BACKUP_R2 2>/dev/null || true)"
+r2_ep="$(bao kv get -field=endpoint secret/projects/nomad/BACKUP_R2 2>/dev/null || true)"
+r2_bucket="$(bao kv get -field=bucket secret/projects/nomad/BACKUP_R2 2>/dev/null || true)"
 export AWS_ACCESS_KEY_ID="$r2_ak" AWS_SECRET_ACCESS_KEY="$r2_sk" AWS_DEFAULT_REGION=auto
 if [ -z "$stamp" ]; then
   stamp="$(aws --endpoint-url "$r2_ep" s3 ls "s3://${r2_bucket}/app-manifests/" 2>/dev/null | awk '{print $4}' | grep -oE '[0-9]{8}T[0-9]{6}Z' | sort | tail -n1 || true)"

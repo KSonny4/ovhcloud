@@ -29,8 +29,8 @@ check() { # $1=name $2=expected $3=actual
 }
 ssh_run() { ssh -i "$SSH_KEY" -o BatchMode=yes -o ConnectTimeout=20 "ubuntu@$HOST" "$1"; }
 
-CID="$(bao kv get -field=client_id secret/projects/ovhcloud/EDGE_ACCESS_SERVICE_TOKEN 2>/dev/null || true)"
-CS="$(bao kv get -field=client_secret secret/projects/ovhcloud/EDGE_ACCESS_SERVICE_TOKEN 2>/dev/null || true)"
+CID="$(bao kv get -field=client_id secret/projects/nomad/EDGE_ACCESS_SERVICE_TOKEN 2>/dev/null || true)"
+CS="$(bao kv get -field=client_secret secret/projects/nomad/EDGE_ACCESS_SERVICE_TOKEN 2>/dev/null || true)"
 [ -n "$CID" ] && [ -n "$CS" ] || { echo 'FAIL access service token unreadable from OpenBao'; exit 2; }
 
 code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 25 -H "CF-Access-Client-Id: $CID" -H "CF-Access-Client-Secret: $CS" "https://${NOMAD_HOST}/v1/status/leader" || true)"

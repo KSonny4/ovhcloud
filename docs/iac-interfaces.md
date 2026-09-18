@@ -110,15 +110,15 @@ Generated values are written to OpenBao under stable paths and are referenced by
 
 | Logical value | OpenBao path/fields | Consumers |
 | --- | --- | --- |
-| Provisioning SSH key | `secret/projects/ovhcloud/PROVISION_SSH_PRIVATE_KEY` / `PROVISION_SSH_PUBLIC_KEY` | guest bootstrap, provisioner machine connection |
-| Nomad bootstrap material | `secret/projects/ovhcloud/NOMAD_BOOTSTRAP` / `acl_token`, `acl_accessor`, `gossip_key` | Nomad bootstrap and recovery |
-| Tunnel config secret (preserved tunnel) | `secret/projects/ovhcloud/EDGE_TUNNEL_SECRET` / `tunnel_secret` | single consumer: Terraform loader (`TF_VAR_cloudflare_tunnel_secret`) |
-| Tunnel connector token (preserved, cold recovery) | `secret/projects/ovhcloud/EDGE_TUNNEL_TOKEN` / `tunnel_token` | single consumer: break-glass human reinstall (no automation reads it; rotation via API) |
-| Tunnel connector credential (per fresh target) | `secret/projects/ovhcloud/EDGE_TUNNEL_<NAME>` / `tunnel_id`, `tunnel_token` | single consumer chain: runner (`ensure-tunnel.sh` stage creates + escrows, provisioner consumes for exactly one target) |
-| Cloudflare machine Access credential | `secret/projects/ovhcloud/EDGE_ACCESS_SERVICE_TOKEN` / `client_id`, `client_secret` | noninteractive verification and automation |
-| R2 backup credential | `secret/projects/ovhcloud/BACKUP_R2` / `access_key_id`, `secret_access_key`, `bucket`, `endpoint` (four fields; every consumer fails closed on any missing field) | host-timer backup plane + restore probe (no control plane holds an S3 destination; no credentials in Nomad) |
-| OmniRoute application secrets (derived) | `secret/projects/ovhcloud/OMNIROUTE` / `STORAGE_ENCRYPTION_KEY`, `API_KEY_SECRET`, `JWT_SECRET` (generate-if-absent + escrow via `ensure-omniroute-secrets.sh`; reuse otherwise) | manifests mark them escrow-recoverable (`env_escrowed`); restore re-injects via `fetch-app-secrets.sh` with no human relay |
-| Docker registry credentials | `secret/projects/ovhcloud/REGISTRY` / `htpasswd`, `http_secret` | `registry:2` htpasswd file mount + session signing (see `docs/09-docker-registry.md`) |
+| Provisioning SSH key | `secret/projects/nomad/PROVISION_SSH_PRIVATE_KEY` / `PROVISION_SSH_PUBLIC_KEY` | guest bootstrap, provisioner machine connection |
+| Nomad bootstrap material | `secret/projects/nomad/NOMAD_BOOTSTRAP` / `acl_token`, `acl_accessor`, `gossip_key` | Nomad bootstrap and recovery |
+| Tunnel config secret (preserved tunnel) | `secret/projects/nomad/EDGE_TUNNEL_SECRET` / `tunnel_secret` | single consumer: Terraform loader (`TF_VAR_cloudflare_tunnel_secret`) |
+| Tunnel connector token (preserved, cold recovery) | `secret/projects/nomad/EDGE_TUNNEL_TOKEN` / `tunnel_token` | single consumer: break-glass human reinstall (no automation reads it; rotation via API) |
+| Tunnel connector credential (per fresh target) | `secret/projects/nomad/EDGE_TUNNEL_<NAME>` / `tunnel_id`, `tunnel_token` | single consumer chain: runner (`ensure-tunnel.sh` stage creates + escrows, provisioner consumes for exactly one target) |
+| Cloudflare machine Access credential | `secret/projects/nomad/EDGE_ACCESS_SERVICE_TOKEN` / `client_id`, `client_secret` | noninteractive verification and automation |
+| R2 backup credential | `secret/projects/nomad/BACKUP_R2` / `access_key_id`, `secret_access_key`, `bucket`, `endpoint` (four fields; every consumer fails closed on any missing field) | host-timer backup plane + restore probe (no control plane holds an S3 destination; no credentials in Nomad) |
+| OmniRoute application secrets (derived) | `secret/projects/nomad/OMNIROUTE` / `STORAGE_ENCRYPTION_KEY`, `API_KEY_SECRET`, `JWT_SECRET` (generate-if-absent + escrow via `ensure-omniroute-secrets.sh`; reuse otherwise) | manifests mark them escrow-recoverable (`env_escrowed`); restore re-injects via `fetch-app-secrets.sh` with no human relay |
+| Docker registry credentials | `secret/projects/nomad/REGISTRY` / `htpasswd`, `http_secret` | `registry:2` htpasswd file mount + session signing (see `docs/09-docker-registry.md`) |
 
 Values must be sensitive in Terraform schemas and redacted from command output. If the selected provider cannot safely write a generated value to OpenBao, the apply must fail rather than silently leave it in an untracked local file.
 

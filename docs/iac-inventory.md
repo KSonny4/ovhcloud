@@ -13,7 +13,7 @@ verifies each row live).
 - Canonical UI: `nomad.pkubelka.cz`.
 - Human UI policy: `ksonny4@gmail.com`.
 - Provider authorization is retrieved from the existing OpenBao instance at `https://secrets.pkubelka.cz`.
-- The current deployment credential is escrowed under `secret/projects/ovhcloud/ADMIN_CLOUDFLARE` (field name: `ADMIN_CLOUDFLARE`, Zone-DNS + Account Tunnel/Access/R2 + IdP grants). Historical note: an earlier `CF_DEPLOY_TOKEN` field was superseded during rotation the same day and revoked; the automation contract normalizes provider inputs at its OpenBao boundary and reads only `ADMIN_CLOUDFLARE`.
+- The current deployment credential is escrowed under `secret/projects/nomad/ADMIN_CLOUDFLARE` (field name: `ADMIN_CLOUDFLARE`, Zone-DNS + Account Tunnel/Access/R2 + IdP grants). Historical note: an earlier `CF_DEPLOY_TOKEN` field was superseded during rotation the same day and revoked; the automation contract normalizes provider inputs at its OpenBao boundary and reads only `ADMIN_CLOUDFLARE`.
 - Derived values, including SSH, Tunnel, service-token, Nomad, and backup credentials, are generated or escrowed in OpenBao and are never committed.
 
 ## OVH origin (validated 2026-09-13, read-only CLI)
@@ -72,17 +72,17 @@ ships until healthy. See `docs/03-nomad.md` for the jobspec pattern and
 
 | OpenBao path | Fields | Consumers |
 | --- | --- | --- |
-| `secret/projects/ovhcloud/ADMIN_CLOUDFLARE` | `ADMIN_CLOUDFLARE` (API token) | Terraform loader, Cloudflare API automation |
-| `secret/projects/ovhcloud/OVH_API` | `application_key`, `application_secret`, `consumer_key`, `endpoint` | `ovh_cli` read-only discovery |
-| `secret/projects/ovhcloud/NOMAD_BOOTSTRAP` | `acl_token`, `acl_accessor`, `gossip_key` | Nomad bootstrap and recovery |
-| `secret/projects/ovhcloud/EDGE_TUNNEL_SECRET` | `tunnel_secret` | Terraform loader (preserved `nomad-admin` singleton) |
-| `secret/projects/ovhcloud/EDGE_TUNNEL_<NAME>` | `tunnel_id`, `tunnel_token` | Per-target tunnel creation (fresh hosts) |
-| `secret/projects/ovhcloud/EDGE_TUNNEL_TOKEN` | `tunnel_token` | Break-glass reinstall only (no automation reads it) |
-| `secret/projects/ovhcloud/BACKUP_R2` | `access_key_id`, `secret_access_key`, `bucket`, `endpoint` | Host-timer backup plane + restore probe |
-| `secret/projects/ovhcloud/EDGE_ACCESS_SERVICE_TOKEN` | `client_id`, `client_secret` | Machine edge access (noninteractive verification, API calls) |
-| `secret/projects/ovhcloud/PROVISION_SSH_PRIVATE_KEY` / `PROVISION_SSH_PUBLIC_KEY` | key material | Guest bootstrap, provisioner machine connection |
-| `secret/projects/ovhcloud/OMNIROUTE` | `STORAGE_ENCRYPTION_KEY`, `API_KEY_SECRET`, `JWT_SECRET` | OmniRoute apps (escrow-recoverable restore) |
-| `secret/projects/ovhcloud/REGISTRY` | `htpasswd`, `http_secret`, `username`, `password` | Private registry auth + smoke verify (live 2026-09-17) |
+| `secret/projects/nomad/ADMIN_CLOUDFLARE` | `ADMIN_CLOUDFLARE` (API token) | Terraform loader, Cloudflare API automation |
+| `secret/projects/nomad/OVH_API` | `application_key`, `application_secret`, `consumer_key`, `endpoint` | `ovh_cli` read-only discovery |
+| `secret/projects/nomad/NOMAD_BOOTSTRAP` | `acl_token`, `acl_accessor`, `gossip_key` | Nomad bootstrap and recovery |
+| `secret/projects/nomad/EDGE_TUNNEL_SECRET` | `tunnel_secret` | Terraform loader (preserved `nomad-admin` singleton) |
+| `secret/projects/nomad/EDGE_TUNNEL_<NAME>` | `tunnel_id`, `tunnel_token` | Per-target tunnel creation (fresh hosts) |
+| `secret/projects/nomad/EDGE_TUNNEL_TOKEN` | `tunnel_token` | Break-glass reinstall only (no automation reads it) |
+| `secret/projects/nomad/BACKUP_R2` | `access_key_id`, `secret_access_key`, `bucket`, `endpoint` | Host-timer backup plane + restore probe |
+| `secret/projects/nomad/EDGE_ACCESS_SERVICE_TOKEN` | `client_id`, `client_secret` | Machine edge access (noninteractive verification, API calls) |
+| `secret/projects/nomad/PROVISION_SSH_PRIVATE_KEY` / `PROVISION_SSH_PUBLIC_KEY` | key material | Guest bootstrap, provisioner machine connection |
+| `secret/projects/nomad/OMNIROUTE` | `STORAGE_ENCRYPTION_KEY`, `API_KEY_SECRET`, `JWT_SECRET` | OmniRoute apps (escrow-recoverable restore) |
+| `secret/projects/nomad/REGISTRY` | `htpasswd`, `http_secret`, `username`, `password` | Private registry auth + smoke verify (live 2026-09-17) |
 
 Operator cutover note (M5): Bao entries under retired names are duplicated
 to the names above before the cutover, verified by readback, and the old

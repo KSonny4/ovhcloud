@@ -39,7 +39,7 @@ Jobspec `jobs/registry.nomad.hcl` (see `docs/03-nomad.md` for the pattern):
   - `REGISTRY_AUTH_HTPASSWD_REALM=Registry Realm`
   - `REGISTRY_AUTH_HTPASSWD_PATH=/auth/htpasswd`
   - `REGISTRY_HTTP_HOST=https://registry.<approved-domain>` — REQUIRED behind the Tunnel: edge TLS terminates at Cloudflare while the registry sees plain HTTP, so without this it mints `http://` upload URLs and every push fails auth on resume. This was the live failure on 2026-09-17.
-- Mount the htpasswd file at `/auth/htpasswd` (read-only). Its content lives in OpenBao at `secret/projects/ovhcloud/REGISTRY` (key names only here — never values, never in Git); copy it onto the mount through the operator's secure channel at deploy time.
+- Mount the htpasswd file at `/auth/htpasswd` (read-only). Its content lives in OpenBao at `secret/projects/nomad/REGISTRY` (key names only here — never values, never in Git); copy it onto the mount through the operator's secure channel at deploy time.
 - Resource limits: this is a small host — set CPU/memory limits so large pushes cannot starve neighboring apps.
 
 ## 3. htpasswd creation and escrow
@@ -50,7 +50,7 @@ Generate credentials off-host (bcrypt format, as required by `registry:2`):
 docker run --rm --entrypoint htpasswd httpd:2 -Bbn <username> <password>
 ```
 
-Escrow the resulting file content in OpenBao at `secret/projects/ovhcloud/REGISTRY` (memory-only handling, fail closed). Rotation: generate a new file, update the escrow entry, redeploy the Nomad job (`nomad job run`), then verify `docker login` with the new credentials and revoke the old ones.
+Escrow the resulting file content in OpenBao at `secret/projects/nomad/REGISTRY` (memory-only handling, fail closed). Rotation: generate a new file, update the escrow entry, redeploy the Nomad job (`nomad job run`), then verify `docker login` with the new credentials and revoke the old ones.
 
 ## 4. Large-layer push tolerance
 
@@ -92,7 +92,7 @@ Deployed and proven live 2026-09-17 under the retired plane, re-registered as a 
 - Cloudflare: proxied CNAME `registry` → `nomad-admin` tunnel hostname; tunnel ingress `registry.${domain} → http://localhost:80` inserted before the catch-all (prior config backed up before the change).
 - Live proof: `docker login` OK, pushed `hello-world`, deleted all local copies, pulled back digest-identical (`sha256:5099b89d…`), container ran (`Hello from Docker!`), catalog listed the repo. Proof repo removed afterwards; credentials scrubbed from the operator machine.
 - Two gotchas carried over: (a) Host routing for the registry hostname is supplied by the Nomad edge job's service stanza (no dashboard label tricks); (b) `REGISTRY_HTTP_HOST` is mandatory (see section 2).
-- Escrow `secret/projects/ovhcloud/REGISTRY` now holds `htpasswd`, `http_secret`, `username`, `password` (plaintext kept for smoke/rotation verify; vault-only, never Git).
+- Escrow `secret/projects/nomad/REGISTRY` now holds `htpasswd`, `http_secret`, `username`, `password` (plaintext kept for smoke/rotation verify; vault-only, never Git).
 - **Terraform drift note:** DNS + tunnel ingress were created via Cloudflare API, outside Terraform state. Before the next `terraform apply`, the operator must import both (exact resource addresses in `infra/terraform/main.tf`):
 
 ```bash

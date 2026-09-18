@@ -209,9 +209,9 @@ resource "cloudflare_zero_trust_tunnel_cloudflared_config" "admin" {
       },
       {
         # Operator-added application route (adopted 2026-09-14 after live
-        # drift; serves the user app through the origin proxy on :80).
+        # drift; origin serves TLS on :443 — adopt verbatim, never downgrade).
         hostname = "fabric.${var.domain}"
-        service  = "http://localhost:80"
+        service  = "https://localhost:443"
       },
       {
         # OmniRoute staging (Pi migration 20260914): same origin-proxy
@@ -227,11 +227,33 @@ resource "cloudflare_zero_trust_tunnel_cloudflared_config" "admin" {
         service  = "http://localhost:80"
       },
       {
-        # Private Docker registry (Nomad registry:2; plan-only): same
-        # origin-proxy pattern; the Nomad edge job routes by Host to the app. No Access
+        # Private Docker registry (live: direct to the registry container
+        # :5000). Moves to the Nomad edge job (:80) only after the edge
+        # job proves healthy (cutover step) — never before. No Access
         # policy here — docker clients are machines, like the OmniRoute API.
         hostname = "registry.${var.domain}"
-        service  = "http://localhost:80"
+        service  = "http://localhost:5000"
+      },
+      {
+        # Adopted live routes (out-of-band additions by other automation;
+        # adopted verbatim 2026-09-18 — Terraform owns the whole ingress
+        # list, so every live hostname must be declared or the next apply
+        # deletes it). No Access policy on any: machine/API clients.
+        hostname = "graph-dispatcher.${var.domain}"
+        service  = "https://localhost:443"
+      },
+      {
+        hostname = "keeper.${var.domain}"
+        service  = "http://localhost:8102"
+      },
+      {
+        # Different zone, same tunnel (adopted verbatim).
+        hostname = "dump.petrzdena.cz"
+        service  = "http://localhost:8101"
+      },
+      {
+        hostname = "dump-dev.petrzdena.cz"
+        service  = "http://localhost:8100"
       },
       {
         service = "http_status:404"

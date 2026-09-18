@@ -21,9 +21,9 @@ bao token create -policy=root -ttl=768h -renewable -orphan \
 open(os.path.expanduser("~/.vault-token.new"),"w").write(d["auth"]["client_token"])'
 chmod 600 ~/.vault-token.new
 # 2. Verify capability before trusting it.
-VAULT_TOKEN=$(cat ~/.vault-token.new) bao kv get -field=bucket secret/projects/ovhcloud/BACKUP_R2
-VAULT_TOKEN=$(cat ~/.vault-token.new) bao kv put -mount=secret projects/ovhcloud/ROTATION_PROBE probe_field=probe_value
-VAULT_TOKEN=$(cat ~/.vault-token.new) bao kv metadata delete -mount=secret projects/ovhcloud/ROTATION_PROBE
+VAULT_TOKEN=$(cat ~/.vault-token.new) bao kv get -field=bucket secret/projects/nomad/BACKUP_R2
+VAULT_TOKEN=$(cat ~/.vault-token.new) bao kv put -mount=secret projects/nomad/ROTATION_PROBE probe_field=probe_value
+VAULT_TOKEN=$(cat ~/.vault-token.new) bao kv metadata delete -mount=secret projects/nomad/ROTATION_PROBE
 # 3. Swap and revoke the old accessor (look it up first: bao token lookup).
 mv ~/.vault-token.new ~/.vault-token
 bao token revoke -accessor <OLD_ACCESSOR>
@@ -52,8 +52,8 @@ the OVH account). Manual equivalent:
 
 ```bash
 ssh-keygen -t ed25519 -N '' -C ovh-nomad-provisioning -f /tmp/rotated-key
-bao kv put -mount=secret projects/ovhcloud/PROVISION_SSH_PRIVATE_KEY value=@/tmp/rotated-key
-bao kv put -mount=secret projects/ovhcloud/PROVISION_SSH_PUBLIC_KEY value=@/tmp/rotated-key.pub
+bao kv put -mount=secret projects/nomad/PROVISION_SSH_PRIVATE_KEY value=@/tmp/rotated-key
+bao kv put -mount=secret projects/nomad/PROVISION_SSH_PUBLIC_KEY value=@/tmp/rotated-key.pub
 # then authorize the public half on the target + register at OVH (runner does both)
 ```
 
@@ -68,7 +68,7 @@ Why dashboard: `POST /user/tokens` returns 403 under the deployment token
    Create Token -> Custom token replicating its permissions, Complete.
 2. Delete the old token in the same list.
 3. Escrow (runner machine):
-   `bao kv put -mount=secret projects/ovhcloud/ADMIN_CLOUDFLARE ADMIN_CLOUDFLARE=<new-value>`
+   `bao kv put -mount=secret projects/nomad/ADMIN_CLOUDFLARE ADMIN_CLOUDFLARE=<new-value>`
 4. Verify: `DASHBOARD_LOGIN_URL=... bash scripts/ensure-service-token.sh`
    (exercises the new token end to end) + `terraform plan` converges.
 
@@ -80,7 +80,7 @@ Why dashboard: R2 token routes return 404 under the deployment token.
    delete the old key, create Object Read & Write scoped to the bucket.
 2. Escrow (all four fields — preflight and `fetch-r2-env.sh` fail closed
    when `endpoint` is absent):
-   `bao kv put -mount=secret projects/ovhcloud/BACKUP_R2
+   `bao kv put -mount=secret projects/nomad/BACKUP_R2
    access_key_id=<id> secret_access_key=<secret> bucket=ovh-host-backups
    endpoint=https://<account-id>.r2.cloudflarestorage.com`
 3. Verify (nothing to rewire):

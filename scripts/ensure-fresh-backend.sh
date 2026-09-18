@@ -44,8 +44,8 @@ fi
 
 command -v bao >/dev/null 2>&1 || { echo 'bao CLI is required.' >&2; exit 2; }
 export BAO_ADDR="${BAO_ADDR:-https://secrets.pkubelka.cz}"
-r2_bucket="$(bao kv get -field=bucket secret/projects/ovhcloud/BACKUP_R2 2>/dev/null || true)"
-r2_endpoint="$(bao kv get -field=endpoint secret/projects/ovhcloud/BACKUP_R2 2>/dev/null || true)"
+r2_bucket="$(bao kv get -field=bucket secret/projects/nomad/BACKUP_R2 2>/dev/null || true)"
+r2_endpoint="$(bao kv get -field=endpoint secret/projects/nomad/BACKUP_R2 2>/dev/null || true)"
 if [ -z "$r2_bucket" ] || [ -z "$r2_endpoint" ]; then
   echo 'BACKUP_R2 bucket/endpoint escrow incomplete in OpenBao (fail closed before any mutation).' >&2
   exit 2

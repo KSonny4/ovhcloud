@@ -123,7 +123,7 @@ The SQLite database can contain encrypted provider credentials. If the associate
 The three OmniRoute secrets are DERIVED (automation-generated, never
 dashboard-minted): `scripts/ensure-omniroute-secrets.sh` (invoked by the
 runner before the backup stage) reads each field from OpenBao
-`secret/projects/ovhcloud/OMNIROUTE` and generates (`openssl rand -base64
+`secret/projects/nomad/OMNIROUTE` and generates (`openssl rand -base64
 48`) + escrows (`bao kv patch`, merge-safe, stdin delivery) whatever is
 absent; present values are reused untouched. Values are never printed and
 never touch disk. R2 S3 keys remain the single operator-supplied
@@ -136,7 +136,7 @@ JWT_SECRET
 ```
 
 Initial deployment consumes them via `bao kv get -field=<NAME>
-secret/projects/ovhcloud/OMNIROUTE` (documented one-liner; the only human
+secret/projects/nomad/OMNIROUTE` (documented one-liner; the only human
 relay in the lifecycle). Every LATER recovery is relay-free: the nightly
 manifest marks these vars escrow-recoverable (`env_escrowed`, via the
 shipped `scripts/lib/escrowed-app-envs` allowlist) and restore re-injects

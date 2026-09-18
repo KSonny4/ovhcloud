@@ -254,7 +254,7 @@ log 'ambient Cloudflare auth proven absent (TF_VAR-only provider authorization).
 # Tunnel secret contract, three disjoint entries (executed consistency, not
 # prose): preserved Terraform credential, preserved cold recovery escrow,
 # per-target fresh entries — each with exactly one documented consumer.
-grep -q 'bao kv get -field=tunnel_secret secret/projects/ovhcloud/EDGE_TUNNEL_SECRET' scripts/tf-env-from-openbao.sh || { echo 'loader does not read EDGE_TUNNEL_SECRET.tunnel_secret.' >&2; exit 1; }
+grep -q 'bao kv get -field=tunnel_secret secret/projects/nomad/EDGE_TUNNEL_SECRET' scripts/tf-env-from-openbao.sh || { echo 'loader does not read EDGE_TUNNEL_SECRET.tunnel_secret.' >&2; exit 1; }
 grep -q 'TF_VAR_cloudflare_tunnel_secret' scripts/tf-env-from-openbao.sh || { echo 'loader does not emit TF_VAR_cloudflare_tunnel_secret.' >&2; exit 1; }
 grep -q 'EDGE_TUNNEL_SECRET' infra/terraform/variables.tf || { echo 'tunnel variable doc names the wrong OpenBao path.' >&2; exit 1; }
 grep -q 'tunnel_secret = var.cloudflare_tunnel_secret' infra/terraform/main.tf || { echo 'tunnel config does not consume the tunnel var.' >&2; exit 1; }
@@ -605,7 +605,7 @@ INSPECT_EOF
 esc_out="$(bash scripts/backup-app-workloads.sh --self-test-topology /tmp/rehearsal-inspect-escrow.json 2>/dev/null || true)"
 rm -f /tmp/rehearsal-inspect-escrow.json
 printf '%s' "$esc_out" | grep -q '"STORAGE_ENCRYPTION_KEY": "REDACTED"' || { echo 'escrow fixture redaction broken.' >&2; exit 1; }
-printf '%s' "$esc_out" | grep -q '"STORAGE_ENCRYPTION_KEY": {"path": "secret/projects/ovhcloud/OMNIROUTE"' || { echo 'topology omits env_escrowed mapping.' >&2; exit 1; }
+printf '%s' "$esc_out" | grep -q '"STORAGE_ENCRYPTION_KEY": {"path": "secret/projects/nomad/OMNIROUTE"' || { echo 'topology omits env_escrowed mapping.' >&2; exit 1; }
 log 'topology escrow marking proven: allowlisted secret recorded with path + field.'
 # Rollback re-injection: delivered env wins (needs empty), absent env
 # falls back to needs_secrets (exact live builder).
@@ -635,7 +635,7 @@ cat > /tmp/rehearsal-fetchbin/aws <<'STUBEOF'
 if printf '%s\n' "$@" | grep -q 'get-object'; then
   out=''; for a in "$@"; do out="$a"; done
   cat > "$out" <<'MANIFEST_EOF'
-{"stamp": "20200101T000000Z", "containers": [{"name": "escrow-app", "env_escrowed": {"STORAGE_ENCRYPTION_KEY": {"path": "secret/projects/ovhcloud/OMNIROUTE", "field": "STORAGE_ENCRYPTION_KEY"}}}]}
+{"stamp": "20200101T000000Z", "containers": [{"name": "escrow-app", "env_escrowed": {"STORAGE_ENCRYPTION_KEY": {"path": "secret/projects/nomad/OMNIROUTE", "field": "STORAGE_ENCRYPTION_KEY"}}}]}
 MANIFEST_EOF
 else
   # Realistic `aws s3 ls` shape (date, time, size, name): the consumer

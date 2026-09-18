@@ -255,7 +255,7 @@ if [ "${self_test_escrow:-0}" -eq 1 ]; then
 import json
 print(json.dumps({'name': 'escrow-app', 'image': 'alpine:3',
  'env': {'APP_MODE': 'proof', 'STORAGE_ENCRYPTION_KEY': 'REDACTED'},
- 'env_escrowed': {'STORAGE_ENCRYPTION_KEY': {'path': 'secret/projects/ovhcloud/OMNIROUTE', 'field': 'STORAGE_ENCRYPTION_KEY'}},
+ 'env_escrowed': {'STORAGE_ENCRYPTION_KEY': {'path': 'secret/projects/nomad/OMNIROUTE', 'field': 'STORAGE_ENCRYPTION_KEY'}},
  'ports': [], 'networks': [], 'labels': {}, 'mounts': [],
  'runtime': {'cmd': ['sleep', '3600'], 'entrypoint': None, 'workdir': '', 'user': '', 'restart': '', 'restart_max': 0, 'healthcheck': {}}}))
 PYEOF

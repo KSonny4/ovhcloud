@@ -37,13 +37,13 @@ export BAO_TOKEN
 # Best-effort renewal (periodic token); a failed renewal is fatal only if the
 # subsequent read also fails, so an expired token surfaces as a read error.
 bao token renew-self >/dev/null 2>&1 || true
-R2_ACCESS_KEY_ID="$(bao kv get -field=access_key_id secret/projects/ovhcloud/BACKUP_R2 2>/dev/null || true)"
-R2_SECRET_ACCESS_KEY="$(bao kv get -field=secret_access_key secret/projects/ovhcloud/BACKUP_R2 2>/dev/null || true)"
-R2_ENDPOINT="$(bao kv get -field=endpoint secret/projects/ovhcloud/BACKUP_R2 2>/dev/null || true)"
-R2_BUCKET="$(bao kv get -field=bucket secret/projects/ovhcloud/BACKUP_R2 2>/dev/null || true)"
+R2_ACCESS_KEY_ID="$(bao kv get -field=access_key_id secret/projects/nomad/BACKUP_R2 2>/dev/null || true)"
+R2_SECRET_ACCESS_KEY="$(bao kv get -field=secret_access_key secret/projects/nomad/BACKUP_R2 2>/dev/null || true)"
+R2_ENDPOINT="$(bao kv get -field=endpoint secret/projects/nomad/BACKUP_R2 2>/dev/null || true)"
+R2_BUCKET="$(bao kv get -field=bucket secret/projects/nomad/BACKUP_R2 2>/dev/null || true)"
 # Nomad ACL token for snapshot save/restore (same accessor policy, same
 # memory-only handling as the R2 fields).
-NOMAD_TOKEN="$(bao kv get -field=acl_token secret/projects/ovhcloud/NOMAD_BOOTSTRAP 2>/dev/null || true)"
+NOMAD_TOKEN="$(bao kv get -field=acl_token secret/projects/nomad/NOMAD_BOOTSTRAP 2>/dev/null || true)"
 BAO_TOKEN=''
 if [ -z "$R2_ACCESS_KEY_ID" ] || [ -z "$R2_SECRET_ACCESS_KEY" ] || [ -z "$R2_ENDPOINT" ] || [ -z "$R2_BUCKET" ]; then
   echo 'R2 credential fetch from OpenBao failed (token expired/revoked? see docs/secret-rotation.md).' >&2

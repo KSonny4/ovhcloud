@@ -26,7 +26,7 @@ move — the retired plane still reads the old names until step 4):
 - reader policy `backup-r2-reader` (read on `BACKUP_R2` +
   `NOMAD_BOOTSTRAP`); mint a fresh host accessor
 - Exact retired spellings (needed to find + delete the old entries in
-  step 6): `bao kv list secret/projects/ovhcloud/` enumerates them, or
+  step 6): `bao kv list secret/projects/nomad/` enumerates them, or
   `git log --all -S <new-name> --oneline` shows the renaming commit with
   both sides.
 

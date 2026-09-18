@@ -70,7 +70,7 @@ bash scripts/rehearse-fresh-environment.sh
 Machine verification (service token, HTTP 200 expected):
 
 ```bash
-# client id/secret from OpenBao secret/projects/ovhcloud/EDGE_ACCESS_SERVICE_TOKEN
+# client id/secret from OpenBao secret/projects/nomad/EDGE_ACCESS_SERVICE_TOKEN
 curl -H "CF-Access-Client-Id: <id>" -H "CF-Access-Client-Secret: <secret>" \
   https://nomad.<zone>/v1/status/leader -o /dev/null -w '%{http_code}\n'
 ```

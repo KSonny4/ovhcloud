@@ -299,7 +299,7 @@ nomad acl bootstrap -json
 ```
 
 Escrow the bootstrap token + gossip key in OpenBao
-(`secret/projects/ovhcloud/NOMAD_BOOTSTRAP`) at once — without them a
+(`secret/projects/nomad/NOMAD_BOOTSTRAP`) at once — without them a
 rebuilt cluster cannot be re-administered. Do not leave an unclaimed
 cluster API on the network.
 

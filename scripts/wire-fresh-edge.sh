@@ -130,10 +130,10 @@ if [ "$dry_run" -eq 1 ]; then
   exit 0
 fi
 
-admin="$(bao kv get -field=ADMIN_CLOUDFLARE secret/projects/ovhcloud/ADMIN_CLOUDFLARE 2>/dev/null || true)"
-svc_id="$(bao kv get -field=client_id secret/projects/ovhcloud/EDGE_ACCESS_SERVICE_TOKEN 2>/dev/null || true)"
-svc_secret="$(bao kv get -field=client_secret secret/projects/ovhcloud/EDGE_ACCESS_SERVICE_TOKEN 2>/dev/null || true)"
-svc_token_id="$(bao kv get -field=token_id secret/projects/ovhcloud/EDGE_ACCESS_SERVICE_TOKEN 2>/dev/null || true)"
+admin="$(bao kv get -field=ADMIN_CLOUDFLARE secret/projects/nomad/ADMIN_CLOUDFLARE 2>/dev/null || true)"
+svc_id="$(bao kv get -field=client_id secret/projects/nomad/EDGE_ACCESS_SERVICE_TOKEN 2>/dev/null || true)"
+svc_secret="$(bao kv get -field=client_secret secret/projects/nomad/EDGE_ACCESS_SERVICE_TOKEN 2>/dev/null || true)"
+svc_token_id="$(bao kv get -field=token_id secret/projects/nomad/EDGE_ACCESS_SERVICE_TOKEN 2>/dev/null || true)"
 [ -n "$admin" ] && [ -n "$svc_id" ] && [ -n "$svc_secret" ] && [ -n "$svc_token_id" ] || { echo 'OpenBao escrow incomplete (admin + service-token triple required).' >&2; exit 2; }
 # Fail-closed envelope read: transport failure, empty body, bad JSON, or
 # "success":false all exit 2 BEFORE any caller can mistake absence for

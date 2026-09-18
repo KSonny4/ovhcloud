@@ -41,7 +41,7 @@ The timer is `host-backup.timer` (daily 02:00 UTC, Persistent=true) driving
 (`scripts/fetch-r2-env.sh -- <script>`). The only secret file on the host is
 the least-privilege OpenBao accessor token (`openbao-token`, 0600,
 `backup-r2-reader` policy). R2 contract (all four escrowed at
-`secret/projects/ovhcloud/BACKUP_R2`): `access_key_id`,
+`secret/projects/nomad/BACKUP_R2`): `access_key_id`,
 `secret_access_key`, `bucket`, `endpoint` — preflight and fetch fail closed
 when any field is absent; see `docs/secret-rotation.md`.
 

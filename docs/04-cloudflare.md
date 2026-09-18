@@ -57,7 +57,7 @@ The bucket is Terraform-owned (`cloudflare_r2_bucket.backups`,
 route** (verified: every issuance path returns `10015`), so the one
 operator dashboard action in the whole platform is minting the keypair
 (R2 → bucket → Object Read & Write) and escrowing all four fields at
-`secret/projects/ovhcloud/BACKUP_R2` (`access_key_id`,
+`secret/projects/nomad/BACKUP_R2` (`access_key_id`,
 `secret_access_key`, `bucket`, `endpoint`). Rotation procedure:
 [secret-rotation.md](secret-rotation.md). Keys travel memory-only on every
 run; nothing R2 touches disk. There is deliberately **no control-plane

@@ -7,8 +7,8 @@
 # escrowed pair is accepted by the UI leader endpoint. Every stage fails closed.
 #
 # - Reads: Cloudflare admin token ONLY from OpenBao
-#   (secret/projects/ovhcloud/ADMIN_CLOUDFLARE field ADMIN_CLOUDFLARE).
-# - Writes: secret/projects/ovhcloud/EDGE_ACCESS_SERVICE_TOKEN fields
+#   (secret/projects/nomad/ADMIN_CLOUDFLARE field ADMIN_CLOUDFLARE).
+# - Writes: secret/projects/nomad/EDGE_ACCESS_SERVICE_TOKEN fields
 #   client_id, client_secret, token_id, duration (never printed, never disk).
 # - Never touches the preserved VPS; only Cloudflare API + OpenBao + HTTPS.
 #
@@ -57,7 +57,7 @@ fi
 command -v bao >/dev/null 2>&1 || { echo 'bao CLI is required.' >&2; exit 2; }
 command -v python3 >/dev/null 2>&1 || { echo 'python3 is required for API/escrow handling.' >&2; exit 2; }
 export BAO_ADDR="$bao_addr"
-admin_token="$(bao kv get -field=ADMIN_CLOUDFLARE secret/projects/ovhcloud/ADMIN_CLOUDFLARE)"
+admin_token="$(bao kv get -field=ADMIN_CLOUDFLARE secret/projects/nomad/ADMIN_CLOUDFLARE)"
 if [ -z "$admin_token" ]; then
   echo 'OpenBao escrow missing: ADMIN_CLOUDFLARE; refusing to continue.' >&2
   exit 2
@@ -92,7 +92,7 @@ def api(method, path, body=None):
 
 def bao_escrow(cid, sec, tid):
     p = subprocess.run(
-        ['bao', 'kv', 'put', '-mount=secret', 'projects/ovhcloud/EDGE_ACCESS_SERVICE_TOKEN',
+        ['bao', 'kv', 'put', '-mount=secret', 'projects/nomad/EDGE_ACCESS_SERVICE_TOKEN',
          f'client_id={cid}', f'client_secret={sec}',
          f'token_id={tid}', f'duration={dur}'],
         capture_output=True, text=True, env={**os.environ, 'BAO_ADDR': bao_addr})
@@ -141,7 +141,7 @@ else:
         print(f'token {name!r} exists ({tid}); verifying escrowed pair.')
         cur = subprocess.run(
             ['bao', 'kv', 'get', '-field=client_secret',
-             'secret/projects/ovhcloud/EDGE_ACCESS_SERVICE_TOKEN'],
+             'secret/projects/nomad/EDGE_ACCESS_SERVICE_TOKEN'],
             capture_output=True, text=True, env={**os.environ, 'BAO_ADDR': bao_addr})
         if cur.returncode != 0 or not cur.stdout.strip():
             sys.exit('OpenBao escrow missing client_secret for the existing token; refusing to continue.')

@@ -3,7 +3,7 @@
 # Mirrors the proven live deployment (image pinned by digest 2026-09-17;
 # host volume registry-data declared client-side by provision-nomad.sh).
 # The htpasswd file content is rendered from OpenBao escrow
-# (secret/projects/ovhcloud/REGISTRY) at deploy time into
+# (secret/projects/nomad/REGISTRY) at deploy time into
 # /opt/nomad-volumes/registry-auth/htpasswd on the client host —
 # memory-only handling, never committed (see docs/09-docker-registry.md).
 #

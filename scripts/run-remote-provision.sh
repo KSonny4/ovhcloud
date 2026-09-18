@@ -12,7 +12,7 @@
 #
 # Prerequisites (operator side):
 # - `bao` authenticated against BAO_ADDR (default https://secrets.pkubelka.cz)
-#   with read access to secret/projects/ovhcloud/*.
+#   with read access to secret/projects/nomad/*.
 # - SSH access to PROVISION_SSH_USER@PROVISION_HOST. PROVISION_SSH_KEY may be
 #   omitted: the runner then generates an ed25519 pair, escrows both halves
 #   in OpenBao, and registers the public half at the OVH account (signed API
@@ -56,10 +56,10 @@ log() { printf '%s\n' "$*"; }
 # preserved-host guard on live runs; dry-run never touches OpenBao.
 load_ovh_credentials() {
   local ak ash ck ep
-  ak="$(bao kv get -field=application_key secret/projects/ovhcloud/OVH_API 2>/dev/null || true)"
-  ash="$(bao kv get -field=application_secret secret/projects/ovhcloud/OVH_API 2>/dev/null || true)"
-  ck="$(bao kv get -field=consumer_key secret/projects/ovhcloud/OVH_API 2>/dev/null || true)"
-  ep="$(bao kv get -field=endpoint secret/projects/ovhcloud/OVH_API 2>/dev/null || true)"
+  ak="$(bao kv get -field=application_key secret/projects/nomad/OVH_API 2>/dev/null || true)"
+  ash="$(bao kv get -field=application_secret secret/projects/nomad/OVH_API 2>/dev/null || true)"
+  ck="$(bao kv get -field=consumer_key secret/projects/nomad/OVH_API 2>/dev/null || true)"
+  ep="$(bao kv get -field=endpoint secret/projects/nomad/OVH_API 2>/dev/null || true)"
   if [ -n "$ak" ] && [ -n "$ash" ] && [ -n "$ck" ] && [ -n "$ep" ]; then
     export OVH_ENDPOINT="$ep" OVH_APPLICATION_KEY="$ak" OVH_APPLICATION_SECRET="$ash" OVH_CONSUMER_KEY="$ck"
   fi
@@ -142,8 +142,8 @@ if [ -z "$ssh_key" ] || [ ! -e "$ssh_key" ]; then
   # NOTE: the escrow paths are singletons — generating again replaces the
   # escrowed pair (previous targets keep working; only the OpenBao record
   # changes). Prefer PROVISION_SSH_KEY for additional hosts.
-  if bao kv put -mount=secret projects/ovhcloud/PROVISION_SSH_PRIVATE_KEY value="@${generated_key_dir}/id_ed25519" >/dev/null 2>&1 \
-    && bao kv put -mount=secret projects/ovhcloud/PROVISION_SSH_PUBLIC_KEY value="@${generated_key_dir}/id_ed25519.pub" >/dev/null 2>&1; then
+  if bao kv put -mount=secret projects/nomad/PROVISION_SSH_PRIVATE_KEY value="@${generated_key_dir}/id_ed25519" >/dev/null 2>&1 \
+    && bao kv put -mount=secret projects/nomad/PROVISION_SSH_PUBLIC_KEY value="@${generated_key_dir}/id_ed25519.pub" >/dev/null 2>&1; then
     log 'generated SSH keypair escrowed to OpenBao (values never printed).'
   else
     echo 'SSH key escrow failed; refusing to continue.' >&2
@@ -342,14 +342,14 @@ fi
 if [ -z "${NOMAD_GOSSIP_KEY:-}" ]; then
   command -v openssl >/dev/null 2>&1 || { echo 'openssl is required to generate the gossip key.' >&2; exit 2; }
   NOMAD_GOSSIP_KEY="$(openssl rand -base64 32)"
-  if bao kv put -mount=secret projects/ovhcloud/NOMAD_BOOTSTRAP "gossip_key=${NOMAD_GOSSIP_KEY}" >/dev/null 2>&1; then
+  if bao kv put -mount=secret projects/nomad/NOMAD_BOOTSTRAP "gossip_key=${NOMAD_GOSSIP_KEY}" >/dev/null 2>&1; then
     log 'generated gossip key escrowed to OpenBao NOMAD_BOOTSTRAP (value never printed).'
   else
     echo 'gossip key escrow failed; refusing to continue.' >&2
     exit 2
   fi
 fi
-bao_get() { bao kv get "-field=$2" "secret/projects/ovhcloud/$1"; }
+bao_get() { bao kv get "-field=$2" "secret/projects/nomad/$1"; }
 # ssh_keys_match <pubkey-file> <pubkey-string>: true when both carry
 # identical key material (fingerprint comparison; empty/unparseable fails).
 ssh_keys_match() {
@@ -409,7 +409,7 @@ run env BAO_ADDR="$bao_addr" CLOUDFLARE_ACCOUNT_ID="$cf_account" \
 
 log 'retrieving stage credentials from OpenBao (names only, values never printed)...'
 ssh_pub="$(bao_get PROVISION_SSH_PUBLIC_KEY value)"
-tunnel_token="$(bao kv get -field=tunnel_token "secret/projects/ovhcloud/${tunnel_secret_path}")"
+tunnel_token="$(bao kv get -field=tunnel_token "secret/projects/nomad/${tunnel_secret_path}")"
 svc_id="$(bao_get EDGE_ACCESS_SERVICE_TOKEN client_id)"
 svc_secret="$(bao_get EDGE_ACCESS_SERVICE_TOKEN client_secret)"
 # R2 keys are deliberately NOT retrieved: the target pulls them memory-only
@@ -438,11 +438,11 @@ log 'OpenBao retrieval ok (all required fields present).'
 # Presence is checked by name only; values never leave OpenBao here.
 if want_stage backup; then
   for f in access_key_id secret_access_key bucket endpoint; do
-    if [ -z "$(bao kv get -field="$f" secret/projects/ovhcloud/BACKUP_R2 2>/dev/null || true)" ]; then
+    if [ -z "$(bao kv get -field="$f" secret/projects/nomad/BACKUP_R2 2>/dev/null || true)" ]; then
       echo "preflight: OpenBao BACKUP_R2.${f} missing (fail closed before mutating anything)." >&2
       echo 'R2 S3 keys cannot be minted via API (no route); mint in the dashboard:' >&2
       echo '  R2 -> Manage R2 API Tokens -> Object Read & Write scoped to the bucket,' >&2
-      echo '  then escrow: bao kv put -mount=secret projects/ovhcloud/BACKUP_R2 access_key_id=... secret_access_key=... bucket=... endpoint=...' >&2
+      echo '  then escrow: bao kv put -mount=secret projects/nomad/BACKUP_R2 access_key_id=... secret_access_key=... bucket=... endpoint=...' >&2
       exit 2
     fi
   done
@@ -532,7 +532,7 @@ if want_stage nomad; then
     escrow_accessor="$(printf '%s' "$escrow_line" | sed -E 's/.*accessor=([^ ]+).*/\1/')"
     export BAO_ADDR="$bao_addr"
     if [ -n "$escrow_secret" ] && [ -n "$escrow_accessor" ] \
-      && bao kv patch -mount=secret projects/ovhcloud/NOMAD_BOOTSTRAP "acl_token=${escrow_secret}" "acl_accessor=${escrow_accessor}" >/dev/null 2>&1; then
+      && bao kv patch -mount=secret projects/nomad/NOMAD_BOOTSTRAP "acl_token=${escrow_secret}" "acl_accessor=${escrow_accessor}" >/dev/null 2>&1; then
       log 'escrowed ACL token + accessor to OpenBao NOMAD_BOOTSTRAP (values never printed).'
     else
       echo 'bootstrap token escrow write failed (fail closed).' >&2
@@ -540,7 +540,7 @@ if want_stage nomad; then
     fi
     escrow_secret=''; escrow_accessor=''; escrow_line=''
   elif printf '%s\n' "$nomad_stage_out" | grep -q 'BOOTSTRAP_EXISTS'; then
-    if [ -z "$(bao kv get -field=acl_token secret/projects/ovhcloud/NOMAD_BOOTSTRAP 2>/dev/null || true)" ]; then
+    if [ -z "$(bao kv get -field=acl_token secret/projects/nomad/NOMAD_BOOTSTRAP 2>/dev/null || true)" ]; then
       echo 'cluster already bootstrapped but no ACL token is escrowed; re-bootstrap or escrow manually (fail closed).' >&2
       exit 2
     fi
@@ -552,7 +552,7 @@ if want_stage nomad; then
   nomad_stage_out=''
   # Bootstrap gate (operator side, fail closed): prove the escrowed token
   # administers the fresh cluster. The token travels on stdin (never argv).
-  escrowed_token="$(bao kv get -field=acl_token secret/projects/ovhcloud/NOMAD_BOOTSTRAP 2>/dev/null || true)"
+  escrowed_token="$(bao kv get -field=acl_token secret/projects/nomad/NOMAD_BOOTSTRAP 2>/dev/null || true)"
   if [ -z "$escrowed_token" ]; then echo 'escrowed ACL token unreadable (fail closed).' >&2; exit 2; fi
   if printf '%s' "$escrowed_token" | ssh "${ssh_opts[@]}" "${ssh_user}@${host}" 'read -r NOMAD_TOKEN; export NOMAD_TOKEN; export NOMAD_ADDR=http://127.0.0.1:4646; nomad acl token self >/dev/null' 2>/dev/null; then
     log 'bootstrap gate passed: escrowed token administers the cluster.'
@@ -569,7 +569,7 @@ if want_stage edge; then
   # runs, then gate on HTTP 200. Without this a fresh tunnel has no route.
   # Tunnel identity: dedicated field when present (fresh ensure path), else
   # the "t" claim inside the JSON connector token (legacy escrow layout).
-  tunnel_id="$(bao kv get -field=tunnel_id "secret/projects/ovhcloud/${tunnel_secret_path}" 2>/dev/null || true)"
+  tunnel_id="$(bao kv get -field=tunnel_id "secret/projects/nomad/${tunnel_secret_path}" 2>/dev/null || true)"
   if [ -z "$tunnel_id" ]; then
     tunnel_id="$(printf '%s' "$tunnel_token" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("t",""))' 2>/dev/null || true)"
   fi

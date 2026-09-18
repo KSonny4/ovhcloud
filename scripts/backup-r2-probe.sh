@@ -4,7 +4,7 @@
 # Contract:
 # - Bucket itself is owned by Terraform (cloudflare_r2_bucket.backups).
 # - Scoped R2 credentials are generated out-of-band and escrowed in OpenBao at
-#   secret/projects/ovhcloud/BACKUP_R2
+#   secret/projects/nomad/BACKUP_R2
 #   (access_key_id, secret_access_key, bucket, endpoint — all four required).
 # - This script never prints secret values; it reports redacted status only.
 # - Proves write/read/delete on a disposable probe object, then reports the

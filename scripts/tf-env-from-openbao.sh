@@ -54,16 +54,16 @@ if [ ! -f "$bao_token_file" ]; then
 fi
 
 log 'retrieving provider authorization from OpenBao (names only)...'
-cf_token="$(bao kv get -field=ADMIN_CLOUDFLARE secret/projects/ovhcloud/ADMIN_CLOUDFLARE)"
-tunnel_secret="$(bao kv get -field=tunnel_secret secret/projects/ovhcloud/EDGE_TUNNEL_SECRET)"
-r2_ak="$(bao kv get -field=access_key_id secret/projects/ovhcloud/BACKUP_R2)"
-r2_sk="$(bao kv get -field=secret_access_key secret/projects/ovhcloud/BACKUP_R2)"
-r2_endpoint="$(bao kv get -field=endpoint secret/projects/ovhcloud/BACKUP_R2)"
-r2_bucket="$(bao kv get -field=bucket secret/projects/ovhcloud/BACKUP_R2)"
-ovh_ak="$(bao kv get -field=application_key secret/projects/ovhcloud/OVH_API)"
-ovh_as="$(bao kv get -field=application_secret secret/projects/ovhcloud/OVH_API)"
-ovh_ck="$(bao kv get -field=consumer_key secret/projects/ovhcloud/OVH_API)"
-ovh_ep="$(bao kv get -field=endpoint secret/projects/ovhcloud/OVH_API)"
+cf_token="$(bao kv get -field=ADMIN_CLOUDFLARE secret/projects/nomad/ADMIN_CLOUDFLARE)"
+tunnel_secret="$(bao kv get -field=tunnel_secret secret/projects/nomad/EDGE_TUNNEL_SECRET)"
+r2_ak="$(bao kv get -field=access_key_id secret/projects/nomad/BACKUP_R2)"
+r2_sk="$(bao kv get -field=secret_access_key secret/projects/nomad/BACKUP_R2)"
+r2_endpoint="$(bao kv get -field=endpoint secret/projects/nomad/BACKUP_R2)"
+r2_bucket="$(bao kv get -field=bucket secret/projects/nomad/BACKUP_R2)"
+ovh_ak="$(bao kv get -field=application_key secret/projects/nomad/OVH_API)"
+ovh_as="$(bao kv get -field=application_secret secret/projects/nomad/OVH_API)"
+ovh_ck="$(bao kv get -field=consumer_key secret/projects/nomad/OVH_API)"
+ovh_ep="$(bao kv get -field=endpoint secret/projects/nomad/OVH_API)"
 for v in cf_token tunnel_secret r2_ak r2_sk r2_endpoint r2_bucket ovh_ak ovh_as ovh_ck ovh_ep; do
   if [ -z "${!v}" ]; then echo "OpenBao escrow missing for ${v}; refusing to continue." >&2; exit 2; fi
 done

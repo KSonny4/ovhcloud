@@ -60,14 +60,14 @@ case "$secret_path" in
     echo "Refusing: per-target path must not be a preserved entry (got ${secret_path})." >&2
     exit 2 ;;
 esac
-existing="$(bao kv get -field=tunnel_token "secret/projects/ovhcloud/${secret_path}" 2>/dev/null || true)"
+existing="$(bao kv get -field=tunnel_token "secret/projects/nomad/${secret_path}" 2>/dev/null || true)"
 if [ -n "$existing" ]; then
   log "tunnel token already escrowed at ${secret_path}; no-op (value never printed)."
   exit 0
 fi
 
 log "no tunnel token escrowed; creating tunnel ${TUNNEL_NAME} via Cloudflare API."
-admin="$(bao kv get -field=ADMIN_CLOUDFLARE secret/projects/ovhcloud/ADMIN_CLOUDFLARE 2>/dev/null || true)"
+admin="$(bao kv get -field=ADMIN_CLOUDFLARE secret/projects/nomad/ADMIN_CLOUDFLARE 2>/dev/null || true)"
 [ -n "$admin" ] || { echo 'ADMIN_CLOUDFLARE missing in OpenBao; cannot create tunnel.' >&2; exit 2; }
 resp="$(mktemp)"; trap 'rm -f "$resp"' EXIT
 code="$(curl -sS --max-time 30 -X POST \
@@ -88,7 +88,7 @@ if [ -z "$tunnel_id" ] || [ -z "$tunnel_token" ]; then
   echo 'tunnel creation returned no id/token (fail closed).' >&2
   exit 2
 fi
-if bao kv put -mount=secret "projects/ovhcloud/${secret_path}" \
+if bao kv put -mount=secret "projects/nomad/${secret_path}" \
     "tunnel_id=${tunnel_id}" "tunnel_token=${tunnel_token}" >/dev/null 2>&1; then
   log "tunnel created + escrowed to OpenBao ${secret_path} (values never printed)."
 else

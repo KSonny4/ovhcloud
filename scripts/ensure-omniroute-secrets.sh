@@ -2,7 +2,7 @@
 # Ensure OmniRoute application secrets exist in OpenBao (operator side).
 #
 # Lifecycle for the three OmniRoute recovery/application secrets: read each
-# field from secret/projects/ovhcloud/OMNIROUTE; when absent, generate a
+# field from secret/projects/nomad/OMNIROUTE; when absent, generate a
 # fresh value (openssl) and escrow it; when present, reuse untouched (never
 # regenerate silently). Values are never printed — only field presence and
 # the escrow path are logged. Fail closed on any bao/generation error.
@@ -25,7 +25,7 @@ done
 command -v bao >/dev/null 2>&1 || { echo 'bao CLI is required.' >&2; exit 2; }
 command -v openssl >/dev/null 2>&1 || { echo 'openssl is required to generate secrets.' >&2; exit 2; }
 export BAO_ADDR="${BAO_ADDR:-https://secrets.pkubelka.cz}"
-entry='secret/projects/ovhcloud/OMNIROUTE'
+entry='secret/projects/nomad/OMNIROUTE'
 decisions=()
 created=0
 for field in STORAGE_ENCRYPTION_KEY API_KEY_SECRET JWT_SECRET; do
@@ -41,11 +41,11 @@ for field in STORAGE_ENCRYPTION_KEY API_KEY_SECRET JWT_SECRET; do
     # put (atomic create), the rest via patch.
     fresh="$(openssl rand -base64 48)" || { echo "generation failed for ${field} (fail closed)." >&2; exit 2; }
     if [ "$created" -eq 0 ] && ! bao kv get "$entry" >/dev/null 2>&1; then
-      printf '%s' "$fresh" | bao kv put -mount=secret projects/ovhcloud/OMNIROUTE "${field}=-" >/dev/null \
+      printf '%s' "$fresh" | bao kv put -mount=secret projects/nomad/OMNIROUTE "${field}=-" >/dev/null \
         || { echo "escrow create failed for ${field} (fail closed)." >&2; exit 2; }
       created=1
     else
-      printf '%s' "$fresh" | bao kv patch -mount=secret projects/ovhcloud/OMNIROUTE "${field}=-" >/dev/null \
+      printf '%s' "$fresh" | bao kv patch -mount=secret projects/nomad/OMNIROUTE "${field}=-" >/dev/null \
         || { echo "escrow failed for ${field} (fail closed)." >&2; exit 2; }
     fi
     fresh=''
