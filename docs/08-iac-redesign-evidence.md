@@ -164,3 +164,30 @@ operator key only); local private material shredded.
 - Tunnel `edge_new` ingress re-pointed to the live edge-proxy port :31297
   (dynamic port had drifted from :24051); final `terraform plan
   -detailed-exitcode` exit 0: "no differences, so no changes are needed".
+
+## Resurrection cutover (2026-09-19/20, operator-ordered)
+
+Unleash + dump + control-panel + flags redeployed on the new VPS from the
+migration archive (specs were host-local on the expired old VPS).
+- Images rescued via temp registry from migrated blobs, pushed to the new
+  registry (`dump/control-panel/eg-flags:restored-20260919`); Unleash uses
+  upstream `unleashorg/unleash-server` (note: `unleashorg/unleash` no longer
+  exists on Docker Hub).
+- Data restored to live `/opt/nomad-volumes` paths with byte parity; PG
+  role passwords reset post-restore and escrowed (`secret/projects/dump/env`,
+  `secret/projects/unleash/env` + `/api` + `/admin`).
+- Public hostnames cut to the new tunnel via reviewed plan + authorized
+  applies (3 DNS imports + 4 ingress rules; second plan empty, exit 0):
+  `unleash` 200 GOOD, `control` 200, `flags-listener` 200.
+- `dump.petrzdena.cz` (other account): CNAME repointed to the new tunnel;
+  the shadowing dead tunnel `dump-nomad` (d0dcdce3, down) in the petrzdena
+  account was deleted to release the route. Edge route convergence pending
+  (1033/530 flap at PRG as of 00:05Z).
+- Loader fix: OVH discovery now selects a `running` service (the expired old
+  VPS answers 460 to sub-calls and broke every TF run).
+- Gate fix: `validate-repository.sh` retired-plane needle now excludes two
+  documented false positives (operator SSH key filename, legacy R2 object
+  prefix in this evidence file).
+- Rogue `keeper` job (22:58, failed) purged — keeper stays archived per
+  operator pick. Control-panel old dashboard state unrecoverable
+  (was container-local); boots fresh.
