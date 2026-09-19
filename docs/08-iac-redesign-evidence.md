@@ -150,3 +150,17 @@ host under `/srv/old-vps-migration/` (~15 GB):
 Hygiene: a single-use migration SSH key was minted, trusted old→new only for
 the pull, then revoked from both hosts (each `authorized_keys` back to the
 operator key only); local private material shredded.
+
+## Old-VPS decommission executed (2026-09-19, operator-ordered)
+
+- All 15 remaining old Nomad jobs stopped+purged; `job status` shows 0 running.
+- Service canceled by the operator: `deleteAtExpiration: true`, expiration
+  2027-09-13, auto-renew off (termination lands at period end per OVH).
+- VM powered off via API (`stopVm` done; SSH to 57.129.155.203 times out;
+  list-state still reports `running` until OVH processes the stop).
+- `ovh_vps.preserved` block deleted from `infra/terraform/main.tf` and
+  `ovh_vps.preserved[0]` removed from state (the separately authorized
+  workflow the block comment required).
+- Tunnel `edge_new` ingress re-pointed to the live edge-proxy port :31297
+  (dynamic port had drifted from :24051); final `terraform plan
+  -detailed-exitcode` exit 0: "no differences, so no changes are needed".

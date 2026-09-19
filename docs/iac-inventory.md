@@ -21,8 +21,8 @@ verifies each row live).
 | Field | Observed value | Reconciliation rule |
 | --- | --- | --- |
 | Service (new origin) | `vps-c85da816.vps.ovh.ca` | Serves nomad/ssh/registry/cognee; provisioned + verified 2026-09-19 |
-| Service (preserved) | `vps-1525c977.vps.ovh.net` | Retains keeper/dump/unleash/control-panel; import-only, never replace implicitly |
-| State | `running` | Must remain running throughout reconciliation |
+| Service (decommissioned 2026-09-19) | `vps-1525c977.vps.ovh.net` | All Nomad jobs stopped+purged; data migrated to new host; service canceled (deleteAtExpiration 2027-09-13), VM powered off; TF import record removed |
+| State | `off` (powered off; deleteAtExpiration 2027-09-13) | Old plane dead; new host is the sole live origin |
 | Zone | `Region OpenStack: os-uk2` (`UK`, London UK2, region) | Use as the existing-origin placement |
 | Model | `VPS-2 2027` / `vps-2027-model2` / `2027v1` | Record; do not order a replacement |
 | Capacity | 4 vCores, 8192 MiB RAM, 75 GB SSD | Record as baseline |
@@ -45,7 +45,7 @@ API-created, Terraform owns config + DNS only) carries the migrated ingress
 | `nomad.pkubelka.cz` | `http://localhost:4646` | UI + API; Access human OTP (login verified 2026-09-19) + machine service token |
 | `ssh.pkubelka.cz` | `ssh://localhost:22` | Access human OTP + machine service token |
 | `registry.pkubelka.cz` | `http://localhost:5000` | Private registry, no Access app |
-| `cognee.pkubelka.cz` | `http://localhost:24051` | DYNAMIC edge port — re-point on every redeploy, no Access app |
+| `cognee.pkubelka.cz` | `http://localhost:31297` | DYNAMIC edge port — re-point on every redeploy, no Access app |
 
 Tunnel `nomad-admin` (`b145382e-d1cc-4e60-b910-3de56fa9ce2c`, preserved) keeps
 the un-migrated ingress: `graph-dispatcher` → `https://localhost:443`,
@@ -141,4 +141,4 @@ entries are deleted only after the Nomad plane proves healthy.
 
 ## Safety boundary (validated 2026-09-13)
 
-No reconciliation ran `ovhcloud reinstall`, reboot, terminate, destroy, or credential rotation. Validation used only `ovhcloud vps list/get/ip list --output json`. The service remains `running`, so no recovery/reboot was needed. Terraform resources for the current VPS must be import/read-only or protected with lifecycle rules until a separately authorized replacement workflow exists.
+Decommission ran 2026-09-19 in the authorized workflow: all old Nomad jobs stopped+purged (0 running), ~15 GB data migrated to the new host (`/srv/old-vps-migration`, keeper sqlite integrity ok), service canceled (deleteAtExpiration 2027-09-13, auto-renew off), VM stopped (SSH times out), `ovh_vps.preserved` block + state entry removed, tunnel edge port re-pointed to live :31297, plan empty.

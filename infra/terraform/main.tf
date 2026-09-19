@@ -19,30 +19,11 @@ data "ovh_vps" "existing" {
   service_name = var.ovh_service_name
 }
 
-# The preserved production VPS as a managed, protected state record. This
-# resource is import-only: it brings the existing service under Terraform
-# state protection without modeling (or permitting) any mutation. Combined
-# with prevent_destroy + ignore_changes = all, no plan can replace, update,
-# or destroy it; removal from management requires explicitly deleting this
-# block AND the state entry in a separately authorized workflow.
-resource "ovh_vps" "preserved" {
-  count = var.manage_existing_vps && !var.provision_ovh_vps ? 1 : 0
-
-  lifecycle {
-    prevent_destroy = true
-    ignore_changes  = all
-
-    precondition {
-      condition     = !(var.manage_existing_vps && var.provision_ovh_vps)
-      error_message = "manage_existing_vps and provision_ovh_vps are mutually exclusive."
-    }
-  }
-
-  # ovh_subsidiary is the provider's only required argument; its value is
-  # inert here because every attribute is ignored after import.
-  ovh_subsidiary = var.ovh_subsidiary
-}
-
+# Retired 2026-09-19: the old production VPS (vps-1525c977) was fully
+# decommissioned (all Nomad jobs stopped+purged, service canceled with
+# deleteAtExpiration, VM powered off). Its import-only state record was
+# removed via `terraform state rm` in the same authorized workflow; the
+# block below was deleted with it so no plan can resurrect the reference.
 resource "ovh_vps" "platform" {
   count = var.provision_ovh_vps ? 1 : 0
 
@@ -236,7 +217,7 @@ resource "cloudflare_zero_trust_tunnel_cloudflared_config" "edge_new" {
         # point-tunnel.py) AND update this line, or the hostname 404s.
         # No Access app: the edge owns basic-auth for machine clients.
         hostname = "cognee.${var.domain}"
-        service  = "http://localhost:24051"
+        service  = "http://localhost:31297"
       },
       {
         service = "http_status:404"

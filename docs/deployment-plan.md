@@ -35,9 +35,10 @@ OVH VPS vps-c85da816.vps.ovh.ca, BHS6 (new origin, Ubuntu 26.04; 148.113.245.89)
   ├── edge-proxy + registry:2 (jobs/) + cognee (jobs/cognee.nomad.hcl, vendored)
   └── backups: nightly snapshot + workload backup to R2, probe-verified (RESTORE_OK)
 
-Preserved VPS vps-1525c977.vps.ovh.net (old origin, UK2) keeps its remaining
-workloads (keeper/dump/unleash/control-panel) on tunnel nomad-admin; its
-in-scope jobs were stopped at cutover. See docs/iac-inventory.md.
+Decommissioned VPS vps-1525c977.vps.ovh.net (old origin, UK2) 2026-09-19:
+all jobs stopped+purged, data migrated to the new host, service canceled
+(deleteAtExpiration 2027-09-13), VM powered off; TF import record removed.
+See docs/iac-inventory.md.
 ```
 
 Cloudflare is the exclusive public DNS/edge provider. OVH remains the compute/origin provider and emergency KVM/rescue path. No other DNS, CDN, tunnel, or public-edge provider is part of this plan.

@@ -49,8 +49,8 @@ Files loaded at adoption: `AGENTS.md` plus task-triggered playbooks
   via `nomad job run`. OmniRoute/Fabric retired, never migrated.
 - Plane topology since 2026-09-19: new VPS `vps-c85da816.vps.ovh.ca`
   (148.113.245.89, BHS6) serves nomad/ssh/registry/cognee through dedicated
-  tunnel `nomad-148-113-245-89`; the preserved tunnel + old VPS keep the
-  un-migrated workloads (keeper/dump/graph-dispatcher). Old-cluster ACL
+  tunnel `nomad-148-113-245-89`; the old VPS was decommissioned 2026-09-19
+  (jobs stopped, data migrated, service canceled, VM off). Old-cluster ACL
   token rescued to `NOMAD_BOOTSTRAP_PRESERVED` (runner `kv put` clobber
   incident — runner now merges, never replaces).
 - Secrets edge: OpenBao escrow by name only (`docs/iac-interfaces.md`
