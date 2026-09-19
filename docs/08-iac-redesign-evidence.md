@@ -62,3 +62,63 @@ Migration mechanics per resource:
 4. `rollback-nomad-snapshot.sh` reports `RESTORE_OK` (probe).
 5. `verify-nomad-live.sh` green; UI 200 via service token; 80/443 denied.
 6. Old Bao entries + retired DNS/bucket deleted after health holds.
+
+## New-origin cutover evidence (2026-09-19, second migration)
+
+New VPS `vps-c85da816.vps.ovh.ca` (148.113.245.89, BHS6) serves
+nomad/ssh/registry/cognee through dedicated tunnel
+`nomad-148-113-245-89`; preserved VPS keeps keeper/dump/unleash on
+`nomad-admin`. OmniRoute/Fabric retired, never migrated. All outputs below
+are redacted (statuses/digests only — no secret values anywhere).
+
+`verify-nomad-live.sh` (PROVISION_HOST=148.113.245.89), exit 0:
+
+```text
+PASS edge leader endpoint (200)
+PASS server members alive (1)
+PASS client nodes ready (1)
+PASS nomad ports loopback-only
+PASS docker-firewall rules (docker-firewall rules present (ext_if=ens3).)
+PASS no external listeners besides SSH (zero drops is correct: refused at interface)
+PASS jobs healthy
+PASS containers healthy
+PASS backup timer (active)
+ALL LIVE CHECKS PASS
+```
+
+Cognee on the new cluster (1 alloc, 0 failed; edge anon 401, authed
+`cognee edge ok`); public smokes through `https://cognee.pkubelka.cz`:
+
+```text
+Status        = running
+57bcb781  d9619812  cognee      0        run      running
+SMOKE PASS (mcp)    # initialize/remember/recall(CHUNKS) all 200
+SMOKE PASS (rest)   # add/cognify/search(CHUNKS) all 200
+```
+
+Registry through `https://registry.pkubelka.cz` (login OK; push/pull
+digest-identical; container ran `Hello from Docker!`):
+
+```text
+[registry.pkubelka.cz/smoke/hello-world@sha256:d1a8d0a4eeb63aff09f5f34d4d80505e0ba81905f36158cc3970d8e07179e59e]
+```
+
+Snapshot restore probe on the new host (production table reproduced):
+
+```text
+RESTORE_OK: scheduled R2 snapshot restores to usable state; probe agent killed.
+```
+
+Terraform: reviewed plan (1 add, 8 change, 4 destroy — all intended) applied
+clean; second plan exit 0: `No changes. Your infrastructure matches the
+configuration.`
+
+Repo gates on the cutover HEAD: `validate-iac.py` pass,
+`validate-repository.sh` pass, `rehearse-fresh-environment.sh` 11/11 pass.
+
+Field incidents fixed durably during the cutover: runner gossip-escrow
+clobber (old ACL rescued to `NOMAD_BOOTSTRAP_PRESERVED`), stale
+`backup-r2-reader` policy paths, snapshot `mktemp` refusal, Nomad-blind
+workload backup gap, provider service-token version trap (object now
+API-managed, policies bind token ID), rehearsal dummy vars for the two new
+TF variables. Human OTP login on the new Nomad UI verified by the operator.
