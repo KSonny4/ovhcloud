@@ -73,6 +73,52 @@ Files loaded at adoption: `AGENTS.md` plus task-triggered playbooks
   bypass the ~100MB edge cap via loopback (`registry_http_host` override,
   then redeploy with the default).
 
+## Operating the new server (vps-c85da816, 148.113.245.89, BHS6)
+
+Sole live origin since 2026-09-19. SSH as `ubuntu` with the operator key
+(`~/.ssh/ovh_coolify_ed25519`); key-only auth, UFW default-deny with
+tunnel-only web ingress (no public 80/443). Old host `vps-1525c977`
+(57.129.155.203) is decommissioned: jobs purged, service canceled
+(deleteAtExpiration 2027-09-13), VM powered off — do not revive it; its
+data lives under `/srv/old-vps-migration/` on the new host.
+
+- Nomad UI/API: `https://nomad.pkubelka.cz` (human: Access OTP;
+  machine/agents: ACL token from OpenBao, piped via stdin, never pasted).
+  Direct origin access is loopback-only (`http://127.0.0.1:4646` on the
+host); public hostnames only, never origin ports.
+- Registry: `registry.pkubelka.cz` (anon 401; login + push/pull per
+  `docs/09-docker-registry.md`; bulk seeds via loopback
+  `registry_http_host` override past the ~100MB edge cap).
+- Cognee: `cognee.pkubelka.cz` (anon 401; smokes per `docs/11-cognee.md`).
+- Steady-state proof (run after any change):
+  `PROVISION_HOST=148.113.245.89 SSH_KEY=~/.ssh/ovh_coolify_ed25519 bash scripts/verify-nomad-live.sh`
+  must print `ALL LIVE CHECKS PASS`.
+- Snapshots/rollback: nightly Nomad snapshot → R2 (host timer); restore
+  proof runs on the host as root through
+  `fetch-r2-env.sh -- bash rollback-nomad-snapshot.sh` → `RESTORE_OK`.
+  A fresh snapshot must predate the proof or its strict job-table check
+  fails closed on newer jobs.
+- Terraform: `loader_out="$(BAO_ADDR=https://secrets.pkubelka.cz bash scripts/tf-env-from-openbao.sh)"; eval "$loader_out"`
+  plus `TF_VAR_edge_tunnel_id` for the new tunnel, then plan/apply in
+  `infra/terraform`. Every mutating apply needs a reviewed plan + an
+  empty second plan as evidence.
+
+### Credential map (OpenBao `BAO_ADDR=https://secrets.pkubelka.cz`, names only)
+
+| Need | Path.field |
+| --- | --- |
+| Nomad ACL (new cluster) | `secret/projects/nomad/NOMAD_BOOTSTRAP`.acl_token |
+| Nomad ACL (old cluster, archive reads) | `secret/projects/nomad/NOMAD_BOOTSTRAP_PRESERVED`.acl_token |
+| OVH API (same account) | `secret/projects/nomad/OVH_API` (endpoint/application_key/application_secret/consumer_key) |
+| R2 backup (least-privilege reader) | `secret/projects/nomad/BACKUP_R2` (access_key_id/secret_access_key/endpoint/bucket) |
+| Cloudflare Access service token | `secret/projects/nomad/EDGE_ACCESS_SERVICE_TOKEN` (client_id/client_secret/token_id) — object is API-managed, Terraform binds the ID only |
+| New edge tunnel secret | `secret/projects/nomad/EDGE_TUNNEL_SECRET`.tunnel_secret |
+| Registry login | `secret/projects/nomad/REGISTRY` (username/password) |
+| Cognee app + edge | `secret/projects/cognee/env`, `secret/projects/cognee/edge` |
+
+Rules: read by field name, pipe tokens via stdin, never print/persist/log
+values, never commit them; rotation per `docs/secret-rotation.md`.
+
 ## Deploy procedure for later (condensed, this overlay)
 
 1. AFK repo-side: app listens on `$PORT`, exposes health endpoint, Dockerfile
