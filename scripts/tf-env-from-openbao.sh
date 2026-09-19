@@ -74,7 +74,9 @@ export OVH_ENDPOINT="$ovh_ep" OVH_APPLICATION_KEY="$ovh_ak" OVH_APPLICATION_SECR
 GUARD_SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=scripts/lib/preserved-guard.sh
 source "${GUARD_SCRIPT_DIR}/lib/preserved-guard.sh"
-service_name="$(ovh_cli vps list --output json | jq -r '.[0].displayName // empty')"
+# Skip expired/canceled services (2026-09-19: the decommissioned old VPS
+# lingers in list output but answers 460 to every sub-call).
+service_name="$(ovh_cli vps list --output json | jq -r '[.[] | select(.state == "running")] | .[0].displayName // empty')"
 if [ -z "$service_name" ]; then echo 'OVH VPS discovery returned no service.' >&2; exit 2; fi
 ipv4="$(ovh_cli vps ip list "$service_name" --output json | jq -r '.[] | select(.version == "v4") | .ipAddress // empty' | head -n1)"
 if [ -z "$ipv4" ]; then echo 'OVH IP discovery returned no IPv4.' >&2; exit 2; fi

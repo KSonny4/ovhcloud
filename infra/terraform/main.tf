@@ -124,6 +124,41 @@ resource "cloudflare_dns_record" "cognee" {
   comment = "Cognee edge (Nomad, cut over 20260919)"
 }
 
+resource "cloudflare_dns_record" "unleash" {
+  # Resurrected 2026-09-19 on the new VPS (was on a dedicated tunnel whose
+  # secret died with the old host). No Access app: Unleash owns login.
+  zone_id = data.cloudflare_zone.canonical.id
+  name    = "unleash.${var.domain}"
+  type    = "CNAME"
+  content = "${data.cloudflare_zero_trust_tunnel_cloudflared.edge_new.id}.cfargotunnel.com"
+  ttl     = 1
+  proxied = true
+  comment = "Unleash flags (Nomad, resurrected 20260919)"
+}
+
+resource "cloudflare_dns_record" "control" {
+  # Resurrected 2026-09-19 (was on the retired admin tunnel).
+  zone_id = data.cloudflare_zone.canonical.id
+  name    = "control.${var.domain}"
+  type    = "CNAME"
+  content = "${data.cloudflare_zero_trust_tunnel_cloudflared.edge_new.id}.cfargotunnel.com"
+  ttl     = 1
+  proxied = true
+  comment = "MeowLabs Control (Nomad, resurrected 20260919)"
+}
+
+resource "cloudflare_dns_record" "flags_listener" {
+  # Resurrected 2026-09-19 (was on the retired admin tunnel). Webhook
+  # receiver; secret via FLAGS_WEBHOOK_SECRET at the deploy edge.
+  zone_id = data.cloudflare_zone.canonical.id
+  name    = "flags-listener.${var.domain}"
+  type    = "CNAME"
+  content = "${data.cloudflare_zero_trust_tunnel_cloudflared.edge_new.id}.cfargotunnel.com"
+  ttl     = 1
+  proxied = true
+  comment = "Flags webhook listener (Nomad, resurrected 20260919)"
+}
+
 resource "cloudflare_zero_trust_access_identity_provider" "one_time_pin" {
   account_id = var.cloudflare_account_id
   name       = "One-time PIN"
@@ -184,8 +219,9 @@ resource "cloudflare_zero_trust_tunnel_cloudflared_config" "admin" {
 }
 
 # Cutover tunnel config (new VPS; API-created tunnel, TF-managed config +
-# DNS). Carries the migrated hostnames; the preserved tunnel keeps the
-# un-migrated ones (keeper/dump/graph-dispatcher).
+# DNS). Carries the migrated + resurrected hostnames. The retired admin
+# tunnel object is kept (prevent_destroy) but its connector died with the
+# old host, so its keeper/dump/graph-dispatcher routes are dark.
 resource "cloudflare_zero_trust_tunnel_cloudflared_config" "edge_new" {
   account_id = var.cloudflare_account_id
   tunnel_id  = data.cloudflare_zero_trust_tunnel_cloudflared.edge_new.id
@@ -218,6 +254,30 @@ resource "cloudflare_zero_trust_tunnel_cloudflared_config" "edge_new" {
         # No Access app: the edge owns basic-auth for machine clients.
         hostname = "cognee.${var.domain}"
         service  = "http://localhost:31297"
+      },
+      {
+        # Resurrected 2026-09-19: Unleash flags. DYNAMIC origin port —
+        # re-point on every unleash redeploy (cognee pattern). No Access
+        # app: Unleash owns login.
+        hostname = "unleash.${var.domain}"
+        service  = "http://localhost:26065"
+      },
+      {
+        # Resurrected 2026-09-19: MeowLabs Control. DYNAMIC origin port.
+        hostname = "control.${var.domain}"
+        service  = "http://localhost:29742"
+      },
+      {
+        # Resurrected 2026-09-19: flags webhook listener. DYNAMIC port.
+        hostname = "flags-listener.${var.domain}"
+        service  = "http://localhost:30018"
+      },
+      {
+        # Resurrected 2026-09-19: dump app. DYNAMIC origin port. DNS for
+        # dump.petrzdena.cz lives outside this account — repoint its CNAME
+        # to the edge_new tunnel hostname out-of-band (operator).
+        hostname = "dump.petrzdena.cz"
+        service  = "http://localhost:24618"
       },
       {
         service = "http_status:404"

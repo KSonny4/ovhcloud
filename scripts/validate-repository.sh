@@ -65,10 +65,18 @@ if git ls-files "scripts/*${needle}*" 'docs/03-*.md' 2>/dev/null | grep -v 'docs
   git ls-files "scripts/*${needle}*" 'docs/03-*.md' 2>/dev/null | grep -v 'docs/03-nomad.md' >&2
   exit 1
 fi
+# Documented non-references (false positives, not the retired platform):
+# - the operator SSH key filename (operational reality, referenced by
+#   runbooks);
+# - legacy R2 object names inside the dated evidence record (recovery facts).
+retired_plane_allow="ovh_cool""ify_ed25519|cool""ify-db/redis"
 if git grep -i -l "$needle" -- CONTEXT.md README.md AGENTS.md docs scripts infra/terraform infra/terraform-fresh .github 2>/dev/null | grep -q .; then
-  echo 'retired-plane references remain in the active tree:' >&2
-  git grep -i -l "$needle" -- CONTEXT.md README.md AGENTS.md docs scripts infra/terraform infra/terraform-fresh .github 2>/dev/null >&2
-  exit 1
+  remaining="$(git grep -i "$needle" -- CONTEXT.md README.md AGENTS.md docs scripts infra/terraform infra/terraform-fresh .github 2>/dev/null | grep -viE "$retired_plane_allow" || true)"
+  if [ -n "$remaining" ]; then
+    echo 'retired-plane references remain in the active tree:' >&2
+    printf '%s\n' "$remaining" >&2
+    exit 1
+  fi
 fi
 
 git diff --check
