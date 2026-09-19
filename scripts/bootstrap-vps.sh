@@ -201,6 +201,44 @@ else
   log 'Docker engine verified (hello-world ran successfully).'
 fi
 
+# Fresh Docker installs leave the provisioning user outside the docker
+# group, so the runner's post-bootstrap `docker run hello-world` over a
+# new SSH session fails with permission denied. Grant it here (later SSH
+# sessions pick up the membership; no relogin dance needed mid-run).
+if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != 'root' ] && id "$SUDO_USER" >/dev/null 2>&1; then
+  run usermod -aG docker "$SUDO_USER"
+  log "added ${SUDO_USER} to the docker group."
+fi
+
+# Tunnel-only origin posture (CONTEXT invariant + verify-nomad-live gate):
+# no public web ports. UFW denies 80/443 (SSH stays allowed; established
+# sessions survive `ufw enable`), and the Docker-bypass compensation
+# (DOCKER-USER DROP rules + boot unit) closes Docker's iptables jump
+# around UFW. Idempotent: safe to re-run.
+run apt-get install -y --no-install-recommends ufw
+if ufw status 2>/dev/null | grep -q '^22/tcp.*ALLOW'; then
+  log 'UFW already allows SSH.'
+else
+  run ufw allow 22/tcp
+fi
+for _port in 80 443; do
+  if ufw status 2>/dev/null | grep -q "^${_port}/tcp.*DENY"; then
+    log "UFW already denies ${_port}."
+  else
+    run ufw deny "${_port}/tcp"
+  fi
+done
+run ufw --force enable
+# The bypass compensation ships alongside this script (the runner stages
+# it into the same remote dir); --install enforces now + persists a boot
+# unit (self-copies to /usr/local/sbin, so remote cleanup cannot remove it).
+if [ -f "${GUARD_SCRIPT_DIR}/ensure-docker-firewall.sh" ]; then
+  run bash "${GUARD_SCRIPT_DIR}/ensure-docker-firewall.sh" --install
+else
+  echo 'ensure-docker-firewall.sh not staged beside bootstrap (fail closed).' >&2
+  exit 2
+fi
+
 log 'bootstrap ready: guest packages, key-only SSH, swap, and time configured.'
 if [ -f /var/run/reboot-required ] && [ "${BOOTSTRAP_ALLOW_REBOOT:-0}" = '1' ] && [ "$dry_run" -eq 0 ]; then
   log 'reboot required and explicitly allowed; rebooting.'

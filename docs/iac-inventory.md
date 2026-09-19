@@ -42,13 +42,10 @@ carries this ingress (catch-all `http_status:404` last):
 | --- | --- | --- |
 | `nomad.pkubelka.cz` | `http://localhost:4646` | UI + API; Access human OTP + machine service token |
 | `ssh.pkubelka.cz` | `ssh://localhost:22` | Access human OTP + machine service token |
-| `fabric.pkubelka.cz` | `https://localhost:443` | No Access app |
 | `graph-dispatcher.pkubelka.cz` | `https://localhost:443` | No Access app |
-| `omniroute.pkubelka.cz` | `http://localhost:80` | Staging API, no Access app |
-| `omni.pkubelka.cz` | `http://localhost:80` | Production API (cut over 2026-09-14), no Access app |
 | `registry.pkubelka.cz` | `http://localhost:80` | Private registry (live 2026-09-17), no Access app |
 
-Proxied DNS (zone `pkubelka.cz`; all CNAMEs below point at `nomad-admin`'s `<tunnel-id>.cfargotunnel.com` unless noted): `nomad`, `ssh`, `fabric`, `graph-dispatcher` (+`www`), `keeper`, `omniroute`, `omni`, `registry`; other tunnels serve `recorder`/`trading` (`af70d44…`), `dark`/`dark-dev`/`stremio` (`ef0c9d3…`), `secrets` (`612f43c…`); `forms` → Pages, apex/`pkubelka.cz` → Pages; `llm-quota`/`radar` are `AAAA 100::` placeholders. The account contains unrelated existing tunnels, DNS records, and Access apps — do not claim or destroy them; scope Terraform by explicit names/IDs.
+Proxied DNS (zone `pkubelka.cz`; all CNAMEs below point at `nomad-admin`'s `<tunnel-id>.cfargotunnel.com` unless noted): `nomad`, `ssh`, `graph-dispatcher` (+`www`), `keeper`, `registry`; other tunnels serve `recorder`/`trading` (`af70d44…`), `dark`/`dark-dev`/`stremio` (`ef0c9d3…`), `secrets` (`612f43c…`); `forms` → Pages, apex/`pkubelka.cz` → Pages; `llm-quota`/`radar` are `AAAA 100::` placeholders. The account contains unrelated existing tunnels, DNS records, and Access apps — do not claim or destroy them; scope Terraform by explicit names/IDs.
 
 | Resource | Current state | IaC requirement |
 | --- | --- | --- |
@@ -60,8 +57,7 @@ Proxied DNS (zone `pkubelka.cz`; all CNAMEs below point at `nomad-admin`'s `<tun
 
 Workloads run as Nomad jobs (one allocation each for stateful services),
 replacing the retired plane's application table (archived). Expected jobs
-at cutover: `fabric`, `omniroute` (serves `omni.` + `omniroute.`),
-`omniroute-obs`, `omniroute-watcher`, `registry` (`registry:2`, serves
+at cutover: `registry` (`registry:2`, serves
 `registry.pkubelka.cz`), `graph-dispatcher`, `keeper`, `llm-quota`,
 `edge-proxy` (Host routing to `:80`). Triage at cutover: the pre-existing
 `registry:3` duplicate and the unhealthy `llm-quota2` equivalent — neither
@@ -81,7 +77,6 @@ ships until healthy. See `docs/03-nomad.md` for the jobspec pattern and
 | `secret/projects/nomad/BACKUP_R2` | `access_key_id`, `secret_access_key`, `bucket`, `endpoint` | Host-timer backup plane + restore probe |
 | `secret/projects/nomad/EDGE_ACCESS_SERVICE_TOKEN` | `client_id`, `client_secret` | Machine edge access (noninteractive verification, API calls) |
 | `secret/projects/nomad/PROVISION_SSH_PRIVATE_KEY` / `PROVISION_SSH_PUBLIC_KEY` | key material | Guest bootstrap, provisioner machine connection |
-| `secret/projects/nomad/OMNIROUTE` | `STORAGE_ENCRYPTION_KEY`, `API_KEY_SECRET`, `JWT_SECRET` | OmniRoute apps (escrow-recoverable restore) |
 | `secret/projects/nomad/REGISTRY` | `htpasswd`, `http_secret`, `username`, `password` | Private registry auth + smoke verify (live 2026-09-17) |
 
 Operator cutover note (M5): Bao entries under retired names are duplicated

@@ -49,11 +49,10 @@ bash -n scripts/emit-fresh-imports.sh
 bash -n scripts/adopt-fresh-edge.sh
 bash -n scripts/ensure-fresh-backend.sh
 bash -n scripts/fetch-app-secrets.sh
-bash -n scripts/ensure-omniroute-secrets.sh
 bash -n scripts/recreate-workload.sh
 bash -n scripts/collect-live-evidence.sh
 bash -n scripts/collect-stage-proofs.sh
-shellcheck scripts/bootstrap-vps.sh scripts/provision-nomad.sh scripts/verify-nomad-live.sh scripts/configure-tunnel-access.sh scripts/backup-r2-probe.sh scripts/rehearse-fresh-environment.sh scripts/healthcheck.sh scripts/validate-repository.sh scripts/run-remote-provision.sh scripts/schedule-host-backup.sh scripts/lib/preserved-guard.sh scripts/ensure-service-token.sh scripts/tf-env-from-openbao.sh scripts/rollback-nomad-snapshot.sh scripts/rollback-app-workloads.sh scripts/backup-app-workloads.sh scripts/ensure-tunnel.sh scripts/test-clean-target-install.sh scripts/wire-fresh-edge.sh scripts/fetch-r2-env.sh scripts/emit-fresh-imports.sh scripts/adopt-fresh-edge.sh scripts/ensure-fresh-backend.sh scripts/fetch-app-secrets.sh scripts/ensure-omniroute-secrets.sh scripts/recreate-workload.sh scripts/collect-live-evidence.sh scripts/collect-stage-proofs.sh
+shellcheck scripts/bootstrap-vps.sh scripts/provision-nomad.sh scripts/verify-nomad-live.sh scripts/configure-tunnel-access.sh scripts/backup-r2-probe.sh scripts/rehearse-fresh-environment.sh scripts/healthcheck.sh scripts/validate-repository.sh scripts/run-remote-provision.sh scripts/schedule-host-backup.sh scripts/lib/preserved-guard.sh scripts/ensure-service-token.sh scripts/tf-env-from-openbao.sh scripts/rollback-nomad-snapshot.sh scripts/rollback-app-workloads.sh scripts/backup-app-workloads.sh scripts/ensure-tunnel.sh scripts/test-clean-target-install.sh scripts/wire-fresh-edge.sh scripts/fetch-r2-env.sh scripts/emit-fresh-imports.sh scripts/adopt-fresh-edge.sh scripts/ensure-fresh-backend.sh scripts/fetch-app-secrets.sh scripts/recreate-workload.sh scripts/collect-live-evidence.sh scripts/collect-stage-proofs.sh
 
 # Nomad-only gate: no tracked reference to the retired plane may remain in
 # the active tree (history lives in git log + evidence-archive/, which this

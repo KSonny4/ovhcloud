@@ -108,46 +108,10 @@ resource "cloudflare_dns_record" "ssh" {
   comment = "Cloudflare Tunnel hostname for Access-protected SSH."
 }
 
-resource "cloudflare_dns_record" "omni" {
-  # Production cutover 2026-09-14: serves the Nomad deployment (was the
-  # manually-managed Pi-tunnel record; adopted into Terraform, no Access app).
-  zone_id = data.cloudflare_zone.canonical.id
-  name    = "omni.${var.domain}"
-  type    = "CNAME"
-  content = "${cloudflare_zero_trust_tunnel_cloudflared.admin.id}.cfargotunnel.com"
-  ttl     = 1
-  proxied = true
-  comment = "OmniRoute production (Nomad, cut over from Pi 20260914)"
-}
-
-resource "cloudflare_dns_record" "omniroute" {
-  # OmniRoute staging hostname (Pi migration; serves the Nomad deployment).
-  # No Access app fronts it: the gateway API must stay machine-accessible.
-  zone_id = data.cloudflare_zone.canonical.id
-  name    = "omniroute.${var.domain}"
-  type    = "CNAME"
-  content = "${cloudflare_zero_trust_tunnel_cloudflared.admin.id}.cfargotunnel.com"
-  ttl     = 1
-  proxied = true
-  comment = "OmniRoute Nomad staging (Pi migration 20260914)"
-}
-
-resource "cloudflare_dns_record" "fabric" {
-  # Operator-added application hostname (adopted 2026-09-14 alongside the
-  # tunnel route above; live record had no comment).
-  zone_id = data.cloudflare_zone.canonical.id
-  name    = "fabric.${var.domain}"
-  type    = "CNAME"
-  content = "${cloudflare_zero_trust_tunnel_cloudflared.admin.id}.cfargotunnel.com"
-  ttl     = 1
-  proxied = true
-  comment = "fabric rollout 20260914"
-}
-
 resource "cloudflare_dns_record" "registry" {
   # Private Docker registry hostname (plan-only until an authorized apply).
-  # No Access app fronts it: docker push/pull clients are machines, same
-  # rule as the OmniRoute API hostnames.
+  # No Access app fronts it: docker push/pull clients are machines, not
+  # interactive users.
   zone_id = data.cloudflare_zone.canonical.id
   name    = "registry.${var.domain}"
   type    = "CNAME"
@@ -208,29 +172,10 @@ resource "cloudflare_zero_trust_tunnel_cloudflared_config" "admin" {
         service  = "ssh://localhost:22"
       },
       {
-        # Operator-added application route (adopted 2026-09-14 after live
-        # drift; origin serves TLS on :443 — adopt verbatim, never downgrade).
-        hostname = "fabric.${var.domain}"
-        service  = "https://localhost:443"
-      },
-      {
-        # OmniRoute staging (Pi migration 20260914): same origin-proxy
-        # pattern as fabric; the Nomad edge job routes by Host to the app. No Access
-        # policy here — the gateway API stays machine-accessible.
-        hostname = "omniroute.${var.domain}"
-        service  = "http://localhost:80"
-      },
-      {
-        # Production cutover 2026-09-14: same origin-proxy pattern; revert by
-        # pointing DNS back at the Pi tunnel (Pi units stay up as fallback).
-        hostname = "omni.${var.domain}"
-        service  = "http://localhost:80"
-      },
-      {
         # Private Docker registry (live: direct to the registry container
         # :5000). Moves to the Nomad edge job (:80) only after the edge
         # job proves healthy (cutover step) — never before. No Access
-        # policy here — docker clients are machines, like the OmniRoute API.
+        # policy here — docker clients are machines, not interactive users.
         hostname = "registry.${var.domain}"
         service  = "http://localhost:5000"
       },

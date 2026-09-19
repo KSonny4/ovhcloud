@@ -1,6 +1,6 @@
 # Edge reverse proxy (single instance, Host-based routing to :80).
 #
-# All tunneled application hostnames (fabric, omniroute, omni, registry)
+# All tunneled application hostnames (registry)
 # terminate at the Cloudflare edge and arrive at localhost:80, where this
 # job routes by Host to the backing Nomad services. Replaces the retired
 # plane's per-app proxy wiring with one declarative job.

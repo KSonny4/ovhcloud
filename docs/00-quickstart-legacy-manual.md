@@ -413,9 +413,7 @@ Do all of these separately:
 2. **each important database backup -> R2**
 3. **each irreplaceable persistent volume/directory -> R2**
 
-A Nomad snapshot does not contain application/database/volume data — those ride the same timer separately.
-
-For OmniRoute specifically, back up its `/app/data` host volume daily to R2. Because it contains SQLite state, stop the allocation while creating the archive for a safer file-level backup. Keep approximately 30 remote backups and a small number of local copies. See [07. Deploy OmniRoute safely](07-omniroute.md).
+A Nomad snapshot does not contain application/database/volume data — those ride the same timer separately. See [05. Backup and restore details](05-backup-recovery.md).
 
 ### 22. Verify OVH Automated Backup
 
@@ -491,7 +489,6 @@ Before moving anything important onto the VPS:
 - trigger one Nomad snapshot backup and verify it exists in R2;
 - trigger one database backup and verify it exists in R2;
 - back up one persistent mount if you use one;
-- for OmniRoute, restore `/app/data` into a disposable test deployment at least once;
 - confirm the bootstrap token + gossip key exist outside the VPS;
 - confirm OVH Automated Backup exists;
 - perform at least one disposable application-data restore test.
@@ -531,4 +528,3 @@ Whole-server safety net: OVH Automated Backup
 - [Cloudflare/R2 details](04-cloudflare.md)
 - [Backup and restore details](05-backup-recovery.md)
 - [Operations and upgrades](06-operations.md)
-- [OmniRoute deployment](07-omniroute.md)

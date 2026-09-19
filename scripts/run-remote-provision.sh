@@ -284,7 +284,6 @@ if [ "$dry_run" -eq 1 ]; then
     log 'DRY-RUN edge 4/5: ensure-service-token full (prove escrowed pair -> HTTP 200)'
     log 'DRY-RUN edge 5/5: wire --verify-only (UI 200 + ssh gated status)'
   fi
-  want_stage backup && log 'DRY-RUN: ensure-omniroute-secrets.sh (generate-if-absent + escrow, reuse otherwise)'
   want_stage backup && log 'DRY-RUN: mint R2 reader token + place accessor (0600) via stdin pipe + remote sudo bash schedule-host-backup.sh (fetch-r2-env memory-only) + verify timer + R2 object'
   log 'DRY-RUN: remove remote stage scripts on every exit path; report per-stage pass/fail (fail closed)'
   exit 0
@@ -341,12 +340,28 @@ fi
 # nomad stage bootstraps (patch-merge into the same entry).
 if [ -z "${NOMAD_GOSSIP_KEY:-}" ]; then
   command -v openssl >/dev/null 2>&1 || { echo 'openssl is required to generate the gossip key.' >&2; exit 2; }
-  NOMAD_GOSSIP_KEY="$(openssl rand -base64 32)"
-  if bao kv put -mount=secret projects/nomad/NOMAD_BOOTSTRAP "gossip_key=${NOMAD_GOSSIP_KEY}" >/dev/null 2>&1; then
-    log 'generated gossip key escrowed to OpenBao NOMAD_BOOTSTRAP (value never printed).'
+  # Reuse the escrowed gossip key when one exists. Re-runs against the same
+  # target must NEVER clobber the live NOMAD_BOOTSTRAP entry: a plain
+  # `kv put` replaces the whole entry and destroys the escrowed ACL token +
+  # accessor (field incident 2026-09-19, recovered from version history).
+  # Prefer an explicit per-target NOMAD_GOSSIP_KEY for additional fresh
+  # hosts sharing this entry name.
+  if existing_gossip="$(bao kv get -field=gossip_key secret/projects/nomad/NOMAD_BOOTSTRAP 2>/dev/null || true)"; [ -n "$existing_gossip" ]; then
+    NOMAD_GOSSIP_KEY="$existing_gossip"; existing_gossip=''
+    log 'reusing escrowed gossip key from OpenBao NOMAD_BOOTSTRAP (value never printed).'
   else
-    echo 'gossip key escrow failed; refusing to continue.' >&2
-    exit 2
+    NOMAD_GOSSIP_KEY="$(openssl rand -base64 32)"
+    # Merge, never replace: patch keeps sibling fields (acl_token,
+    # acl_accessor); put only creates the entry when absent (patch 404s).
+    # Values travel on stdin, never argv (ps-visible) or disk.
+    escrow_ok=''
+    if bao kv get secret/projects/nomad/NOMAD_BOOTSTRAP >/dev/null 2>&1; then
+      printf '%s' "$NOMAD_GOSSIP_KEY" | bao kv patch -mount=secret projects/nomad/NOMAD_BOOTSTRAP 'gossip_key=-' >/dev/null 2>&1 && escrow_ok=1
+    else
+      printf '%s' "$NOMAD_GOSSIP_KEY" | bao kv put -mount=secret projects/nomad/NOMAD_BOOTSTRAP 'gossip_key=-' >/dev/null 2>&1 && escrow_ok=1
+    fi
+    if [ -z "$escrow_ok" ]; then echo 'gossip key escrow failed; refusing to continue.' >&2; exit 2; fi
+    log 'generated gossip key escrowed to OpenBao NOMAD_BOOTSTRAP (value never printed).'
   fi
 fi
 bao_get() { bao kv get "-field=$2" "secret/projects/nomad/$1"; }
@@ -476,6 +491,7 @@ remote_touched=1
 # Both backup scripts travel together: schedule-host-backup.sh fails closed
 # on a clean host when its application-workload companion is absent.
 run scp -p "${ssh_opts[@]}" "$repo_root/scripts/bootstrap-vps.sh" "$repo_root/scripts/provision-nomad.sh" \
+  "$repo_root/scripts/ensure-docker-firewall.sh" \
   "$repo_root/scripts/configure-tunnel-access.sh" "$repo_root/scripts/schedule-host-backup.sh" \
   "$repo_root/scripts/backup-app-workloads.sh" "$repo_root/scripts/fetch-r2-env.sh" \
   "$repo_root/scripts/rollback-nomad-snapshot.sh" "$repo_root/scripts/rollback-app-workloads.sh" \
@@ -614,12 +630,6 @@ if want_stage edge; then
 fi
 
 if want_stage backup; then
-  # Application-secret lifecycle (noninteractive recovery without human
-  # relay): ensure the OmniRoute-derived secrets exist in OpenBao BEFORE
-  # anything is backed up, so manifests can mark them escrow-recoverable
-  # and restore re-injects them from escrow automatically.
-  run env BAO_ADDR="$bao_addr" bash "$repo_root/scripts/ensure-omniroute-secrets.sh"
-  log 'application secrets ensured in OpenBao (generate-if-absent, reuse otherwise).'
   # Memory-only R2 delivery: the target never holds R2 keys. It holds one
   # least-privilege OpenBao accessor (0600, read-only on the R2 entry) and
   # pulls keys into process memory per run via fetch-r2-env.sh. Minted fresh

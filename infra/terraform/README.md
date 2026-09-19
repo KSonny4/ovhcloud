@@ -5,12 +5,12 @@ This root module models the deployment boundary without performing a live apply.
 ## What it manages
 
 - OVH VPS ordering when explicitly enabled, or read-only discovery of an existing VPS when `provision_ovh_vps = false`; the current provider exposes the purchase plan, while OS/key bootstrap remains an explicit operator gate.
-- Cloudflare DNS records for the Nomad UI, SSH Tunnel hostname, adopted app hostnames (`fabric`, `omniroute`, `omni`, plus plan-only `registry`), and optional application wildcard.
+- Cloudflare DNS records for the Nomad UI, SSH Tunnel hostname, plan-only app hostnames (`registry`), and optional application wildcard.
 - Cloudflare Tunnel ingress from `ssh.<domain>` to `localhost:22`, UI to `localhost:4646`, and app hostnames to `localhost:80`.
 - Cloudflare Access policies for the Nomad UI and SSH, limited to `admin_emails`.
 - A private Cloudflare R2 bucket for backup destinations.
 
-The application deployment remains in Nomad jobs. Terraform does not create application databases, OmniRoute secrets, Nomad bootstrap material, R2 access keys, or private SSH keys.
+The application deployment remains in Nomad jobs. Terraform does not create application databases, application secrets, Nomad bootstrap material, R2 access keys, or private SSH keys.
 
 ## Operator workflow
 

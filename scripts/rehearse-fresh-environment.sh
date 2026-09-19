@@ -572,31 +572,12 @@ printf '%s' "$env_out" | grep -q 'credential source: env' || { echo 'rollback ig
 no_out="$(env -u APP_DB_PASSWORD bash scripts/rollback-app-workloads.sh --dry-run 2>&1 || true)"
 printf '%s' "$no_out" | grep -q 'credential source: absent' || { echo 'rollback misreports missing credential.' >&2; exit 1; }
 log 'rollback env credential proven: APP_DB_PASSWORD accepted, source reported.'
-# OmniRoute secret lifecycle (stubbed bao, no network): absent fields are
-# generated + escrowed (one patch per field, merge-safe), present fields
-# are reused with no write, and values never reach stdout.
-mkdir -p /tmp/rehearsal-omnibin
-cat > /tmp/rehearsal-omnibin/bao <<'STUBEOF'
-#!/usr/bin/env bash
-if [ "$1" = 'kv' ] && [ "$2" = 'get' ]; then
-  if [ -n "${STUB_OMNI_PRESENT:-}" ]; then printf 'present-test-value'; else exit 1; fi
-elif { [ "$1" = 'kv' ] && [ "$2" = 'patch' ]; } || { [ "$1" = 'kv' ] && [ "$2" = 'put' ]; }; then
-  printf '%s\n' "$*" >> /tmp/rehearsal-omni-puts.log; exit 0
-else exit 1; fi
-STUBEOF
-chmod +x /tmp/rehearsal-omnibin/bao
-rm -f /tmp/rehearsal-omni-puts.log
-omni_out="$(PATH="/tmp/rehearsal-omnibin:$PATH" bash scripts/ensure-omniroute-secrets.sh 2>&1 || true)"
-printf '%s' "$omni_out" | grep -q 'generated+escrowed' || { echo 'omniroute generation path broken.' >&2; exit 1; }
-[ "$(wc -l < /tmp/rehearsal-omni-puts.log | tr -d ' ')" -eq 3 ] || { echo 'omniroute escrow does not patch all three fields.' >&2; exit 1; }
-grep -q 'STORAGE_ENCRYPTION_KEY=-' /tmp/rehearsal-omni-puts.log || { echo 'omniroute patch passes values via stdin (-), not argv.' >&2; exit 1; }
-[ "$(printf '%s\n' "$omni_out" | grep -c .)" -eq 1 ] || { echo 'ensure leaks extra output (possible secret).' >&2; exit 1; }
-rm -f /tmp/rehearsal-omni-puts.log
-omni_out="$(STUB_OMNI_PRESENT=1 PATH="/tmp/rehearsal-omnibin:$PATH" bash scripts/ensure-omniroute-secrets.sh 2>&1 || true)"
-printf '%s' "$omni_out" | grep -q 'reused' || { echo 'omniroute reuse path broken.' >&2; exit 1; }
-[ -f /tmp/rehearsal-omni-puts.log ] && { echo 'omniroute rewrote present fields.' >&2; exit 1; }
-rm -rf /tmp/rehearsal-omnibin /tmp/rehearsal-omni-puts.log
-log 'omniroute lifecycle proven: generate-if-absent + escrow, reuse untouched, values never on stdout.'
+# OmniRoute retired 2026-09-19: the app-secret ensure script is gone and
+# the runner must not reference it. The generic escrow machinery below
+# (topology marking, re-injection, fetch) is proven with fixture data.
+[ ! -e scripts/ensure-omniroute-secrets.sh ] || { echo 'retired ensure-omniroute-secrets.sh still present.' >&2; exit 1; }
+if grep -q 'ensure-omniroute-secrets' scripts/run-remote-provision.sh; then echo 'runner still references retired OmniRoute secrets.' >&2; exit 1; fi
+log 'omniroute retirement proven: no ensure script, no runner reference.'
 # Topology escrow marking: synthetic container carrying an allowlisted
 # secret must record env_escrowed with path + field (exact live code).
 cat > /tmp/rehearsal-inspect-escrow.json <<'INSPECT_EOF'
@@ -605,7 +586,7 @@ INSPECT_EOF
 esc_out="$(bash scripts/backup-app-workloads.sh --self-test-topology /tmp/rehearsal-inspect-escrow.json 2>/dev/null || true)"
 rm -f /tmp/rehearsal-inspect-escrow.json
 printf '%s' "$esc_out" | grep -q '"STORAGE_ENCRYPTION_KEY": "REDACTED"' || { echo 'escrow fixture redaction broken.' >&2; exit 1; }
-printf '%s' "$esc_out" | grep -q '"STORAGE_ENCRYPTION_KEY": {"path": "secret/projects/nomad/OMNIROUTE"' || { echo 'topology omits env_escrowed mapping.' >&2; exit 1; }
+printf '%s' "$esc_out" | grep -q '"STORAGE_ENCRYPTION_KEY": {"path": "secret/projects/nomad/APPSHARED"' || { echo 'topology omits env_escrowed mapping.' >&2; exit 1; }
 log 'topology escrow marking proven: allowlisted secret recorded with path + field.'
 # Rollback re-injection: delivered env wins (needs empty), absent env
 # falls back to needs_secrets (exact live builder).
@@ -635,7 +616,7 @@ cat > /tmp/rehearsal-fetchbin/aws <<'STUBEOF'
 if printf '%s\n' "$@" | grep -q 'get-object'; then
   out=''; for a in "$@"; do out="$a"; done
   cat > "$out" <<'MANIFEST_EOF'
-{"stamp": "20200101T000000Z", "containers": [{"name": "escrow-app", "env_escrowed": {"STORAGE_ENCRYPTION_KEY": {"path": "secret/projects/nomad/OMNIROUTE", "field": "STORAGE_ENCRYPTION_KEY"}}}]}
+{"stamp": "20200101T000000Z", "containers": [{"name": "escrow-app", "env_escrowed": {"STORAGE_ENCRYPTION_KEY": {"path": "secret/projects/nomad/APPSHARED", "field": "STORAGE_ENCRYPTION_KEY"}}}]}
 MANIFEST_EOF
 else
   # Realistic `aws s3 ls` shape (date, time, size, name): the consumer
@@ -662,17 +643,14 @@ log 'fetch-app-secrets proven: resolve + channels + fail-closed, values never on
 grep -q "sudo bash -c 'eval" scripts/recreate-workload.sh || { echo 'recreate wrapper lost sudo-first delivery.' >&2; exit 1; }
 if grep -q 'sudo -E bash /root/host-backup/fetch-r2-env' scripts/recreate-workload.sh; then echo 'recreate wrapper regressed to sudo -E delivery (strips app secrets).' >&2; exit 1; fi
 log 'sudo-first delivery proven present (blob survives sudo for any var).'
-# Runner integration: ensure step precedes backup work in live order and
-# appears in the dry-run plan.
-grep -q 'ensure-omniroute-secrets.sh' scripts/run-remote-provision.sh || { echo 'runner omits the app-secret ensure step.' >&2; exit 1; }
+# Runner integration (OmniRoute retired): the backup stage must mint the R2
+# reader token with no app-secret ensure step anywhere in the plan.
+if grep -q 'ensure-omniroute-secrets' scripts/run-remote-provision.sh; then echo 'runner still references retired OmniRoute secrets.' >&2; exit 1; fi
 python3 - <<'PYEOF' || exit 1
 log = open('/tmp/rehearsal-runner-1.log').read().splitlines()
-def idx(pat):
-    hits = [i for i, l in enumerate(log) if pat in l]
-    assert hits, pat
-    return hits[0]
-assert idx('ensure-omniroute-secrets') < idx('mint R2 reader token'), 'ensure must precede backup work'
-print('runner app-secret order proven.')
+assert any('mint R2 reader token' in l for l in log), 'backup stage missing from runner dry-run'
+assert not any('ensure-omniroute-secrets' in l for l in log), 'retired ensure step still in runner plan'
+print('runner backup order proven (no retired app-secret step).')
 PYEOF
 bash scripts/ensure-service-token.sh --dry-run
 bash scripts/ensure-service-token.sh --dry-run --ensure-only

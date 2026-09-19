@@ -38,12 +38,12 @@ Files loaded at adoption: `AGENTS.md` plus task-triggered playbooks
 ## This repo's mapping (already aligned, verified 2026-09-17)
 
 - Transport: scripts default to `BAO_ADDR=https://secrets.pkubelka.cz`
-  (`ensure-omniroute-secrets.sh`, `verify-nomad-live.sh`, `fetch-r2-env.sh`);
+  (`verify-nomad-live.sh`, `fetch-r2-env.sh`);
   no `127.0.0.1:8100`/`:8200` consumer usage anywhere (`rehearsal.invalid` is
   test-stub addressing, not transport). No wording drift; no runbook changes.
 - Deploy target: Nomad only at `https://nomad.pkubelka.cz`
-  (Access OTP `ksonny4@gmail.com`); one job per deployable (`fabric`, OmniRoute,
-  `registry:2` per `docs/09-docker-registry.md`) via `nomad job run`.
+  (Access OTP `ksonny4@gmail.com`); one job per deployable (`registry:2`
+  per `docs/09-docker-registry.md`; cognee jobspec pending) via `nomad job run`.
 - Secrets edge: OpenBao escrow by name only (`docs/iac-interfaces.md`
   inventory); Nomad `template`-stanza rendering; presence-only verification,
   values never in Git/prompts/logs. Rotation per `docs/secret-rotation.md`.

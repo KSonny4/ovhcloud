@@ -52,7 +52,7 @@ Verify readback of every new entry by FIELD NAME only
 2. Uninstall the retired plane on the host; run
    `scripts/provision-nomad.sh` (ACL token escrows to `NOMAD_BOOTSTRAP`).
 3. Deploy `jobs/edge-proxy.nomad.hcl`, then workload jobs
-   (`jobs/registry.nomad.hcl`, OmniRoute per `docs/07-omniroute.md`).
+   (`jobs/registry.nomad.hcl`).
 4. `bash scripts/verify-nomad-live.sh` must print ALL LIVE CHECKS PASS.
 5. `scripts/rollback-nomad-snapshot.sh` must print RESTORE_OK (first
    Nomad-era drill; schedules the nightly timer via
