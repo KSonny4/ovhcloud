@@ -35,20 +35,43 @@ Files loaded at adoption: `AGENTS.md` plus task-triggered playbooks
   still decide. Upstream notes this Mac has no local proxy (`:8100`/`:8200`
   refused) — operational follow-up outside guidance.
 
-## This repo's mapping (already aligned, verified 2026-09-17)
+## This repo's mapping (already aligned, verified 2026-09-17; cutover deltas verified 2026-09-19)
 
 - Transport: scripts default to `BAO_ADDR=https://secrets.pkubelka.cz`
   (`verify-nomad-live.sh`, `fetch-r2-env.sh`);
   no `127.0.0.1:8100`/`:8200` consumer usage anywhere (`rehearsal.invalid` is
   test-stub addressing, not transport). No wording drift; no runbook changes.
 - Deploy target: Nomad only at `https://nomad.pkubelka.cz`
-  (Access OTP `ksonny4@gmail.com`); one job per deployable (`registry:2`
-  per `docs/09-docker-registry.md`; cognee jobspec pending) via `nomad job run`.
+  (Access OTP `ksonny4@gmail.com` — human login verified 2026-09-19 on the
+  cutover tunnel; machine path via escrowed service token). One job per
+  deployable (`edge-proxy`, `registry:2` per `docs/09-docker-registry.md`,
+  `cognee` vendored from `KSonny4/cognee-setup` per `docs/11-cognee.md`)
+  via `nomad job run`. OmniRoute/Fabric retired, never migrated.
+- Plane topology since 2026-09-19: new VPS `vps-c85da816.vps.ovh.ca`
+  (148.113.245.89, BHS6) serves nomad/ssh/registry/cognee through dedicated
+  tunnel `nomad-148-113-245-89`; the preserved tunnel + old VPS keep the
+  un-migrated workloads (keeper/dump/graph-dispatcher). Old-cluster ACL
+  token rescued to `NOMAD_BOOTSTRAP_PRESERVED` (runner `kv put` clobber
+  incident — runner now merges, never replaces).
 - Secrets edge: OpenBao escrow by name only (`docs/iac-interfaces.md`
-  inventory); Nomad `template`-stanza rendering; presence-only verification,
+  inventory); Nomad `-var-file`/stdin-pipe rendering at the deploy edge
+  (never `template`-stanza values in specs); presence-only verification,
   values never in Git/prompts/logs. Rotation per `docs/secret-rotation.md`.
-- Healthchecks: `/health` (registry), app-owned endpoints; public-hostname
+  Service-token OBJECT is API/OpenBao-managed (provider version trap —
+  Terraform binds `var.access_service_token_id` in app policies only).
+  `backup-r2-reader` policy covers both `ovhcloud/*` and `nomad/*` paths.
+- Healthchecks: TCP service checks (auth-gated endpoints 401 anonymous
+  callers); registry proven by anon-401 + authenticated catalog/push/pull,
+  cognee edge by anon-401 + `cognee edge ok` + MCP/REST smokes; public-hostname
   verification, never origin ports (tunnel-only invariant, `CONTEXT.md`).
+  The cognee image HEALTHCHECK targets static :8000 while the job binds a
+  dynamic port — structurally unhealthy, excluded from the live gate by name
+  with the smokes as real proof.
+- Dynamic-port discipline: the cognee edge takes a scheduler-assigned
+  loopback port, so every redeploy must re-point the tunnel ingress rule
+  AND the matching Terraform line, or the hostname 404s. Bulk image pushes
+  bypass the ~100MB edge cap via loopback (`registry_http_host` override,
+  then redeploy with the default).
 
 ## Deploy procedure for later (condensed, this overlay)
 
@@ -60,7 +83,9 @@ Files loaded at adoption: `AGENTS.md` plus task-triggered playbooks
 3. Secrets: values rendered from OpenBao escrow by name at deploy time;
    agent verifies presence-only, never values.
 4. Terraform (operator, authorized apply only): DNS CNAME + tunnel ingress per
-   `docs/deployment-plan.md`; `terraform plan` must show adds only.
+   `docs/deployment-plan.md`; `terraform plan` must show ONLY the intended
+   adds/changes (imports first for API-created objects), and a second plan
+   must be empty after apply.
 5. AFK verify: `curl https://<host>/<health>` → 200; webhook deliveries via
    `gh api repos/<owner>/<repo>/hooks/<id>/deliveries`; record SHA + build id.
 6. Rollback: `nomad job revert` to the prior known-good version, re-run step 5.

@@ -22,16 +22,22 @@ This plan is the machine-readable handoff for the runbooks in this repository. I
 
 ```text
 Cloudflare DNS + proxy/TLS (exclusive public edge)
-  ├── nomad.pkubelka.cz -> Tunnel nomad-admin -> localhost:4646 (Terraform CNAME)
-  ├── ssh.pkubelka.cz     -> Tunnel nomad-admin -> localhost:22 (Terraform CNAME)
-  ├── registry.pkubelka.cz -> Tunnel nomad-admin -> localhost:80 (Terraform CNAME; plan-only, no Access app; see docs/09-docker-registry.md)
-  ├── Access: human OTP/email policy (ksonny4@gmail.com) + machine service token
+  ├── nomad.pkubelka.cz -> Tunnel nomad-148-113-245-89 -> localhost:4646 (Terraform CNAME; OTP login verified 2026-09-19)
+  ├── ssh.pkubelka.cz     -> Tunnel nomad-148-113-245-89 -> localhost:22 (Terraform CNAME)
+  ├── registry.pkubelka.cz -> Tunnel nomad-148-113-245-89 -> localhost:5000 (Terraform CNAME, no Access app; see docs/09-docker-registry.md)
+  ├── cognee.pkubelka.cz -> Tunnel nomad-148-113-245-89 -> localhost:<dynamic edge> (Terraform CNAME, no Access app; re-point every redeploy, see docs/11-cognee.md)
+  ├── Access: human OTP/email policy (ksonny4@gmail.com) + machine service token (object API-managed, policies bind token ID)
   └── private R2 bucket   <- Nomad snapshot/database/volume backups (Terraform + probe)
 
-OVH VPS vps-1525c977.vps.ovh.net (Ubuntu 26.04 live; fresh bootstrap supports 24.04/26.04)
-  ├── public web ports: none (UFW deny 80/443; all traffic via Cloudflare Tunnel)
+OVH VPS vps-c85da816.vps.ovh.ca, BHS6 (new origin, Ubuntu 26.04; 148.113.245.89)
+  ├── public web ports: none (UFW deny 80/443 + DOCKER-USER rules; all traffic via Cloudflare Tunnel)
   ├── administration: outbound cloudflared + Access
-  └── registry:2 (jobs/registry.nomad.hcl); cognee succeeds fabric (jobspec pending)
+  ├── edge-proxy + registry:2 (jobs/) + cognee (jobs/cognee.nomad.hcl, vendored)
+  └── backups: nightly snapshot + workload backup to R2, probe-verified (RESTORE_OK)
+
+Preserved VPS vps-1525c977.vps.ovh.net (old origin, UK2) keeps its remaining
+workloads (keeper/dump/unleash/control-panel) on tunnel nomad-admin; its
+in-scope jobs were stopped at cutover. See docs/iac-inventory.md.
 ```
 
 Cloudflare is the exclusive public DNS/edge provider. OVH remains the compute/origin provider and emergency KVM/rescue path. No other DNS, CDN, tunnel, or public-edge provider is part of this plan.
