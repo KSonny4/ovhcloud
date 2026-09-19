@@ -122,3 +122,31 @@ clobber (old ACL rescued to `NOMAD_BOOTSTRAP_PRESERVED`), stale
 workload backup gap, provider service-token version trap (object now
 API-managed, policies bind token ID), rehearsal dummy vars for the two new
 TF variables. Human OTP login on the new Nomad UI verified by the operator.
+
+## Old-VPS data migration (2026-09-19, pre-termination)
+
+Operator decision changed to full decommission (user cancels the old service
+themselves). Before that, all remaining old-host data was pulled to the new
+host under `/srv/old-vps-migration/` (~15 GB):
+
+- `nomad-volumes/` — full copy of old `/opt/nomad-volumes` (14.0 GB:
+  dump-pg-dev/prod, 6.5 GB dump-prod-media, unleash-pg, old registry blobs,
+  registry-auth, snapshots). Size parity source/dest confirmed.
+- `keeper-sqlite/staging-2026-09-{17,18,19}/` — the dump job's fresh keeper
+  `storage.sqlite` copies (Sept 19 copy byte-identical at 181,927,936 B;
+  `PRAGMA integrity_check` = ok, 136 tables). These never reached R2 (Sept
+  14-stale `app-databases/`/`app-volumes/` prefixes) so the old disk was the
+  only fresh copy.
+- `docker-volumes/` — keeper-data, dump-media, redis-data, fabric
+  postgres/neo4j/state (retired scope, archived), coolify-db/redis.
+- `*.sql` — portable `pg_dumpall` dumps taken via temp containers against
+  the quiesced clusters (dump-pg-prod 9 tables, dump-pg-dev 9 tables,
+  unleash-pg 91 tables; PG 17 / PG 17 / PG 16; socket-local trust auth).
+- All 15 remaining old Nomad jobs stopped+purged first (0 running verified);
+  automated-backup restore point `2026-09-19T15:00:04Z` confirmed as
+  full-VPS fallback. OVH snapshot option is not enabled on the old service
+  (`createSnapshot` 400), so no pre-termination snapshot was possible.
+
+Hygiene: a single-use migration SSH key was minted, trusted old→new only for
+the pull, then revoked from both hosts (each `authorized_keys` back to the
+operator key only); local private material shredded.
