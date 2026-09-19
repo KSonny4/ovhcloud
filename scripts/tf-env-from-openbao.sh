@@ -64,7 +64,8 @@ ovh_ak="$(bao kv get -field=application_key secret/projects/nomad/OVH_API)"
 ovh_as="$(bao kv get -field=application_secret secret/projects/nomad/OVH_API)"
 ovh_ck="$(bao kv get -field=consumer_key secret/projects/nomad/OVH_API)"
 ovh_ep="$(bao kv get -field=endpoint secret/projects/nomad/OVH_API)"
-for v in cf_token tunnel_secret r2_ak r2_sk r2_endpoint r2_bucket ovh_ak ovh_as ovh_ck ovh_ep; do
+svc_token_id="$(bao kv get -field=token_id secret/projects/nomad/EDGE_ACCESS_SERVICE_TOKEN)"
+for v in cf_token tunnel_secret r2_ak r2_sk r2_endpoint r2_bucket ovh_ak ovh_as ovh_ck ovh_ep svc_token_id; do
   if [ -z "${!v}" ]; then echo "OpenBao escrow missing for ${v}; refusing to continue." >&2; exit 2; fi
 done
 
@@ -91,6 +92,7 @@ printf 'export TF_VAR_admin_emails=%s\n' "'[\"ksonny4@gmail.com\"]'"
 printf 'export TF_VAR_r2_bucket_name=%s\n' "'ovh-host-backups'"
 printf 'export TF_VAR_manage_application_wildcard=%s\n' "'false'"
 printf 'export TF_VAR_access_service_token_name=%s\n' "'ovh-nomad-machine-verification'"
+printf 'export TF_VAR_access_service_token_id=%s\n' "'${svc_token_id}'"
 printf 'export TF_VAR_access_service_token_duration=%s\n' "'8760h'"
 printf 'export TF_VAR_provision_ovh_vps=%s\n' "'false'"
 printf 'export TF_VAR_manage_existing_vps=%s\n' "'true'"

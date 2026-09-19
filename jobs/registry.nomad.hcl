@@ -7,8 +7,20 @@
 # /opt/nomad-volumes/registry-auth/htpasswd on the client host —
 # memory-only handling, never committed (see docs/09-docker-registry.md).
 #
+# REGISTRY_HTTP_HOST defaults to the public hostname (REQUIRED behind the
+# TLS-terminating tunnel — without it the registry mints http:// upload
+# URLs and pushes fail on resume). Override it to a loopback URL only for
+# bulk seeding/mirroring large layers: the Cloudflare edge caps single
+# request bodies (~100MB), so multi-hundred-MB blobs must bypass the edge
+# (push, then redeploy with the default).
+#
 # Deploy: nomad job run jobs/registry.nomad.hcl
 # Roll back: nomad job revert registry
+variable "registry_http_host" {
+  type        = string
+  default     = "https://registry.pkubelka.cz"
+  description = "Public origin URL minted into upload Locations. Loopback override for bulk seeding only."
+}
 job "registry" {
   datacenters = ["ovh-vps"]
   type        = "service"
@@ -50,7 +62,7 @@ job "registry" {
         # REQUIRED behind the TLS-terminating tunnel: without this the
         # registry mints http:// upload URLs and every push fails on
         # resume (live failure 2026-09-17).
-        REGISTRY_HTTP_HOST = "https://registry.pkubelka.cz"
+        REGISTRY_HTTP_HOST = var.registry_http_host
         REGISTRY_STORAGE_DELETE_ENABLED = true
       }
 

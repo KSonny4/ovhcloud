@@ -11,6 +11,11 @@ variable "cloudflare_account_id" {
   type        = string
 }
 
+variable "edge_tunnel_id" {
+  description = "ID of the cutover tunnel (new VPS, API-created as nomad-148-113-245-89). Read-only for Terraform: only its config + DNS are managed. Supply via TF_VAR_edge_tunnel_id from OpenBao secret/projects/nomad/EDGE_TUNNEL_NOMAD_148_113_245_89 (field tunnel_id)."
+  type        = string
+}
+
 variable "cloudflare_tunnel_secret" {
   description = "Base64-encoded Cloudflare Tunnel secret for the PRESERVED tunnel, supplied ONLY from OpenBao secret/projects/nomad/EDGE_TUNNEL_SECRET (field tunnel_secret) via TF_VAR_cloudflare_tunnel_secret env (memory-only, never files). Fresh per-target tunnels use EDGE_TUNNEL_<NAME> and never touch this variable."
   type        = string
@@ -95,6 +100,11 @@ variable "r2_bucket_name" {
   description = "Private Cloudflare R2 bucket name for Nomad and application backups."
   type        = string
   default     = "ovh-host-backups"
+}
+
+variable "access_service_token_id" {
+  description = "Stable ID of the machine Access service token (API/OpenBao-managed; the ID survives secret rotations). Supply via TF_VAR_access_service_token_id from OpenBao secret/projects/nomad/EDGE_ACCESS_SERVICE_TOKEN (field token_id)."
+  type        = string
 }
 
 variable "access_service_token_name" {

@@ -5,6 +5,15 @@ data "cloudflare_zone" "canonical" {
   }
 }
 
+# Cutover tunnel (new VPS). Read-only lookup by ID: the tunnel object
+# itself is API-created/API-managed (no tunnel_secret variable exists for
+# it); Terraform owns only its config + DNS below. Value from OpenBao:
+# bao kv get -field=tunnel_id secret/projects/nomad/EDGE_TUNNEL_NOMAD_148_113_245_89
+data "cloudflare_zero_trust_tunnel_cloudflared" "edge_new" {
+  account_id = var.cloudflare_account_id
+  tunnel_id  = var.edge_tunnel_id
+}
+
 data "ovh_vps" "existing" {
   count        = var.ovh_service_name != "" && !var.provision_ovh_vps ? 1 : 0
   service_name = var.ovh_service_name
@@ -68,7 +77,7 @@ resource "cloudflare_dns_record" "nomad" {
   zone_id = data.cloudflare_zone.canonical.id
   name    = "nomad.${var.domain}"
   type    = "CNAME"
-  content = "${cloudflare_zero_trust_tunnel_cloudflared.admin.id}.cfargotunnel.com"
+  content = "${data.cloudflare_zero_trust_tunnel_cloudflared.edge_new.id}.cfargotunnel.com"
   ttl     = 1
   proxied = true
   comment = "Nomad UI through the Cloudflare Tunnel; managed by Terraform."
@@ -102,7 +111,7 @@ resource "cloudflare_dns_record" "ssh" {
   zone_id = data.cloudflare_zone.canonical.id
   name    = "ssh.${var.domain}"
   type    = "CNAME"
-  content = "${cloudflare_zero_trust_tunnel_cloudflared.admin.id}.cfargotunnel.com"
+  content = "${data.cloudflare_zero_trust_tunnel_cloudflared.edge_new.id}.cfargotunnel.com"
   ttl     = 1
   proxied = true
   comment = "Cloudflare Tunnel hostname for Access-protected SSH."
@@ -115,10 +124,23 @@ resource "cloudflare_dns_record" "registry" {
   zone_id = data.cloudflare_zone.canonical.id
   name    = "registry.${var.domain}"
   type    = "CNAME"
-  content = "${cloudflare_zero_trust_tunnel_cloudflared.admin.id}.cfargotunnel.com"
+  content = "${data.cloudflare_zero_trust_tunnel_cloudflared.edge_new.id}.cfargotunnel.com"
   ttl     = 1
   proxied = true
   comment = "Private Docker registry (Nomad registry:2)"
+}
+
+resource "cloudflare_dns_record" "cognee" {
+  # Adopted from API drift 2026-09-19 (was unmanaged on the preserved
+  # tunnel); now tracks the cutover tunnel like the other app hostnames.
+  # No Access app: the Caddy edge owns machine-client auth.
+  zone_id = data.cloudflare_zone.canonical.id
+  name    = "cognee.${var.domain}"
+  type    = "CNAME"
+  content = "${data.cloudflare_zero_trust_tunnel_cloudflared.edge_new.id}.cfargotunnel.com"
+  ttl     = 1
+  proxied = true
+  comment = "Cognee edge (Nomad, cut over 20260919)"
 }
 
 resource "cloudflare_zero_trust_access_identity_provider" "one_time_pin" {
@@ -137,21 +159,13 @@ resource "cloudflare_zero_trust_access_identity_provider" "one_time_pin" {
   }
 }
 
-resource "cloudflare_zero_trust_access_service_token" "machine" {
-  account_id = var.cloudflare_account_id
-  name       = var.access_service_token_name
-  duration   = var.access_service_token_duration
-  enabled    = true
-
-  # The token secret itself is lifecycle-managed in OpenBao (rotation happens
-  # via dashboard/API + re-escrow, Cloudflare never reveals the secret back).
-  # Terraform tracks the token identity/policy binding only: the secret version
-  # recorded at import must never be reset (the API rejects a lower version).
-  # client_secret/expires_at are provider-decided and intentionally absent here.
-  lifecycle {
-    ignore_changes = [client_secret_version]
-  }
-}
+# NOTE: no cloudflare_zero_trust_access_service_token resource exists by
+# design (removed 2026-09-19). The provider plans a fresh client_secret on
+# ANY update and the API rejects the write (version trap — every plan
+# proposed rotation, every apply 400d), so the token object is fully
+# API/OpenBao-managed and Terraform references it by stable ID only (the ID
+# survives secret rotations; see var.access_service_token_id). Policy
+# bindings below still own which apps accept the token.
 
 resource "cloudflare_zero_trust_tunnel_cloudflared_config" "admin" {
   account_id = var.cloudflare_account_id
@@ -160,25 +174,6 @@ resource "cloudflare_zero_trust_tunnel_cloudflared_config" "admin" {
 
   config = {
     ingress = [
-      {
-        # Nomad UI/API origin (loopback-only on the host; served solely
-        # through this tunnel hostname). Single rule: the UI, API, and
-        # event stream all share :4646 — no path fan-out needed.
-        hostname = "nomad.${var.domain}"
-        service  = "http://localhost:4646"
-      },
-      {
-        hostname = "ssh.${var.domain}"
-        service  = "ssh://localhost:22"
-      },
-      {
-        # Private Docker registry (live: direct to the registry container
-        # :5000). Moves to the Nomad edge job (:80) only after the edge
-        # job proves healthy (cutover step) — never before. No Access
-        # policy here — docker clients are machines, not interactive users.
-        hostname = "registry.${var.domain}"
-        service  = "http://localhost:5000"
-      },
       {
         # Adopted live routes (out-of-band additions by other automation;
         # adopted verbatim 2026-09-18 — Terraform owns the whole ingress
@@ -207,6 +202,49 @@ resource "cloudflare_zero_trust_tunnel_cloudflared_config" "admin" {
   }
 }
 
+# Cutover tunnel config (new VPS; API-created tunnel, TF-managed config +
+# DNS). Carries the migrated hostnames; the preserved tunnel keeps the
+# un-migrated ones (keeper/dump/graph-dispatcher).
+resource "cloudflare_zero_trust_tunnel_cloudflared_config" "edge_new" {
+  account_id = var.cloudflare_account_id
+  tunnel_id  = data.cloudflare_zero_trust_tunnel_cloudflared.edge_new.id
+  source     = "cloudflare"
+
+  config = {
+    ingress = [
+      {
+        # Nomad UI/API on the new origin (loopback-only; served solely
+        # through this tunnel hostname).
+        hostname = "nomad.${var.domain}"
+        service  = "http://localhost:4646"
+      },
+      {
+        hostname = "ssh.${var.domain}"
+        service  = "ssh://localhost:22"
+      },
+      {
+        # Private Docker registry, direct to the container port (same
+        # pattern as the retired admin rule; no Access app: docker
+        # clients are machines).
+        hostname = "registry.${var.domain}"
+        service  = "http://localhost:5000"
+      },
+      {
+        # Cognee edge (adopted from API drift 2026-09-19). DYNAMIC origin
+        # port: the edge job takes a scheduler-assigned loopback port, so
+        # every cognee redeploy must re-point this rule (adapted
+        # point-tunnel.py) AND update this line, or the hostname 404s.
+        # No Access app: the edge owns basic-auth for machine clients.
+        hostname = "cognee.${var.domain}"
+        service  = "http://localhost:24051"
+      },
+      {
+        service = "http_status:404"
+      }
+    ]
+  }
+}
+
 resource "cloudflare_zero_trust_access_application" "nomad" {
   account_id                = var.cloudflare_account_id
   name                      = "Nomad UI"
@@ -224,7 +262,7 @@ resource "cloudflare_zero_trust_access_application" "nomad" {
       precedence = 1
       include = [{
         service_token = {
-          token_id = cloudflare_zero_trust_access_service_token.machine.id
+          token_id = var.access_service_token_id
         }
       }]
     }],
@@ -260,7 +298,7 @@ resource "cloudflare_zero_trust_access_application" "ssh" {
       precedence = 1
       include = [{
         service_token = {
-          token_id = cloudflare_zero_trust_access_service_token.machine.id
+          token_id = var.access_service_token_id
         }
       }]
     }],

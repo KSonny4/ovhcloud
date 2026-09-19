@@ -38,13 +38,14 @@ grep -q 'resource "ovh_vps" "preserved"' "$repo_root/infra/terraform/main.tf" ||
 grep -q 'prevent_destroy = true' "$repo_root/infra/terraform/main.tf" || { echo 'prevent_destroy missing from config.' >&2; exit 2; }
 printf '%s' "$state_list" | grep -q '^ovh_vps\.preserved' || { echo 'preserved VPS not in live state.' >&2; exit 2; }
 
-# Expected imported families (addresses only, IDs never printed).
+# Expected imported families (addresses only, IDs never printed). NOTE: the
+# service-token OBJECT is API/OpenBao-managed by design (provider version
+# trap) and absent from state; the binding is checked below by variable ref.
 families='cloudflare_zero_trust_tunnel_cloudflared
 cloudflare_zero_trust_tunnel_cloudflared_config
 cloudflare_dns_record
 cloudflare_zero_trust_access_application
 cloudflare_zero_trust_access_identity_provider
-cloudflare_zero_trust_access_service_token
 cloudflare_r2_bucket
 ovh_vps.preserved'
 missing=''
@@ -53,6 +54,9 @@ while IFS= read -r fam; do
   printf '%s' "$state_list" | grep -q "^${fam}" || missing="${missing} ${fam}"
 done <<<"$families"
 [ -z "$missing" ] || { echo "live state misses families:${missing}" >&2; exit 2; }
+# Service-token binding without the object: both Access apps must reference
+# the escrow-backed variable (exactly two refs: nomad + ssh policies).
+[ "$(grep -c 'token_id = var.access_service_token_id' "$repo_root/infra/terraform/main.tf")" -eq 2 ] || { echo 'Access apps do not both bind var.access_service_token_id.' >&2; exit 2; }
 
 # Zero-change plan (default refresh: detects drift, prints no values when empty).
 set +e
