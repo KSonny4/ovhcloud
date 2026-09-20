@@ -277,7 +277,6 @@ resource "cloudflare_zero_trust_tunnel_cloudflared_config" "edge_new" {
       },
       {
         # Fallback in-account hostname (see DNS record above).
-      {
         hostname = "dump.${var.domain}"
         service  = "http://localhost:30692"
       },
