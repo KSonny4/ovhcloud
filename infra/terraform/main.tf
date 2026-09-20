@@ -159,6 +159,19 @@ resource "cloudflare_dns_record" "flags_listener" {
   comment = "Flags webhook listener (Nomad, resurrected 20260919)"
 }
 
+resource "cloudflare_dns_record" "dump" {
+  # Fallback hostname in the primary account (2026-09-20): the
+  # petrzdena.cz CNAME is correct but the edge tunnel-route for the
+  # foreign-zone name stays 530/1033 after the dead-tunnel deletion.
+  zone_id = data.cloudflare_zone.canonical.id
+  name    = "dump.${var.domain}"
+  type    = "CNAME"
+  content = "${data.cloudflare_zero_trust_tunnel_cloudflared.edge_new.id}.cfargotunnel.com"
+  ttl     = 1
+  proxied = true
+  comment = "Dump app fallback (Nomad) while petrzdena route converges"
+}
+
 resource "cloudflare_zero_trust_access_identity_provider" "one_time_pin" {
   account_id = var.cloudflare_account_id
   name       = "One-time PIN"
@@ -189,28 +202,11 @@ resource "cloudflare_zero_trust_tunnel_cloudflared_config" "admin" {
   source     = "cloudflare"
 
   config = {
+    # Retired 2026-09-20: the old host (sole connector) expired, so every
+    # route below went dark (530/1033) and SHADOWED the resurrected names
+    # on the new tunnel. All live hostnames moved to edge_new; this object
+    # is kept only (prevent_destroy) with a terminal catch-all.
     ingress = [
-      {
-        # Adopted live routes (out-of-band additions by other automation;
-        # adopted verbatim 2026-09-18 — Terraform owns the whole ingress
-        # list, so every live hostname must be declared or the next apply
-        # deletes it). No Access policy on any: machine/API clients.
-        hostname = "graph-dispatcher.${var.domain}"
-        service  = "https://localhost:443"
-      },
-      {
-        hostname = "keeper.${var.domain}"
-        service  = "http://localhost:8102"
-      },
-      {
-        # Different zone, same tunnel (adopted verbatim).
-        hostname = "dump.petrzdena.cz"
-        service  = "http://localhost:8101"
-      },
-      {
-        hostname = "dump-dev.petrzdena.cz"
-        service  = "http://localhost:8100"
-      },
       {
         service = "http_status:404"
       }
@@ -265,7 +261,7 @@ resource "cloudflare_zero_trust_tunnel_cloudflared_config" "edge_new" {
       {
         # Resurrected 2026-09-19: MeowLabs Control. DYNAMIC origin port.
         hostname = "control.${var.domain}"
-        service  = "http://localhost:29742"
+        service  = "http://localhost:30811"
       },
       {
         # Resurrected 2026-09-19: flags webhook listener. DYNAMIC port.
@@ -277,7 +273,12 @@ resource "cloudflare_zero_trust_tunnel_cloudflared_config" "edge_new" {
         # dump.petrzdena.cz lives outside this account — repoint its CNAME
         # to the edge_new tunnel hostname out-of-band (operator).
         hostname = "dump.petrzdena.cz"
-        service  = "http://localhost:24618"
+        service  = "http://localhost:30692"
+      },
+      {
+        # Fallback in-account hostname (see DNS record above).
+        hostname = "dump.${var.domain}"
+        service  = "http://localhost:30692"
       },
       {
         service = "http_status:404"
