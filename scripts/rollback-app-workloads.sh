@@ -76,9 +76,59 @@ fi
 workdir="$(mktemp -d)"
 trap 'rm -rf "$workdir"; docker rm -f rollback-app-probe-db >/dev/null 2>&1 || true' EXIT
 
+# Transport verification helpers (size/hash against the manifest record).
+# Resolved like the backup plane: beside the script, lib/ beside the
+# script, installed dir; absent = fail closed (restores must not run
+# unverified when the library is missing).
+_s3mp_lib=''
+_s3mp_dir="$(cd "$(dirname "$0")" && pwd)"
+for _s3mp_cand in "${_s3mp_dir}/s3-multipart.sh" "${_s3mp_dir}/lib/s3-multipart.sh" '/root/host-backup/lib/s3-multipart.sh' '/root/host-backup/s3-multipart.sh'; do
+  if [ -f "$_s3mp_cand" ]; then _s3mp_lib="$_s3mp_cand"; break; fi
+done
+if [ -z "$_s3mp_lib" ]; then
+  echo 's3-multipart.sh transport library not found (fail closed).' >&2
+  exit 2
+fi
+# shellcheck source=scripts/lib/s3-multipart.sh
+source "$_s3mp_lib"
 # s3 ls prints bare filenames; object keys carry the prefix — reattach it.
 s3ls() { aws --endpoint-url "$R2_ENDPOINT" s3 ls "s3://${R2_BUCKET}/$1" 2>/dev/null | awk -v p="$1" '{print p $4}'; }
 s3get() { aws --endpoint-url "$R2_ENDPOINT" s3api get-object --bucket "$R2_BUCKET" --key "$1" "$2" >/dev/null; }
+# verify_manifest_file SECTION KEY MANIFEST_JSON LOCALFILE — enforce the
+# manifest's bytes+sha256 record for a download. Legacy entries (no
+# transport records at all) prove restorability only and are logged as
+# LEGACY; a key absent from a complete manifest, or a bytes/hash
+# mismatch, fails closed. Returns 0 when the download is accepted.
+verify_manifest_file() {
+  local section="$1" key="$2" mjson="$3" localfile="$4" rec sha bytes
+  rec="$(python3 -c 'import json,sys; m=json.load(open(sys.argv[1])); e=next((x for x in m.get(sys.argv[2],[]) if x.get("key")==sys.argv[3]),None); print(((e or {}).get("sha256") or "")+"|"+str((e or {}).get("bytes") if (e or {}).get("bytes") is not None else ""))' "$mjson" "$section" "$key" 2>/dev/null || true)"
+  sha="${rec%%|*}"; bytes="${rec##*|}"
+  if [ -z "$bytes" ]; then
+    if [ "${MANIFEST_CLASS:-complete}" = 'legacy' ]; then
+      log "LEGACY entry (no transport record): ${key}; proving restorability only"
+      return 0
+    fi
+    echo "FAILED verify ${key}: key absent from manifest section ${section} (fail closed)." >&2
+    return 1
+  fi
+  if [ -z "$sha" ]; then
+    echo "FAILED verify ${key}: transport record incomplete (bytes without sha256; fail closed)." >&2
+    return 1
+  fi
+  s3_verify_downloaded "$localfile" "$sha" "$bytes"
+}
+# classify_manifest MANIFEST_JSON — sets MANIFEST_CLASS to
+# complete|legacy, failing closed on incomplete/mixed manifests.
+classify_manifest() {
+  local verdict
+  if verdict="$(manifest_classify "$1" 2>&1)"; then
+    MANIFEST_CLASS="$verdict"
+    log "manifest class: ${MANIFEST_CLASS} ($1)"
+    return 0
+  fi
+  echo "FAILED manifest: ${verdict} (fail closed; refusing to certify)." >&2
+  return 1
+}
 
 
 
@@ -272,7 +322,7 @@ PYEOF
 fi
 
 if [ -z "$stamp" ]; then
-  manifest="$(s3ls 'app-manifests/' | grep -E '[0-9]{8}T[0-9]{6}Z\.json$' | grep -v '/gaps-' | sort | tail -n1)"
+  manifest="$(s3ls 'app-manifests/' | grep -E '[0-9]{8}T[0-9]{6}Z\.json$' | grep -v '/gaps-' | grep -v '/failed-' | sort | tail -n1)"
   [ -n "$manifest" ] || { echo 'no app manifests in R2 (fail closed).' >&2; exit 2; }
   stamp="$(printf '%s' "$manifest" | grep -oE '[0-9]{8}T[0-9]{6}Z')"
   [ -n "$stamp" ] || { echo 'manifest name carries no stamp (fail closed).' >&2; exit 2; }
@@ -280,6 +330,15 @@ if [ -z "$stamp" ]; then
 fi
 
 FAILED=0
+# Probe and recreate planes both certify downloads against the stamp
+# manifest: download it once, classify it (complete|legacy; incomplete
+# refuses), then verify every payload against its record.
+MANIFEST_CLASS='complete'
+probe_manifest_json="${workdir}/probe-manifest.json"
+probe_manifest_key="$(s3ls 'app-manifests/' | grep -F "$stamp" | grep -E 'Z\.json$' | grep -v '/gaps-' | grep -v '/failed-' | head -n1 || true)"
+[ -n "$probe_manifest_key" ] || { echo "no manifest for stamp ${stamp} (incomplete backup; fail closed)." >&2; exit 2; }
+s3get "$probe_manifest_key" "$probe_manifest_json" || { echo 'manifest download failed.' >&2; exit 2; }
+classify_manifest "$probe_manifest_json" || exit 2
 recreated_count=0
 
 
@@ -291,10 +350,8 @@ recreated_count=0
 # anything that still exists (fail closed). Consumers re-point to the
 # recreated names (original names are reused when the originals are gone).
 if [ -n "$recreate" ]; then
-  manifest_json="${workdir}/manifest.json"
-  manifest_key="$(s3ls 'app-manifests/' | grep -F "$stamp" | head -n1 || true)"
-  [ -n "$manifest_key" ] || { echo "no manifest for stamp ${stamp} (fail closed)." >&2; exit 2; }
-  s3get "$manifest_key" "$manifest_json" || { echo 'manifest download failed.' >&2; exit 2; }
+  manifest_json="$probe_manifest_json"
+  classify_manifest "$manifest_json" || exit 2
   # Refuse to clobber live state.
   clashes="$(docker ps -a --format '{{.Names}}' 2>/dev/null | grep -E "^${recreate}(-|$)" || true)"
   [ -z "$clashes" ] || { echo "refusing: live containers match ${recreate}: ${clashes}." >&2; exit 2; }
@@ -314,6 +371,7 @@ if [ -n "$recreate" ]; then
     vfiles="$(python3 -c 'import json,sys; print(next(v.get("files",0) for v in json.load(open(sys.argv[1])).get("volumes",[]) if v["key"]==sys.argv[2]))' "$manifest_json" "$vkey")"
     docker volume create "$vname" >/dev/null || { echo "FAILED create volume ${vname}." >&2; FAILED=1; continue; }
     s3get "$vkey" "$workdir/v.tar.gz" || { echo "FAILED download ${vkey}." >&2; FAILED=1; continue; }
+    verify_manifest_file volumes "$vkey" "$manifest_json" "$workdir/v.tar.gz" || { FAILED=1; rm -f "$workdir/v.tar.gz"; continue; }
     if docker run --rm -v "${vname}:/data" -v "${workdir}:/backup" alpine:3 tar xzf /backup/v.tar.gz -C /data >/dev/null 2>&1; then
       got="$(docker run --rm -v "${vname}:/data:ro" alpine:3 sh -c 'find /data -type f | wc -l' 2>/dev/null || echo 0)"
       # Never-short invariant: a hot volume snapshot races running writers
@@ -363,6 +421,7 @@ if [ -n "$recreate" ]; then
       exp_tables="$(python3 -c 'import json,sys; print(next(d.get("tables",0) for d in json.load(open(sys.argv[1])).get("databases",[]) if d["key"]==sys.argv[2]))' "$manifest_json" "$dkey")"
       exp_rows="$(python3 -c 'import json,sys; print(next(d.get("rows",0) for d in json.load(open(sys.argv[1])).get("databases",[]) if d["key"]==sys.argv[2]))' "$manifest_json" "$dkey")"
       s3get "$dkey" "$workdir/r.dump.gz" || { echo "FAILED download ${dkey}." >&2; FAILED=1; continue; }
+      verify_manifest_file databases "$dkey" "$manifest_json" "$workdir/r.dump.gz" || { FAILED=1; rm -f "$workdir/r.dump.gz"; continue; }
       if docker exec -e "PGPASSWORD=${newpw}" "$cname" psql -U "$cuser" -d postgres -tAc "CREATE DATABASE \"${dbase}\";" >/dev/null 2>&1 \
         && docker cp "$workdir/r.dump.gz" "$cname:/tmp/r.dump.gz" >/dev/null 2>&1 \
         && docker exec "$cname" sh -c 'gzip -dc /tmp/r.dump.gz | pg_restore --no-owner --no-acl -U '"$cuser"' -d '"$dbase" >/dev/null 2>&1; then
@@ -434,6 +493,7 @@ if [ -n "$recreate" ]; then
     fi
     mkdir -p "$bpath" || { echo "FAILED mkdir ${bpath}." >&2; FAILED=1; continue; }
     s3get "$bkey" "$workdir/b.tar.gz" || { echo "FAILED download ${bkey}." >&2; FAILED=1; continue; }
+    verify_manifest_file binds "$bkey" "$manifest_json" "$workdir/b.tar.gz" || { FAILED=1; rm -f "$workdir/b.tar.gz"; continue; }
     # Strip the leading slash recorded at backup (tar -C / path-without-slash).
     if tar xzf "$workdir/b.tar.gz" -C / >/dev/null 2>&1; then
       got="$(find "$bpath" -type f 2>/dev/null | wc -l)"
@@ -488,6 +548,7 @@ if [ -n "$dbs" ]; then
     base="$(basename "$key" .dump.gz)"
     db="restored_$(printf '%s' "$base" | tr -c 'a-zA-Z0-9_' '_' | tail -c 50)"
     s3get "$key" "$workdir/r.dump.gz" || { echo "FAILED download ${key}." >&2; FAILED=1; continue; }
+    verify_manifest_file databases "$key" "$probe_manifest_json" "$workdir/r.dump.gz" || { FAILED=1; rm -f "$workdir/r.dump.gz"; continue; }
     # --no-owner/--no-acl: probes lack the original roles; ownership is
     # irrelevant to proving the data restores. A production restore targets
     # the real container (roles intact) without these flags.
@@ -515,6 +576,7 @@ for key in $vols; do
   [ -n "$key" ] || continue
   vdir="$workdir/vol"; rm -rf "$vdir"; mkdir -p "$vdir"
   s3get "$key" "$workdir/v.tar.gz" || { echo "FAILED download ${key}." >&2; FAILED=1; continue; }
+  verify_manifest_file volumes "$key" "$probe_manifest_json" "$workdir/v.tar.gz" || { FAILED=1; rm -f "$workdir/v.tar.gz"; continue; }
   if tar xzf "$workdir/v.tar.gz" -C "$vdir" 2>/dev/null; then
     files="$(find "$vdir" -type f | wc -l)"
     if [ "$files" -gt 0 ]; then
@@ -535,6 +597,7 @@ for key in $binds; do
   [ -n "$key" ] || continue
   bdir="$workdir/bind"; rm -rf "$bdir"; mkdir -p "$bdir"
   s3get "$key" "$workdir/b.tar.gz" || { echo "FAILED download ${key}." >&2; FAILED=1; continue; }
+  verify_manifest_file binds "$key" "$probe_manifest_json" "$workdir/b.tar.gz" || { FAILED=1; rm -f "$workdir/b.tar.gz"; continue; }
   if tar xzf "$workdir/b.tar.gz" -C "$bdir" 2>/dev/null; then
     files="$(find "$bdir" -type f | wc -l)"
     if [ "$files" -gt 0 ]; then
