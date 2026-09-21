@@ -35,6 +35,18 @@ done
 
 log() { printf '%s\n' "$*"; }
 
+# Size-safe upload lib (probe §5 repair: >4 GiB refuse-and-name gate,
+# multipart routing, giant excludes, snapshot-save backoff). Resolved at
+# call time like the escrow allowlist; absent everywhere = fail closed.
+_uplib_dir="$(cd "$(dirname "$0")" && pwd)"
+_uplib=''
+for _cand in "${_uplib_dir}/backup-upload.sh" "${_uplib_dir}/lib/backup-upload.sh" '/root/host-backup/backup-upload.sh'; do
+  if [ -f "$_cand" ]; then _uplib="$_cand"; break; fi
+done
+if [ -z "$_uplib" ]; then echo 'backup-upload.sh lib missing (fail closed).' >&2; exit 2; fi
+# shellcheck disable=SC1090
+. "$_uplib"
+
 # Topology extraction (heredoc-quoted python, zero shell interpolation) is
 # defined here so --self-test-topology can run it before any root or
 # credential checks, and the rehearsal can unit-test the exact live code.
@@ -119,7 +131,8 @@ if [ "$dry_run" -eq 1 ]; then
   log 'DRY-RUN: enforce workload coverage contract (fail closed on unbackupable mounts/DBs)'
   log 'DRY-RUN: discover postgres containers (pg_dump each non-template DB to R2 app-databases/, record tables+rows)'
   log 'DRY-RUN: snapshot each non-excluded Docker volume to R2 app-volumes/ (record files+bytes)'
-  log 'DRY-RUN: snapshot APP_BIND_PATHS + Nomad-discovered host dirs to R2 app-binds/'
+  log 'DRY-RUN: snapshot APP_BIND_PATHS + Nomad-discovered host dirs to R2 app-binds/ (giant excludes apply, >4 GiB refused-and-named)'
+  log 'DRY-RUN: upload every payload via multipart-routed aws s3 cp (never single-PUT) behind the size gate'
   log 'DRY-RUN: record full container topology (image, env sanitized, ports, networks, labels, mounts) into the manifest'
   log 'DRY-RUN: upload JSON manifest to R2 app-manifests/, prune all prefixes older than 14 days (fail closed)'
   exit 0
@@ -195,7 +208,7 @@ done
 if [ -n "$gaps" ]; then
   echo "WORKLOAD COVERAGE GAP (fail closed): ${gaps}" >&2
   printf '{"stamp":"%s","databases":[],"volumes":[],"binds":[],"containers":[],"gaps":%s}\n' "$(date -u +%Y%m%dT%H%M%SZ)" "$(printf '%s' "$gaps" | python3 -c 'import json,sys; print(json.dumps([g for g in sys.stdin.read().split(";") if g]))')" >"$workdir/gaps.json"
-  aws --endpoint-url "$R2_ENDPOINT" s3api put-object --bucket "$R2_BUCKET" --key "app-manifests/gaps-$(date -u +%Y%m%dT%H%M%SZ).json" --body "$workdir/gaps.json" || true
+  backup_upload "$workdir/gaps.json" "app-manifests/gaps-$(date -u +%Y%m%dT%H%M%SZ).json" || true
   exit 2
 fi
 log 'workload coverage ok: no unbackupable stateful mounts or databases detected.'
@@ -238,14 +251,17 @@ while IFS= read -r cname; do
       continue
     fi
     if "${db_exec[@]}" "$cname" pg_dump -Fc -U "$pguser" "$db" 2>/dev/null | gzip >"$workdir/db.dump.gz"; then
-      s3 put-object --bucket "$R2_BUCKET" --key "$key" --body "$workdir/db.dump.gz"
-      s3 head-object --bucket "$R2_BUCKET" --key "$key"
+      if backup_upload "$workdir/db.dump.gz" "$key"; then
       # Verifiable counts for restore: tables + total rows (in-service
       # restores must prove data parity, not just readability).
       counts="$("${db_exec[@]}" "$cname" psql -U "$pguser" -d "$db" -tAc "SELECT (SELECT count(*) FROM information_schema.tables WHERE table_schema='public'), coalesce((SELECT sum(n_live_tup)::int FROM pg_stat_user_tables),0);" 2>/dev/null || echo '0|0')"
       tables="${counts%%|*}"; rows="${counts##*|}"
       manifest_db="$(printf '%s' "$manifest_db" | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin) + [{"container": sys.argv[1], "image": sys.argv[6], "user": sys.argv[7], "database": sys.argv[2], "key": sys.argv[3], "tables": int(sys.argv[4]), "rows": int(sys.argv[5])}]))' "$cname" "$db" "$key" "${tables:-0}" "${rows:-0}" "$image" "${pguser}")"
       log "database backup ok: ${key} (tables=${tables:-0}, rows=${rows:-0})"
+      else
+        echo "FAILED to upload ${cname}/${db} key ${key} (fail closed)." >&2
+        FAILED=1
+      fi
     else
       echo "FAILED to dump ${cname}/${db} (fail closed)." >&2
       FAILED=1
@@ -263,13 +279,16 @@ while IFS= read -r vol; do
   if [ "$skip" -eq 1 ]; then log "volume skipped (infrastructure-owned): ${vol}"; continue; fi
   key="app-volumes/${vol}-${stamp}.tar.gz"
   if docker run --rm -v "${vol}:/data:ro" -v "${workdir}:/backup" alpine:3 tar czf "/backup/vol.tar.gz" -C /data . >/dev/null 2>&1; then
-    s3 put-object --bucket "$R2_BUCKET" --key "$key" --body "$workdir/vol.tar.gz"
-    s3 head-object --bucket "$R2_BUCKET" --key "$key"
+    if backup_upload "$workdir/vol.tar.gz" "$key"; then
     volstat="$(docker run --rm -v "${vol}:/data:ro" alpine:3 sh -c 'find /data -type f | wc -l; du -sb /data | cut -f1' 2>/dev/null | awk 'NR==1{f=$1} NR==2{b=$1} END{print f"|"b}' || echo '0|0')"
     vfiles="${volstat%%|*}"; vbytes="${volstat##*|}"
     manifest_vol="$(printf '%s' "$manifest_vol" | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin) + [{"volume": sys.argv[1], "key": sys.argv[2], "files": int(sys.argv[3]), "bytes": int(sys.argv[4])}]))' "$vol" "$key" "${vfiles:-0}" "${vbytes:-0}")"
     log "volume backup ok: ${key} (files=${vfiles:-0}, bytes=${vbytes:-0})"
     rm -f "$workdir/vol.tar.gz"
+    else
+      echo "FAILED to upload volume ${vol} key ${key} (fail closed)." >&2
+      FAILED=1
+    fi
   else
     echo "FAILED to snapshot volume ${vol} (fail closed)." >&2
     FAILED=1
@@ -281,15 +300,19 @@ done <<<"$(docker volume ls -q 2>/dev/null)"
 # nomad_binds (collected above) covers Nomad host-path state. One loop.
 for bpath in ${APP_BIND_PATHS:-}${nomad_binds:-}; do
   [ -d "$bpath" ] || { echo "FAILED: declared bind path missing: ${bpath}." >&2; FAILED=1; continue; }
+  if backup_bind_excluded "$bpath"; then log "bind skipped (explicit giant exclude, config-only): ${bpath}"; continue; fi
   bslug="$(printf '%s' "$bpath" | tr -c 'a-zA-Z0-9' '_' | sed 's/^_*//')"
   key="app-binds/${bslug}-${stamp}.tar.gz"
   if tar czf "$workdir/bind.tar.gz" -C / "${bpath#/}" >/dev/null 2>&1; then
-    s3 put-object --bucket "$R2_BUCKET" --key "$key" --body "$workdir/bind.tar.gz"
-    s3 head-object --bucket "$R2_BUCKET" --key "$key"
+    if backup_upload "$workdir/bind.tar.gz" "$key"; then
     bfiles="$(find "$bpath" -type f 2>/dev/null | wc -l)"
     manifest_binds="$(printf '%s' "$manifest_binds" | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin) + [{"path": sys.argv[1], "key": sys.argv[2], "files": int(sys.argv[3])}]))' "$bpath" "$key" "${bfiles:-0}")"
     log "bind backup ok: ${key} (files=${bfiles:-0})"
     rm -f "$workdir/bind.tar.gz"
+    else
+      echo "FAILED to upload bind path ${bpath} key ${key} (fail closed)." >&2
+      FAILED=1
+    fi
   else
     echo "FAILED to snapshot bind path ${bpath} (fail closed)." >&2
     FAILED=1
@@ -318,7 +341,7 @@ done
 # --- manifest + retention ---
 manifest_key="app-manifests/${stamp}.json"
 printf '{"stamp":"%s","databases":%s,"volumes":%s,"binds":%s,"containers":%s,"gaps":[]}\n' "$stamp" "$manifest_db" "$manifest_vol" "$manifest_binds" "$manifest_containers" >"$workdir/manifest.json"
-s3 put-object --bucket "$R2_BUCKET" --key "$manifest_key" --body "$workdir/manifest.json"
+if ! backup_upload "$workdir/manifest.json" "$manifest_key"; then echo "FAILED to upload manifest ${manifest_key} (fail closed)." >&2; FAILED=1; fi
 prune_prefix 'app-databases/' 14
 prune_prefix 'app-volumes/' 14
 prune_prefix 'app-binds/' 14

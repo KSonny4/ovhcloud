@@ -38,7 +38,12 @@ if [ -n "$host" ]; then
     "$repo_root/scripts/backup-app-workloads.sh" \
     "$repo_root/scripts/fetch-r2-env.sh" \
     "$repo_root/scripts/rollback-nomad-snapshot.sh" \
-    "$repo_root/scripts/rollback-app-workloads.sh" "$0" "$host:$remote_stage/"
+    "$repo_root/scripts/rollback-app-workloads.sh" \
+    "$repo_root/scripts/lib/backup-upload.sh" "$0" "$host:$remote_stage/"
+  # Mirror the repo layout (lib/ beside the staged scripts) so the
+  # installer resolves the upload lib exactly like the live layout.
+  # shellcheck disable=SC2029
+  ssh "${ssh_opts[@]}" "$host" "mkdir -p $remote_stage/lib && mv $remote_stage/backup-upload.sh $remote_stage/lib/backup-upload.sh"
   # shellcheck disable=SC2029
   ssh "${ssh_opts[@]}" "$host" "sudo bash $remote_stage/test-clean-target-install.sh --local-dir $remote_stage"
   rc=$?
@@ -67,6 +72,10 @@ bash "${stage_dir}/schedule-host-backup.sh" --install-only >/dev/null 2>&1
 check $? 'installer exits 0 non-dry-run into isolated prefix'
 [ -x "$BACKUP_DIR/backup-to-r2.sh" ]; check $? 'instance backup script installed executable'
 [ -x "$BACKUP_DIR/backup-app-workloads.sh" ]; check $? 'workload companion installed executable'
+[ -f "$BACKUP_DIR/backup-upload.sh" ]; check $? 'size-safe upload lib installed beside backup commands'
+grep -q 'backup-upload.sh' "$BACKUP_DIR/backup-to-r2.sh" 2>/dev/null; check $? 'generated snapshot script sources the upload lib'
+grep -q 'backup_snapshot_save' "$BACKUP_DIR/backup-to-r2.sh" 2>/dev/null; check $? 'generated snapshot script retries snapshot save'
+if grep -q 's3api put-object' "$BACKUP_DIR/backup-to-r2.sh" "$BACKUP_DIR/backup-app-workloads.sh" 2>/dev/null; then echo 'FAIL: single-PUT upload remains in installed payloads' >&2; fail=1; else echo 'ok: no single-PUT in installed payload paths'; fi
 [ -x "$BACKUP_DIR/fetch-r2-env.sh" ]; check $? 'fetch wrapper installed executable'
 [ -x "$BACKUP_DIR/rollback-nomad-snapshot.sh" ]; check $? 'snapshot rollback installed executable'
 [ -x "$BACKUP_DIR/rollback-app-workloads.sh" ]; check $? 'workload rollback installed executable'
