@@ -34,13 +34,13 @@ results='[]'
 record() { results="$(printf '%s' "$results" | python3 -c 'import json,sys; r=json.load(sys.stdin); r.append({"stage":sys.argv[1],"utc":sys.argv[2],"ok":sys.argv[3]=="1","detail":sys.argv[4]}); print(json.dumps(r))' "$1" "$2" "$3" "$4")"; }
 
 # Stage 1: preserved-VPS safety (local execution, no SSH): the guard must
-# refuse the service name and the preserved IPv4.
+# refuse the current origin's service name and IPv4.
 # shellcheck source=scripts/lib/preserved-guard.sh
 source "$repo_root/scripts/lib/preserved-guard.sh"
 t0="$(uts)"
 safe_ok=1; safe_detail=''
-if refuse_preserved_host 'vps-1525c977.vps.ovh.net' >/dev/null 2>&1; then safe_ok=0; safe_detail='service-name refusal MISSING'; else safe_detail='service-name refused'; fi
-if refuse_preserved_host '57.129.155.203' >/dev/null 2>&1; then safe_ok=0; safe_detail="${safe_detail}; ipv4 refusal MISSING"; else safe_detail="${safe_detail}; ipv4 refused"; fi
+if refuse_preserved_host 'vps-c85da816.vps.ovh.ca' >/dev/null 2>&1; then safe_ok=0; safe_detail='service-name refusal MISSING'; else safe_detail='service-name refused'; fi
+if refuse_preserved_host '148.113.245.89' >/dev/null 2>&1; then safe_ok=0; safe_detail="${safe_detail}; ipv4 refusal MISSING"; else safe_detail="${safe_detail}; ipv4 refused"; fi
 record preserved-safety "$t0" "$safe_ok" "$safe_detail"
 
 # Stage 2: bootstrap (Docker + firewall posture + hello-world execution).

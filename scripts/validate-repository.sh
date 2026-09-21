@@ -42,6 +42,7 @@ bash -n scripts/rollback-nomad-snapshot.sh
 bash -n scripts/rollback-app-workloads.sh
 bash -n scripts/backup-app-workloads.sh
 bash -n scripts/lib/backup-upload.sh
+bash -n scripts/lib/s3-multipart.sh
 bash -n scripts/test-backup-gates.sh
 bash -n scripts/ensure-tunnel.sh
 bash -n scripts/test-clean-target-install.sh
@@ -54,7 +55,7 @@ bash -n scripts/fetch-app-secrets.sh
 bash -n scripts/recreate-workload.sh
 bash -n scripts/collect-live-evidence.sh
 bash -n scripts/collect-stage-proofs.sh
-shellcheck scripts/bootstrap-vps.sh scripts/provision-nomad.sh scripts/verify-nomad-live.sh scripts/configure-tunnel-access.sh scripts/backup-r2-probe.sh scripts/rehearse-fresh-environment.sh scripts/healthcheck.sh scripts/validate-repository.sh scripts/run-remote-provision.sh scripts/schedule-host-backup.sh scripts/lib/preserved-guard.sh scripts/lib/backup-upload.sh scripts/ensure-service-token.sh scripts/tf-env-from-openbao.sh scripts/rollback-nomad-snapshot.sh scripts/rollback-app-workloads.sh scripts/backup-app-workloads.sh scripts/ensure-tunnel.sh scripts/test-clean-target-install.sh scripts/test-backup-gates.sh scripts/wire-fresh-edge.sh scripts/fetch-r2-env.sh scripts/emit-fresh-imports.sh scripts/adopt-fresh-edge.sh scripts/ensure-fresh-backend.sh scripts/fetch-app-secrets.sh scripts/recreate-workload.sh scripts/collect-live-evidence.sh scripts/collect-stage-proofs.sh
+shellcheck scripts/bootstrap-vps.sh scripts/provision-nomad.sh scripts/verify-nomad-live.sh scripts/configure-tunnel-access.sh scripts/backup-r2-probe.sh scripts/rehearse-fresh-environment.sh scripts/healthcheck.sh scripts/validate-repository.sh scripts/run-remote-provision.sh scripts/schedule-host-backup.sh scripts/lib/preserved-guard.sh scripts/lib/backup-upload.sh scripts/lib/s3-multipart.sh scripts/ensure-service-token.sh scripts/tf-env-from-openbao.sh scripts/rollback-nomad-snapshot.sh scripts/rollback-app-workloads.sh scripts/backup-app-workloads.sh scripts/ensure-tunnel.sh scripts/test-clean-target-install.sh scripts/test-backup-gates.sh scripts/wire-fresh-edge.sh scripts/fetch-r2-env.sh scripts/emit-fresh-imports.sh scripts/adopt-fresh-edge.sh scripts/ensure-fresh-backend.sh scripts/fetch-app-secrets.sh scripts/recreate-workload.sh scripts/collect-live-evidence.sh scripts/collect-stage-proofs.sh
 
 # Nomad-only gate: no tracked reference to the retired plane may remain in
 # the active tree (history lives in git log + evidence-archive/, which this

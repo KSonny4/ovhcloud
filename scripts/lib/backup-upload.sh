@@ -60,16 +60,26 @@ backup_file_bytes() {
   printf '%s' "$n"
 }
 
-# backup_upload LOCAL_FILE R2_KEY — gate, then multipart-routed upload
-# (aws s3 cp multilparts automatically; single-PUT is never used for
-# payloads), then head-object verify. Refusals name the offending key.
-backup_upload() {
+# backup_gate_check FILE R2_KEY — the refuse-and-name gate alone (no upload).
+# Returns 0 when the payload may be attempted, 1 with the offending key named.
+# Lets callers pair a different transport (e.g. lib/s3-multipart.sh progress
+# uploads) with the same fail-closed size contract.
+backup_gate_check() {
   local file="$1" key="$2" bytes
   bytes="$(backup_file_bytes "$file")" || { echo "REFUSED unreadable payload: key=${key} file=${file}." >&2; return 1; }
   if [ "$bytes" -gt "$BACKUP_SIZE_GATE_BYTES" ]; then
     echo "REFUSED oversized payload: key=${key} bytes=${bytes} exceeds gate=${BACKUP_SIZE_GATE_BYTES} file=${file}." >&2
     return 1
   fi
+  return 0
+}
+
+# backup_upload LOCAL_FILE R2_KEY — gate, then multipart-routed upload
+# (aws s3 cp multilparts automatically; single-PUT is never used for
+# payloads), then head-object verify. Refusals name the offending key.
+backup_upload() {
+  local file="$1" key="$2"
+  backup_gate_check "$file" "$key" || return 1
   aws --endpoint-url "$R2_ENDPOINT" s3 cp "$file" "s3://${R2_BUCKET}/${key}" >/dev/null || return 1
   aws --endpoint-url "$R2_ENDPOINT" s3api head-object --bucket "$R2_BUCKET" --key "$key" >/dev/null || return 1
   return 0

@@ -77,6 +77,33 @@ dump in `app-manifests/<stamp>.json`, retains 14 days. Non-Postgres images
 fail the run with an explicit coverage gap (only Postgres has a native
 dumper here).
 
+Payload transport is size-safe (`scripts/lib/s3-multipart.sh`, installed
+beside the companion by `schedule-host-backup.sh`; the backup refuses to
+run large payloads without it). Payloads under 100 MiB (`S3_MULTIPART_THRESHOLD_BYTES`)
+keep the single-PUT path; payloads at or above it stream through a bounded
+multipart upload: one 32 MiB part staged at a time under the run workdir
+(never ambient `/tmp` sprawl), 5 attempts per part with linear backoff,
+abort + explicit aborted/incomplete outcome on exhaustion, durable per-stage
+byte progress (JSONL, heartbeat every 15 s, always <= 30 s) preserved to R2
+as `failed-<stamp>.progress.jsonl` when the run cannot go green, and
+head-object size verification before any manifest entry is recorded. Every
+payload entry records `bytes` + `sha256`; the manifest is published ONLY
+when every payload verified AND the completeness gate passes — any failure
+writes failure evidence, never a green-looking manifest. Rollback downloads
+verify bytes + sha256 against the manifest record and refuse keys absent
+from a complete manifest; pre-multipart manifests classify as `legacy`
+(restorability proof only, logged per entry); mixed-generation manifests
+refuse. Fixtures: `backup-app-workloads.sh --self-test-multipart` (stubbed
+`aws`, no network/credentials/giant fixtures) covers threshold selection,
+retried parts, interrupted-run abort, size/hash verification, and
+complete/incomplete manifests.
+
+Explicit non-claim: this transport proves staged bytes moved, NOT that a
+live SQLite/WAL tar is coherent. A hot SQLite directory copied by tar may
+restore torn; database coherence needs its own snapshot contract (e.g.
+`sqlite3 .backup` / `VACUUM INTO` before staging) before any Polymarket
+state is admitted — audited separately, never implied by this script.
+
 Restore: `scripts/rollback-app-workloads.sh` (probe mode restores each dump
 into a disposable container with createdb-first `pg_restore`, verifies
 tables-exact + rows->=, reports `RESTORE_OK`); `--recreate NAME --db-password`

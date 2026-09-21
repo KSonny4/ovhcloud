@@ -96,6 +96,19 @@ if [ -f "$app_src" ]; then
   run cp "$app_src" "${backup_dir}/backup-app-workloads.sh"
   run chmod 700 "${backup_dir}/backup-app-workloads.sh"
   log 'installed application-workload companion script.'
+  # Size-safe transport library the companion sources at runtime (same
+  # fail-closed companion pattern: the installed backup refuses to run
+  # large payloads without it rather than falling back to single-PUT).
+  mp_src="$(cd "$(dirname "$0")" && pwd)/lib/s3-multipart.sh"
+  if [ -f "$mp_src" ]; then
+    run mkdir -p "${backup_dir}/lib"
+    run cp "$mp_src" "${backup_dir}/lib/s3-multipart.sh"
+    run chmod 600 "${backup_dir}/lib/s3-multipart.sh"
+    log 'installed multipart transport library.'
+  elif [ ! -f "${backup_dir}/lib/s3-multipart.sh" ] && [ "$dry_run" -eq 0 ]; then
+    echo 'lib/s3-multipart.sh found neither beside this script nor installed; refusing a single-PUT-only schedule.' >&2
+    exit 2
+  fi
   # Escrow allowlist (names only, non-secret) travels with the backup
   # companion so manifests mark escrow-recoverable env for relay-free
   # restore; absent file = all redactions operator-relayed (safe default).

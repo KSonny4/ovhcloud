@@ -311,8 +311,18 @@ job "cognee" {
 	# (::1-first) while direct checks use 127.0.0.1. Exact lo binds only.
 	bind 127.0.0.1 ::1
 	# Access log to stdout (alloc logs): origin-side proof of arrivals.
-	# Default format, no secrets (paths+statuses).
-	log
+	# Caddy's default redaction does NOT cover X-Api-Key (only
+	# Authorization-class headers), and keyed REST clients send it on every
+	# call — so the header field is deleted from the log explicitly. wrap
+	# json preserves the previous default output shape.
+	log {
+		format filter {
+			wrap json
+			fields {
+				request>headers>X-Api-Key delete
+			}
+		}
+	}
 	# One-way bcrypt hash via -var (never git): even the job store can't
 	# yield the password. Empty hash => Caddy refuses to boot (fail-closed).
 	basic_auth {
