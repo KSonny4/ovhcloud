@@ -91,7 +91,7 @@ variable "provision_ovh_vps" {
 }
 
 variable "manage_existing_vps" {
-  description = "Record the preserved production VPS as an import-only protected state entry (ovh_vps.preserved). Never true together with provision_ovh_vps."
+  description = "Adopt the existing production VPS as a read-only import (data.ovh_vps.existing). The retired import-only resource ovh_vps.preserved was deleted with the old host on 2026-09-19; this flag no longer creates it. Never true together with provision_ovh_vps."
   type        = bool
   default     = false
 }

@@ -70,10 +70,18 @@ try:
 except OSError:
     pass
 env, redacted, env_escrowed = {}, [], {}
+# Exact names whose VALUES are credential-bearing URIs even though the
+# name itself carries no PASS/SECRET/TOKEN/KEY/CREDENTIAL marker
+# (field hit: DATABASE_URL + DB postgres URIs exported verbatim into the
+# R2 manifest). Any other value shaped as a URI with userinfo
+# (scheme://user:pass@host/...) is redacted on shape, not name.
+uri_names = {"DATABASE_URL", "DB"}
+import re as _re
+uri_creds = _re.compile(r"://[^/\s]*:[^/\s]*@")
 for e in cfg.get("Env", []) or []:
     k, _, v = e.partition("=")
     ku = k.upper()
-    if any(s in ku for s in ("PASS", "SECRET", "TOKEN", "KEY", "CREDENTIAL")):
+    if any(s in ku for s in ("PASS", "SECRET", "TOKEN", "KEY", "CREDENTIAL")) or k in uri_names or uri_creds.search(v or ""):
         env[k] = "REDACTED"; redacted.append(k)
         if k in escrow:
             env_escrowed[k] = escrow[k]
@@ -299,7 +307,9 @@ done
 # --- container topology (for faithful service recreation) ---
 # Records every workload container's full topology. Env VALUES are
 # recorded except sensitive-looking keys (*PASS*, *SECRET*, *TOKEN*, *KEY*,
-# *CREDENTIAL*), which are stored as REDACTED with names listed: recreation
+# *CREDENTIAL*), the credential-URI names (DATABASE_URL, DB), and any value
+# shaped as a URI with userinfo (scheme://user:pass@host/...), which are
+# stored as REDACTED with names listed: recreation
 # restores topology + data, and reports exactly which secrets to re-inject.
 # Topology entries are produced by topology_entry() (defined near the top).
 for cname in $(docker ps --format '{{.Names}}' 2>/dev/null || true); do

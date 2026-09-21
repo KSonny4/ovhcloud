@@ -3,8 +3,9 @@
 #
 # Proves, against the REAL encrypted backend, without touching the live
 # working dir (disposable copy): which resources live in state (imported
-# addresses), that the preserved VPS is managed + destroy-protected, and
-# that the plan is empty. Writes redacted machine-readable evidence to
+# addresses), that the VPS record is present + destroy-protected
+# (ovh_vps.platform in provision mode, data.ovh_vps.existing in import mode),
+# and that the plan is empty. Writes redacted machine-readable evidence to
 # docs/live-reconciliation.json (addresses and counts only — never values).
 #
 # Usage:
@@ -33,10 +34,22 @@ terraform init -backend-config=backend.hcl -input=false >/dev/null || { echo 'ba
 state_list="$(terraform state list 2>/dev/null || true)"
 [ -n "$state_list" ] || { echo 'empty state (fail closed).' >&2; exit 2; }
 
-# Preserved-VPS protection: managed resource + prevent_destroy in config.
-grep -q 'resource "ovh_vps" "preserved"' "$repo_root/infra/terraform/main.tf" || { echo 'preserved VPS resource missing from config.' >&2; exit 2; }
+# VPS protection: the managed record is ovh_vps.platform (provision mode,
+# prevent_destroy) or the read-only import data.ovh_vps.existing (current
+# live mode: existing host adopted via var.ovh_service_name). The retired
+# ovh_vps.preserved import-only record was deleted with the old host on
+# 2026-09-19 (block + state entry removed) and must NOT be required — and
+# its reappearance in state fails closed as a resurrected reference.
+grep -q 'resource "ovh_vps" "platform"' "$repo_root/infra/terraform/main.tf" || { echo 'platform VPS resource missing from config.' >&2; exit 2; }
 grep -q 'prevent_destroy = true' "$repo_root/infra/terraform/main.tf" || { echo 'prevent_destroy missing from config.' >&2; exit 2; }
-printf '%s' "$state_list" | grep -q '^ovh_vps\.preserved' || { echo 'preserved VPS not in live state.' >&2; exit 2; }
+if printf '%s' "$state_list" | grep -q '^ovh_vps\.preserved'; then
+  echo 'retired ovh_vps.preserved record resurrected in live state (fail closed).' >&2
+  exit 2
+fi
+vps_mode=''
+if printf '%s' "$state_list" | grep -q '^ovh_vps\.platform'; then vps_mode='managed-provisioned'
+elif printf '%s' "$state_list" | grep -q '^data\.ovh_vps\.existing'; then vps_mode='imported-existing'
+else echo 'no VPS record in live state (ovh_vps.platform or data.ovh_vps.existing).' >&2; exit 2; fi
 
 # Expected imported families (addresses only, IDs never printed). NOTE: the
 # service-token OBJECT is API/OpenBao-managed by design (provider version
@@ -47,7 +60,9 @@ cloudflare_dns_record
 cloudflare_zero_trust_access_application
 cloudflare_zero_trust_access_identity_provider
 cloudflare_r2_bucket
-ovh_vps.preserved'
+'
+# The VPS family is mode-dependent (ovh_vps.platform vs
+# data.ovh_vps.existing) and already proven above; it is not in this list.
 missing=''
 while IFS= read -r fam; do
   [ -n "$fam" ] || continue
@@ -78,6 +93,7 @@ print(json.dumps({
   "generated_utc": "$stamp",
   "backend": "s3 (R2, encrypted at rest, locked)",
   "plan": "empty (detailed-exitcode 0, default refresh)",
+  "vps_mode": "$vps_mode",
   "preserved_vps_managed": True,
   "prevent_destroy": True,
   "resource_count": len(addrs),

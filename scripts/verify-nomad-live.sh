@@ -78,10 +78,25 @@ bad_containers="$(ssh_run "docker ps --format '{{.Names}} {{.Status}}' 2>/dev/nu
 # loopback port — it reports unhealthy from boot while serving fine (Nomad
 # TCP checks + MCP/REST smokes are the real proof). Exclude exactly that
 # task container, and only while the cognee job itself is running.
+# Narrow by construction: three jobs share the task name "server" (cognee,
+# control-panel, unleash), so a name-only pattern would also silence an
+# unhealthy control-panel/unleash server. The Docker labels prove job+task
+# identity instead; any other server-* unhealthy still fails.
 # shellcheck disable=SC2016 # single-quoted remote like acl_ssh above: \$3 expands remotely in awk, never locally.
 cognee_state="$(acl_ssh 'export NOMAD_ADDR=http://127.0.0.1:4646; nomad job status cognee 2>/dev/null | grep -m1 "^Status" | awk "{print \$3}" || echo none')"
 if [ "$cognee_state" = "running" ]; then
-  bad_containers="$(printf '%s' "$bad_containers" | grep -avE '^server-[0-9a-f-]+ .*unhealthy' || true)"
+  kept_containers=''
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    cname="${line%% *}"
+    if printf '%s' "$cname" | grep -qE '^server-[0-9a-f-]{8,}$' && printf '%s' "$line" | grep -qi 'unhealthy'; then
+      lbl="$(ssh_run "docker inspect ${cname} --format '{{index .Config.Labels \"com.hashicorp.nomad.job_name\"}}/{{index .Config.Labels \"com.hashicorp.nomad.task_name\"}}' 2>/dev/null" || true)"
+      if [ "$lbl" = 'cognee/server' ]; then continue; fi
+    fi
+    kept_containers="${kept_containers}${line}
+"
+  done <<<"$bad_containers"
+  bad_containers="$kept_containers"
 fi
 nomad_aclt=''
 if [ -z "$bad_containers" ]; then echo 'PASS containers healthy'; else echo "FAIL unhealthy containers: $bad_containers"; fail=1; fi

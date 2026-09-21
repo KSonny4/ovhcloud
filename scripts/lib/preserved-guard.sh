@@ -18,11 +18,14 @@
 #
 # The guard never prints secrets; it prints only the matched identity class.
 
-# Immutable OVH service identity of the preserved production VPS. The service
-# name is assigned by OVH and cannot be repointed at another machine; the
-# fallback IPs are a safety net used only when the OVH API is unreachable.
-PRESERVED_SERVICE_NAME='vps-1525c977.vps.ovh.net'
-PRESERVED_FALLBACK_IPS='57.129.155.203 2001:41d0:801:2000::3663'
+# Immutable OVH service identity of the preserved production VPS (current
+# origin since the 2026-09-19 cutover; the decommissioned vps-1525c977 entry
+# was removed here so a canceled host can never shadow the live one). The
+# service name is assigned by OVH and cannot be repointed at another
+# machine; the fallback IP is a safety net used only when the OVH API is
+# unreachable (no IPv6 is committed: v6 membership is API-derived).
+PRESERVED_SERVICE_NAME='vps-c85da816.vps.ovh.ca'
+PRESERVED_FALLBACK_IPS='148.113.245.89'
 
 # Explicit OVH CLI channel: every ovhcloud invocation in this repo goes
 # through ovh_cli, which builds a throwaway HOME containing a config written
