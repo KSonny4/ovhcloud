@@ -75,7 +75,8 @@ app_installed="${backup_dir}/backup-app-workloads.sh"
 log "backup dir: ${backup_dir}"
 
 if [ "$dry_run" -eq 1 ]; then
-  log "DRY-RUN: write ${backup_script} (nomad snapshot save -> R2 dated key, prune keys older than 14 days)"
+  log "DRY-RUN: write ${backup_script} (snapshot save with retry-backoff -> multipart-routed upload behind the 4 GiB gate, prune keys older than 14 days)"
+  log 'DRY-RUN: ship backup-upload.sh lib beside both backup commands'
   log 'DRY-RUN: install host-backup.service + host-backup.timer (daily 02:00 UTC, Persistent=true)'
   log 'DRY-RUN: systemctl daemon-reload, enable --now host-backup.timer'
   log 'DRY-RUN: run first backup now and verify with s3api head-object'
@@ -137,6 +138,20 @@ for rollback_src in rollback-nomad-snapshot.sh rollback-app-workloads.sh; do
   fi
 done
 
+# The size-safe upload lib ships with the schedule (generated snapshot
+# script + workload companion both source it): same install-or-fail-closed
+# companion pattern.
+upload_src="$(cd "$(dirname "$0")" && pwd)/lib/backup-upload.sh"
+[ -f "$upload_src" ] || upload_src="$(cd "$(dirname "$0")" && pwd)/backup-upload.sh"
+if [ -f "$upload_src" ]; then
+  run cp "$upload_src" "${backup_dir}/backup-upload.sh"
+  run chmod 700 "${backup_dir}/backup-upload.sh"
+  log 'installed size-safe upload lib.'
+elif [ ! -f "${backup_dir}/backup-upload.sh" ] && [ "$dry_run" -eq 0 ]; then
+  echo 'backup-upload.sh found neither beside this script nor installed; refusing a gate-less schedule.' >&2
+  exit 2
+fi
+
 cat >"$backup_script" <<'BACKUP_EOF'
 #!/usr/bin/env bash
 # Nightly Nomad snapshot backup. Credentials arrive ONLY via environment
@@ -144,6 +159,10 @@ cat >"$backup_script" <<'BACKUP_EOF'
 set -euo pipefail
 : "${R2_ENDPOINT:?R2 credentials required via environment (fetch-r2-env.sh)}"; : "${R2_BUCKET:?}"
 : "${NOMAD_TOKEN:?Nomad ACL token required via environment (fetch-r2-env.sh)}"
+_u_main="$(cd "$(dirname "$0")" && pwd)/backup-upload.sh"
+[ -f "$_u_main" ] || { echo 'backup-upload.sh lib missing (fail closed).' >&2; exit 2; }
+# shellcheck disable=SC1090
+. "$_u_main"
 export AWS_ACCESS_KEY_ID="${R2_ACCESS_KEY_ID:?}" AWS_SECRET_ACCESS_KEY="${R2_SECRET_ACCESS_KEY:?}"
 export AWS_DEFAULT_REGION="${AWS_DEFAULT_REGION:-auto}"
 export NOMAD_ADDR="${NOMAD_ADDR:-http://127.0.0.1:4646}"
@@ -151,9 +170,8 @@ stamp="$(date -u +%Y%m%dT%H%M%SZ)"
 key="nomad-snapshot-${stamp}.snap"
 tmp="$(mktemp -u)"
 trap 'rm -f "$tmp"' EXIT
-nomad operator snapshot save "$tmp"
-aws --endpoint-url "$R2_ENDPOINT" s3api put-object --bucket "$R2_BUCKET" --key "$key" --body "$tmp" >/dev/null
-aws --endpoint-url "$R2_ENDPOINT" s3api head-object --bucket "$R2_BUCKET" --key "$key" >/dev/null
+backup_snapshot_save "$tmp" || { echo 'snapshot save failed (fail closed).' >&2; exit 2; }
+backup_upload "$tmp" "$key"
 cutoff="$(date -u -d '14 days ago' +%Y%m%d)"
 old="$(aws --endpoint-url "$R2_ENDPOINT" s3 ls "s3://${R2_BUCKET}/nomad-snapshot-" 2>/dev/null | awk '{print $4}')"
 for k in $old; do

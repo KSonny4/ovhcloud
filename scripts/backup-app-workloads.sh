@@ -37,6 +37,18 @@ done
 
 log() { printf '%s\n' "$*"; }
 
+# Size-safe upload lib (probe §5 repair: >4 GiB refuse-and-name gate,
+# multipart routing, giant excludes, snapshot-save backoff). Resolved at
+# call time like the escrow allowlist; absent everywhere = fail closed.
+_uplib_dir="$(cd "$(dirname "$0")" && pwd)"
+_uplib=''
+for _cand in "${_uplib_dir}/backup-upload.sh" "${_uplib_dir}/lib/backup-upload.sh" '/root/host-backup/backup-upload.sh'; do
+  if [ -f "$_cand" ]; then _uplib="$_cand"; break; fi
+done
+if [ -z "$_uplib" ]; then echo 'backup-upload.sh lib missing (fail closed).' >&2; exit 2; fi
+# shellcheck disable=SC1090
+. "$_uplib"
+
 # Topology extraction (heredoc-quoted python, zero shell interpolation) is
 # defined here so --self-test-topology can run it before any root or
 # credential checks, and the rehearsal can unit-test the exact live code.
@@ -327,9 +339,9 @@ stamp="$(date -u +%Y%m%dT%H%M%SZ)"
 if [ "$dry_run" -eq 1 ]; then
   log 'DRY-RUN: enforce workload coverage contract (fail closed on unbackupable mounts/DBs)'
   log 'DRY-RUN: discover postgres containers (pg_dump each non-template DB to R2 app-databases/, record tables+rows+bytes+sha256)'
-  log 'DRY-RUN: upload payloads via size-safe transport (single-PUT under threshold, bounded multipart above; per-stage byte progress; remote-size verified)'
   log 'DRY-RUN: snapshot each non-excluded Docker volume to R2 app-volumes/ (record files+bytes+sha256)'
-  log 'DRY-RUN: snapshot APP_BIND_PATHS + Nomad-discovered host dirs to R2 app-binds/'
+  log 'DRY-RUN: snapshot APP_BIND_PATHS + Nomad-discovered host dirs to R2 app-binds/ (giant excludes apply, >4 GiB refused-and-named)'
+  log 'DRY-RUN: upload every payload via size-safe transport (single-PUT under threshold, bounded multipart above; per-stage byte progress; remote-size verified) behind the 4 GiB refuse-and-name gate'
   log 'DRY-RUN: record full container topology (image, env sanitized, ports, networks, labels, mounts) into the manifest'
   log 'DRY-RUN: upload JSON manifest to R2 app-manifests/ ONLY when every payload verified (else failed-progress evidence, no green manifest); prune all prefixes older than 14 days (fail closed)'
   exit 0
@@ -376,7 +388,7 @@ FAILED=0
 # (*-auth*, htpasswd) which is OpenBao-canonical and must never be R2-copied.
 # Anything stateful that this script cannot back up fails the
 # run with an explicit gap list.
-system_binds='/etc/hostname /etc/hosts /etc/resolv.conf /etc/resolve.conf /run/docker.sock'
+system_binds='/etc/hostname /etc/hosts /etc/resolv.conf /etc/resolve.conf /run/docker.sock /var/run/docker.sock'
 nomad_binds=''
 gaps=''
 for cname in $(docker ps --format '{{.Names}}' 2>/dev/null || true); do
@@ -413,7 +425,7 @@ done
 if [ -n "$gaps" ]; then
   echo "WORKLOAD COVERAGE GAP (fail closed): ${gaps}" >&2
   printf '{"stamp":"%s","databases":[],"volumes":[],"binds":[],"containers":[],"gaps":%s}\n' "$(date -u +%Y%m%dT%H%M%SZ)" "$(printf '%s' "$gaps" | python3 -c 'import json,sys; print(json.dumps([g for g in sys.stdin.read().split(";") if g]))')" >"$workdir/gaps.json"
-  aws --endpoint-url "$R2_ENDPOINT" s3api put-object --bucket "$R2_BUCKET" --key "app-manifests/gaps-$(date -u +%Y%m%dT%H%M%SZ).json" --body "$workdir/gaps.json" || true
+  backup_upload "$workdir/gaps.json" "app-manifests/gaps-$(date -u +%Y%m%dT%H%M%SZ).json" || true
   exit 2
 fi
 log 'workload coverage ok: no unbackupable stateful mounts or databases detected.'
@@ -456,6 +468,12 @@ while IFS= read -r cname; do
       continue
     fi
     if "${db_exec[@]}" "$cname" pg_dump -Fc -U "$pguser" "$db" 2>/dev/null | gzip >"$workdir/db.dump.gz"; then
+      # 4 GiB refuse-and-name gate first (probe §5): giants never reach the
+      # transport no matter how safe its multipart is.
+      if ! backup_gate_check "$workdir/db.dump.gz" "$key"; then
+        echo "FAILED to upload ${cname}/${db} (fail closed; entry not recorded)." >&2
+        FAILED=1
+      else
       # Size-safe transport: single-PUT under threshold, bounded multipart
       # above (the old bare put-object failed EntityTooLarge on large
       # payloads). Verified remote bytes or the entry is not recorded.
@@ -475,6 +493,7 @@ while IFS= read -r cname; do
         FAILED=1
       fi
       rm -f "$workdir/db.dump.gz"
+      fi
     else
       echo "FAILED to dump ${cname}/${db} (fail closed)." >&2
       FAILED=1
@@ -492,6 +511,12 @@ while IFS= read -r vol; do
   if [ "$skip" -eq 1 ]; then log "volume skipped (infrastructure-owned): ${vol}"; continue; fi
   key="app-volumes/${vol}-${stamp}.tar.gz"
   if docker run --rm -v "${vol}:/data:ro" -v "${workdir}:/backup" alpine:3 tar czf "/backup/vol.tar.gz" -C /data . >/dev/null 2>&1; then
+      # 4 GiB refuse-and-name gate first (probe §5): giants never reach the
+      # transport no matter how safe its multipart is.
+      if ! backup_gate_check "$workdir/vol.tar.gz" "$key"; then
+        echo "FAILED to upload volume ${vol} (fail closed; entry not recorded)." >&2
+        FAILED=1
+      else
     # NOTE: a tar of live state (notably SQLite/WAL directories) is a
     # byte copy, not a coherence proof — see the transport header.
     vsha="$(sha256sum "$workdir/vol.tar.gz" | awk '{print $1}')"
@@ -504,6 +529,7 @@ while IFS= read -r vol; do
       echo "FAILED to upload volume ${vol} (fail closed; entry not recorded)." >&2
       FAILED=1
     fi
+      fi
     rm -f "$workdir/vol.tar.gz"
   else
     echo "FAILED to snapshot volume ${vol} (fail closed)." >&2
@@ -516,9 +542,16 @@ done <<<"$(docker volume ls -q 2>/dev/null)"
 # nomad_binds (collected above) covers Nomad host-path state. One loop.
 for bpath in ${APP_BIND_PATHS:-}${nomad_binds:-}; do
   [ -d "$bpath" ] || { echo "FAILED: declared bind path missing: ${bpath}." >&2; FAILED=1; continue; }
+  if backup_bind_excluded "$bpath"; then log "bind skipped (explicit giant exclude, config-only): ${bpath}"; continue; fi
   bslug="$(printf '%s' "$bpath" | tr -c 'a-zA-Z0-9' '_' | sed 's/^_*//')"
   key="app-binds/${bslug}-${stamp}.tar.gz"
   if tar czf "$workdir/bind.tar.gz" -C / "${bpath#/}" >/dev/null 2>&1; then
+      # 4 GiB refuse-and-name gate first (probe §5): giants never reach the
+      # transport no matter how safe its multipart is.
+      if ! backup_gate_check "$workdir/bind.tar.gz" "$key"; then
+        echo "FAILED to upload bind path ${bpath} (fail closed; entry not recorded)." >&2
+        FAILED=1
+      else
     bsha="$(sha256sum "$workdir/bind.tar.gz" | awk '{print $1}')"
     bbytes="$(stat -c%s "$workdir/bind.tar.gz" 2>/dev/null || stat -f%z "$workdir/bind.tar.gz" 2>/dev/null || wc -c <"$workdir/bind.tar.gz")"
     if s3_upload_file "$R2_BUCKET" "$key" "$workdir/bind.tar.gz" "$R2_ENDPOINT" "$progress_file" >/dev/null; then
@@ -529,6 +562,7 @@ for bpath in ${APP_BIND_PATHS:-}${nomad_binds:-}; do
       echo "FAILED to upload bind path ${bpath} (fail closed; entry not recorded)." >&2
       FAILED=1
     fi
+      fi
     rm -f "$workdir/bind.tar.gz"
   else
     echo "FAILED to snapshot bind path ${bpath} (fail closed)." >&2
