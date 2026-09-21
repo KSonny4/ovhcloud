@@ -171,7 +171,7 @@ FAILED=0
 # (*-auth*, htpasswd) which is OpenBao-canonical and must never be R2-copied.
 # Anything stateful that this script cannot back up fails the
 # run with an explicit gap list.
-system_binds='/etc/hostname /etc/hosts /etc/resolv.conf /etc/resolve.conf /run/docker.sock'
+system_binds='/etc/hostname /etc/hosts /etc/resolv.conf /etc/resolve.conf /run/docker.sock /var/run/docker.sock'
 nomad_binds=''
 gaps=''
 for cname in $(docker ps --format '{{.Names}}' 2>/dev/null || true); do
