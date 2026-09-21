@@ -20,8 +20,9 @@ verifies each row live).
 
 | Field | Observed value | Reconciliation rule |
 | --- | --- | --- |
-| Service | `vps-1525c977.vps.ovh.net` | Preserve and import/read; never replace implicitly |
-| State | `running` | Must remain running throughout reconciliation |
+| Service (new origin) | `vps-c85da816.vps.ovh.ca` | Serves nomad/ssh/registry/cognee; provisioned + verified 2026-09-19 |
+| Service (decommissioned 2026-09-19) | `vps-1525c977.vps.ovh.net` | All Nomad jobs stopped+purged; data migrated to new host; service canceled (deleteAtExpiration 2027-09-13), VM powered off; TF import record removed |
+| State | `off` (powered off; deleteAtExpiration 2027-09-13) | Old plane dead; new host is the sole live origin |
 | Zone | `Region OpenStack: os-uk2` (`UK`, London UK2, region) | Use as the existing-origin placement |
 | Model | `VPS-2 2027` / `vps-2027-model2` / `2027v1` | Record; do not order a replacement |
 | Capacity | 4 vCores, 8192 MiB RAM, 75 GB SSD | Record as baseline |
@@ -35,20 +36,25 @@ verifies each row live).
 
 ## Cloudflare edge and administration (target; M5 verifies live)
 
-Tunnel `nomad-admin` (same tunnel object, renamed at apply; `b145382e-d1cc-4e60-b910-3de56fa9ce2c`, healthy)
-carries this ingress (catch-all `http_status:404` last):
+Tunnel `nomad-148-113-245-89` (new origin, `f0c0c4f8-0e3c-4837-80b7-1a67377e1bbe`, healthy;
+API-created, Terraform owns config + DNS only) carries the migrated ingress
+(catch-all `http_status:404` last):
 
 | Hostname | Origin service | Notes |
 | --- | --- | --- |
-| `nomad.pkubelka.cz` | `http://localhost:4646` | UI + API; Access human OTP + machine service token |
+| `nomad.pkubelka.cz` | `http://localhost:4646` | UI + API; Access human OTP (login verified 2026-09-19) + machine service token |
 | `ssh.pkubelka.cz` | `ssh://localhost:22` | Access human OTP + machine service token |
-| `fabric.pkubelka.cz` | `https://localhost:443` | No Access app |
-| `graph-dispatcher.pkubelka.cz` | `https://localhost:443` | No Access app |
-| `omniroute.pkubelka.cz` | `http://localhost:80` | Staging API, no Access app |
-| `omni.pkubelka.cz` | `http://localhost:80` | Production API (cut over 2026-09-14), no Access app |
-| `registry.pkubelka.cz` | `http://localhost:80` | Private registry (live 2026-09-17), no Access app |
+| `registry.pkubelka.cz` | `http://localhost:5000` | Private registry, no Access app |
+| `cognee.pkubelka.cz` | `http://localhost:31297` | DYNAMIC edge port — re-point on every redeploy, no Access app |
 
-Proxied DNS (zone `pkubelka.cz`; all CNAMEs below point at `nomad-admin`'s `<tunnel-id>.cfargotunnel.com` unless noted): `nomad`, `ssh`, `fabric`, `graph-dispatcher` (+`www`), `keeper`, `omniroute`, `omni`, `registry`; other tunnels serve `recorder`/`trading` (`af70d44…`), `dark`/`dark-dev`/`stremio` (`ef0c9d3…`), `secrets` (`612f43c…`); `forms` → Pages, apex/`pkubelka.cz` → Pages; `llm-quota`/`radar` are `AAAA 100::` placeholders. The account contains unrelated existing tunnels, DNS records, and Access apps — do not claim or destroy them; scope Terraform by explicit names/IDs.
+Tunnel `nomad-admin` (`b145382e-d1cc-4e60-b910-3de56fa9ce2c`, preserved) keeps
+the un-migrated ingress: `graph-dispatcher` → `https://localhost:443`,
+`keeper` → `http://localhost:8102`, `dump.petrzdena.cz` → `:8101`,
+`dump-dev.petrzdena.cz` → `:8100` (plus stale dead rules for the moved names,
+unmanaged leftovers).
+
+Proxied DNS (zone `pkubelka.cz`): `nomad`, `ssh`, `registry`, `cognee` point at
+the cutover tunnel's `<tunnel-id>.cfargotunnel.com`; `graph-dispatcher` (+`www`), `keeper` stay on `nomad-admin`; other tunnels serve `recorder`/`trading` (`af70d44…`), `dark`/`dark-dev`/`stremio` (`ef0c9d3…`), `secrets` (`612f43c…`); `forms` → Pages, apex/`pkubelka.cz` → Pages; `llm-quota`/`radar` are `AAAA 100::` placeholders. The account contains unrelated existing tunnels, DNS records, and Access apps — do not claim or destroy them; scope Terraform by explicit names/IDs.
 
 | Resource | Current state | IaC requirement |
 | --- | --- | --- |
@@ -56,17 +62,16 @@ Proxied DNS (zone `pkubelka.cz`; all CNAMEs below point at `nomad-admin`'s `<tun
 | SSH Access app | Self-hosted app for `ssh.pkubelka.cz`; email allow policy for `ksonny4@gmail.com` | Scoped service-token machine policy for verification |
 | R2 | Account API reports R2 enabled; bucket `ovh-host-backups` (migrated from the retired name at M5; EEUR, Standard) | Terraform manages the bucket; scoped S3 credential issuance is blocked on a fresh full-access token (see gaps) |
 
-## Nomad job inventory (target; M5 cutover registers)
+## Nomad job inventory (new origin live 2026-09-19)
 
-Workloads run as Nomad jobs (one allocation each for stateful services),
-replacing the retired plane's application table (archived). Expected jobs
-at cutover: `fabric`, `omniroute` (serves `omni.` + `omniroute.`),
-`omniroute-obs`, `omniroute-watcher`, `registry` (`registry:2`, serves
-`registry.pkubelka.cz`), `graph-dispatcher`, `keeper`, `llm-quota`,
-`edge-proxy` (Host routing to `:80`). Triage at cutover: the pre-existing
-`registry:3` duplicate and the unhealthy `llm-quota2` equivalent — neither
-ships until healthy. See `docs/03-nomad.md` for the jobspec pattern and
-`docs/09-docker-registry.md` §7 for the registry record.
+New host (`vps-c85da816`): `edge-proxy` (Host routing to `:80`), `registry`
+(`registry:2.8.3`, serves `registry.pkubelka.cz`), `cognee` (server + mcp +
+edge, serves `cognee.pkubelka.cz`; spec vendored from `KSonny4/cognee-setup`).
+Old host keeps its remaining jobs (keeper/dump/unleash/control-panel/probes);
+its in-scope jobs (cognee, registry, nightlies) were stopped and purged at
+cutover. See `docs/03-nomad.md` for the jobspec pattern,
+`docs/09-docker-registry.md` §7 for the registry record, `docs/11-cognee.md`
+for the Cognee runbook.
 
 ## Secret escrow map (names only — values live in OpenBao, never in Git)
 
@@ -74,15 +79,15 @@ ships until healthy. See `docs/03-nomad.md` for the jobspec pattern and
 | --- | --- | --- |
 | `secret/projects/nomad/ADMIN_CLOUDFLARE` | `ADMIN_CLOUDFLARE` (API token) | Terraform loader, Cloudflare API automation |
 | `secret/projects/nomad/OVH_API` | `application_key`, `application_secret`, `consumer_key`, `endpoint` | `ovh_cli` read-only discovery |
-| `secret/projects/nomad/NOMAD_BOOTSTRAP` | `acl_token`, `acl_accessor`, `gossip_key` | Nomad bootstrap and recovery |
+| `secret/projects/nomad/NOMAD_BOOTSTRAP` | `acl_token`, `acl_accessor`, `gossip_key` | New-cluster bootstrap and recovery (runner merges, never replaces) |
+| `secret/projects/nomad/NOMAD_BOOTSTRAP_PRESERVED` | `acl_token` | Old-cluster admin (rescued 2026-09-19; needed while the old host lives) |
 | `secret/projects/nomad/EDGE_TUNNEL_SECRET` | `tunnel_secret` | Terraform loader (preserved `nomad-admin` singleton) |
 | `secret/projects/nomad/EDGE_TUNNEL_<NAME>` | `tunnel_id`, `tunnel_token` | Per-target tunnel creation (fresh hosts) |
 | `secret/projects/nomad/EDGE_TUNNEL_TOKEN` | `tunnel_token` | Break-glass reinstall only (no automation reads it) |
 | `secret/projects/nomad/BACKUP_R2` | `access_key_id`, `secret_access_key`, `bucket`, `endpoint` | Host-timer backup plane + restore probe |
-| `secret/projects/nomad/EDGE_ACCESS_SERVICE_TOKEN` | `client_id`, `client_secret` | Machine edge access (noninteractive verification, API calls) |
+| `secret/projects/nomad/EDGE_ACCESS_SERVICE_TOKEN` | `client_id`, `client_secret`, `token_id` | Machine edge access (noninteractive verification, API calls; Terraform binds `token_id` in app policies, object API-managed) |
 | `secret/projects/nomad/PROVISION_SSH_PRIVATE_KEY` / `PROVISION_SSH_PUBLIC_KEY` | key material | Guest bootstrap, provisioner machine connection |
-| `secret/projects/nomad/OMNIROUTE` | `STORAGE_ENCRYPTION_KEY`, `API_KEY_SECRET`, `JWT_SECRET` | OmniRoute apps (escrow-recoverable restore) |
-| `secret/projects/nomad/REGISTRY` | `htpasswd`, `http_secret`, `username`, `password` | Private registry auth + smoke verify (live 2026-09-17) |
+| `secret/projects/nomad/REGISTRY` | `htpasswd`, `http_secret`, `username`, `password` | Private registry auth + smoke verify (live on new origin 2026-09-19) |
 
 Operator cutover note (M5): Bao entries under retired names are duplicated
 to the names above before the cutover, verified by readback, and the old
@@ -136,4 +141,4 @@ entries are deleted only after the Nomad plane proves healthy.
 
 ## Safety boundary (validated 2026-09-13)
 
-No reconciliation ran `ovhcloud reinstall`, reboot, terminate, destroy, or credential rotation. Validation used only `ovhcloud vps list/get/ip list --output json`. The service remains `running`, so no recovery/reboot was needed. Terraform resources for the current VPS must be import/read-only or protected with lifecycle rules until a separately authorized replacement workflow exists.
+Decommission ran 2026-09-19 in the authorized workflow: all old Nomad jobs stopped+purged (0 running), ~15 GB data migrated to the new host (`/srv/old-vps-migration`, keeper sqlite integrity ok), service canceled (deleteAtExpiration 2027-09-13, auto-renew off), VM stopped (SSH times out), `ovh_vps.preserved` block + state entry removed, tunnel edge port re-pointed to live :31297, plan empty.

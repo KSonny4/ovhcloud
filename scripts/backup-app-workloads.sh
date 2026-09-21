@@ -70,10 +70,18 @@ try:
 except OSError:
     pass
 env, redacted, env_escrowed = {}, [], {}
+# Exact names whose VALUES are credential-bearing URIs even though the
+# name itself carries no PASS/SECRET/TOKEN/KEY/CREDENTIAL marker
+# (field hit: DATABASE_URL + DB postgres URIs exported verbatim into the
+# R2 manifest). Any other value shaped as a URI with userinfo
+# (scheme://user:pass@host/...) is redacted on shape, not name.
+uri_names = {"DATABASE_URL", "DB"}
+import re as _re
+uri_creds = _re.compile(r"://[^/\s]*:[^/\s]*@")
 for e in cfg.get("Env", []) or []:
     k, _, v = e.partition("=")
     ku = k.upper()
-    if any(s in ku for s in ("PASS", "SECRET", "TOKEN", "KEY", "CREDENTIAL")):
+    if any(s in ku for s in ("PASS", "SECRET", "TOKEN", "KEY", "CREDENTIAL")) or k in uri_names or uri_creds.search(v or ""):
         env[k] = "REDACTED"; redacted.append(k)
         if k in escrow:
             env_escrowed[k] = escrow[k]
@@ -119,7 +127,7 @@ if [ "$dry_run" -eq 1 ]; then
   log 'DRY-RUN: enforce workload coverage contract (fail closed on unbackupable mounts/DBs)'
   log 'DRY-RUN: discover postgres containers (pg_dump each non-template DB to R2 app-databases/, record tables+rows)'
   log 'DRY-RUN: snapshot each non-excluded Docker volume to R2 app-volumes/ (record files+bytes)'
-  log 'DRY-RUN: snapshot APP_BIND_PATHS host dirs to R2 app-binds/'
+  log 'DRY-RUN: snapshot APP_BIND_PATHS + Nomad-discovered host dirs to R2 app-binds/'
   log 'DRY-RUN: record full container topology (image, env sanitized, ports, networks, labels, mounts) into the manifest'
   log 'DRY-RUN: upload JSON manifest to R2 app-manifests/, prune all prefixes older than 14 days (fail closed)'
   exit 0
@@ -150,9 +158,16 @@ FAILED=0
 # Coverage: every Docker named volume is backed up (cluster state lives in
 # /opt/nomad on the host, covered authoritatively by
 # schedule-host-backup.sh — it is never a Docker volume, so no exclusion
-# is needed). Anything stateful that this script cannot back up fails the
+# is needed). Nomad task containers add two mount classes of their own:
+# scheduler-injected ephemeral dirs (/opt/nomad/alloc/*: task local/,
+# secrets/, logs/) hold no irreplaceable state and are skipped; host-path
+# state under /opt/nomad-volumes/* (cognee store, registry data) is
+# auto-covered by the binds snapshot below, except auth material
+# (*-auth*, htpasswd) which is OpenBao-canonical and must never be R2-copied.
+# Anything stateful that this script cannot back up fails the
 # run with an explicit gap list.
 system_binds='/etc/hostname /etc/hosts /etc/resolv.conf /etc/resolve.conf /run/docker.sock'
+nomad_binds=''
 gaps=''
 for cname in $(docker ps --format '{{.Names}}' 2>/dev/null || true); do
   case "$cname" in rollback-app-probe-db) continue ;; esac
@@ -170,6 +185,15 @@ for cname in $(docker ps --format '{{.Names}}' 2>/dev/null || true); do
     [ "$mtype" = 'bind' ] || continue
     sys=0; for s in $system_binds; do [ "$src" = "$s" ] && sys=1; done
     [ "$sys" -eq 1 ] && continue
+    case "$src" in
+      /opt/nomad/alloc/*) continue ;;
+      /opt/nomad-volumes/*auth*|*/htpasswd) continue ;;
+      /opt/nomad-volumes/*)
+        if [ -d "$src" ]; then
+          case " $nomad_binds " in *" $src "*) ;; *) nomad_binds="${nomad_binds} $src" ;; esac
+          continue
+        fi ;;
+    esac
     declared=0; for b in ${APP_BIND_PATHS:-}; do [ "$src" = "$b" ] && declared=1; done
     if [ "$declared" -eq 0 ]; then
       gaps="${gaps} container ${cname} bind ${src}: undeclared (add to APP_BIND_PATHS or exclude deliberately);"
@@ -260,8 +284,10 @@ while IFS= read -r vol; do
   fi
 done <<<"$(docker volume ls -q 2>/dev/null)"
 
-# --- declared bind-mounted host directories (e.g. SQLite directories) ---
-for bpath in ${APP_BIND_PATHS:-}; do
+# --- declared + Nomad-discovered bind-mounted host directories ---
+# APP_BIND_PATHS covers Docker-plane state (e.g. SQLite directories);
+# nomad_binds (collected above) covers Nomad host-path state. One loop.
+for bpath in ${APP_BIND_PATHS:-}${nomad_binds:-}; do
   [ -d "$bpath" ] || { echo "FAILED: declared bind path missing: ${bpath}." >&2; FAILED=1; continue; }
   bslug="$(printf '%s' "$bpath" | tr -c 'a-zA-Z0-9' '_' | sed 's/^_*//')"
   key="app-binds/${bslug}-${stamp}.tar.gz"
@@ -281,7 +307,9 @@ done
 # --- container topology (for faithful service recreation) ---
 # Records every workload container's full topology. Env VALUES are
 # recorded except sensitive-looking keys (*PASS*, *SECRET*, *TOKEN*, *KEY*,
-# *CREDENTIAL*), which are stored as REDACTED with names listed: recreation
+# *CREDENTIAL*), the credential-URI names (DATABASE_URL, DB), and any value
+# shaped as a URI with userinfo (scheme://user:pass@host/...), which are
+# stored as REDACTED with names listed: recreation
 # restores topology + data, and reports exactly which secrets to re-inject.
 # Topology entries are produced by topology_entry() (defined near the top).
 for cname in $(docker ps --format '{{.Names}}' 2>/dev/null || true); do

@@ -136,7 +136,7 @@ export AWS_DEFAULT_REGION="${AWS_DEFAULT_REGION:-auto}"
 export NOMAD_ADDR="${NOMAD_ADDR:-http://127.0.0.1:4646}"
 stamp="$(date -u +%Y%m%dT%H%M%SZ)"
 key="nomad-snapshot-${stamp}.snap"
-tmp="$(mktemp)"
+tmp="$(mktemp -u)"
 trap 'rm -f "$tmp"' EXIT
 nomad operator snapshot save "$tmp"
 aws --endpoint-url "$R2_ENDPOINT" s3api put-object --bucket "$R2_BUCKET" --key "$key" --body "$tmp" >/dev/null

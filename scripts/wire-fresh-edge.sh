@@ -166,7 +166,7 @@ if [ "${verify_only:-0}" -eq 0 ]; then
 # the fetched config, so unrelated existing routes are never discarded).
 wanted_args=()
 for host in $hostnames; do wanted_args+=("${host}=$(service_for "$host")"); done
-current_ingress="$(api_must "https://api.cloudflare.com/client/v4/accounts/${acct}/cfd_tunnel/${tid}/configurations" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(json.dumps(d.get("result",{}).get("config",{}).get("ingress",[])))' || { echo 'ingress read failed to parse (fail closed).' >&2; exit 2; })"
+current_ingress="$(api_must "https://api.cloudflare.com/client/v4/accounts/${acct}/cfd_tunnel/${tid}/configurations" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(json.dumps(((d.get("result") or {}).get("config") or {}).get("ingress") or []))' || { echo 'ingress read failed to parse (fail closed).' >&2; exit 2; })"
 if ingress_covers "$current_ingress" "${wanted_args[@]}"; then
   log 'ingress already routes all hostnames; no PUT.'
 else

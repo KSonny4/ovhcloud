@@ -10,7 +10,7 @@ output "managed_ovh_vps_service_name" {
 
 output "cloudflare_access_service_token_id" {
   description = "Cloudflare Access service-token ID used for noninteractive machine verification."
-  value       = cloudflare_zero_trust_access_service_token.machine.id
+  value       = var.access_service_token_id
 }
 
 output "cloudflare_tunnel_id" {

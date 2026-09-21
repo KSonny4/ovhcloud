@@ -5,6 +5,10 @@
 # (manifest env_escrowed) instead of operator-relayed; restore re-injects
 # them from OpenBao without human relay. This file ships with the backup
 # companions (non-secret) and is resolved relative to backup-app-workloads.sh.
-STORAGE_ENCRYPTION_KEY secret/projects/nomad/OMNIROUTE STORAGE_ENCRYPTION_KEY
-API_KEY_SECRET secret/projects/nomad/OMNIROUTE API_KEY_SECRET
-JWT_SECRET secret/projects/nomad/OMNIROUTE JWT_SECRET
+#
+# NOTE: the entry below is a fixture/example path used by the hermetic
+# self-tests (no live secret entry required). Per-app entries are added
+# here when a workload needs rebuild-surviving secrets.
+STORAGE_ENCRYPTION_KEY secret/projects/nomad/APPSHARED STORAGE_ENCRYPTION_KEY
+API_KEY_SECRET secret/projects/nomad/APPSHARED API_KEY_SECRET
+JWT_SECRET secret/projects/nomad/APPSHARED JWT_SECRET

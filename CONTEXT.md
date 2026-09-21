@@ -7,7 +7,7 @@ This repository is the source of truth for the OVHcloud VPS deployment runbook a
 - **OVHcloud VPS** is the origin host and compute provider; the installed `ovhcloud` CLI is the read-only discovery and operator handoff tool for this account.
 - **Ubuntu 24.04 LTS + Docker + Nomad** is the host and deployment control plane (the previous Docker-based control plane was retired 2026-09-18; see `docs/03-nomad.md`).
 - **Cloudflare** is the only public DNS/edge provider: DNS, proxy/TLS, Tunnel/Access for human administration, and R2 for off-host backups.
-- **OmniRoute** is a stateful, single-replica workload with SQLite under `/app/data` and private Redis.
+- **Cognee** succeeds the retired Fabric stack (jobspec pending). Fabric (API + Neo4j + Postgres) was retired 2026-09-19 and is not migrated; OmniRoute was retired earlier the same day.
 - **External secret manager** owns recovery-critical values; Git and Terraform variables files contain names/placeholders only.
 
 ## Invariants
@@ -24,5 +24,5 @@ This repository is the source of truth for the OVHcloud VPS deployment runbook a
 - **Origin**: the OVH VPS and its Nomad-managed edge (traefik/reverse proxy via Nomad jobs).
 - **Public edge**: Cloudflare DNS/proxy/TLS for application traffic.
 - **Admin path**: Cloudflare Tunnel + Access to localhost SSH and restricted admin surfaces.
-- **Recovery secret**: a value required to decrypt or restore state, including Nomad gossip encryption/ACL bootstrap material, OmniRoute encryption/authentication keys, SSH key material, and R2 credentials.
+- **Recovery secret**: a value required to decrypt or restore state, including Nomad gossip encryption/ACL bootstrap material, SSH key material, and R2 credentials.
 - **Authorized apply**: a human-approved Terraform apply performed only after plan review and secret/state prerequisites are satisfied.

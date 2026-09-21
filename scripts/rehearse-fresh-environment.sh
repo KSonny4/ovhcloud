@@ -104,6 +104,8 @@ export TF_VAR_cloudflare_account_id=5eb3ea3a84b37564cfd8739f32ffb559
 export TF_VAR_domain=pkubelka.cz
 export TF_VAR_ovh_ipv4=192.0.2.1
 export TF_VAR_cloudflare_tunnel_secret=cmVoZWFyc2Fs
+export TF_VAR_edge_tunnel_id=00000000-0000-0000-0000-000000000000
+export TF_VAR_access_service_token_id=00000000-0000-0000-0000-000000000000
 export 'TF_VAR_admin_emails=["intruder@example.invalid"]'
 # NOTE: plan exits nonzero on the expected validation failure; capture output
 # first because pipefail would otherwise mask grep's match.
@@ -114,7 +116,7 @@ else
   echo 'admin_emails regression gate broken: omission did not fail.' >&2
   exit 1
 fi
-unset TF_VAR_cloudflare_api_token TF_VAR_cloudflare_account_id TF_VAR_domain TF_VAR_ovh_ipv4 TF_VAR_cloudflare_tunnel_secret TF_VAR_admin_emails
+unset TF_VAR_cloudflare_api_token TF_VAR_cloudflare_account_id TF_VAR_domain TF_VAR_ovh_ipv4 TF_VAR_cloudflare_tunnel_secret TF_VAR_edge_tunnel_id TF_VAR_access_service_token_id TF_VAR_admin_emails
 rm -rf "$gate_dir"
 phase_ok terraform_gates | tee -a "$artifact_dir/phases.log"
 
@@ -153,6 +155,13 @@ if grep -q '302)' scripts/configure-tunnel-access.sh || grep -q '|| true' script
 fi
 NOMAD_LEADER_URL='https://nomad.rehearsal.invalid/v1/status/leader' \
   bash scripts/ensure-service-token.sh --dry-run >/tmp/rehearsal-lifecycle.log 2>&1
+# Edge log redaction (structural proof on the live jobspec): keyed REST
+# clients send X-Api-Key on every call and Caddy's default redaction does
+# not cover it, so the edge log block must delete that header field — and
+# no bare (unfiltered) log directive may remain.
+grep -q 'request>headers>X-Api-Key delete' jobs/cognee.nomad.hcl || { echo 'caddy edge does not redact X-Api-Key from access logs.' >&2; exit 1; }
+if grep -qE '^[[:space:]]*log[[:space:]]*$' jobs/cognee.nomad.hcl; then echo 'bare caddy log directive still present (headers unfiltered).' >&2; exit 1; fi
+note_evidence edge_ready caddy_log_redaction=1
 log 'tunnel/access dry-run idempotent across two passes; 200-only verification enforced; lifecycle dry-run clean.'
 phase_ok edge_ready | tee -a "$artifact_dir/phases.log"
 
@@ -286,7 +295,7 @@ rm -f /tmp/rehearsal-ovh-calls.log
 no_env_out="$(env -u OVH_ENDPOINT -u OVH_APPLICATION_KEY -u OVH_APPLICATION_SECRET -u OVH_CONSUMER_KEY PATH="/tmp/rehearsal-ovhbin:$PATH" bash -c 'source scripts/lib/preserved-guard.sh; _preserved_ip_set' 2>&1)"
 [ -f /tmp/rehearsal-ovh-calls.log ] && { echo 'guard invoked ovhcloud without OpenBao-derived credentials (ambient read possible).' >&2; exit 1; }
 # (log file absent is the pass condition; output must be fallback-only.)
-printf '%s' "$no_env_out" | grep -q '57.129.155.203' || { echo 'guard fallback identity missing.' >&2; exit 1; }
+printf '%s' "$no_env_out" | grep -q '148.113.245.89' || { echo 'guard fallback identity missing.' >&2; exit 1; }
 rm -f /tmp/rehearsal-ovh-calls.log
 env_out="$(OVH_ENDPOINT=rehearsal-endpoint OVH_APPLICATION_KEY=rehearsal-ak OVH_APPLICATION_SECRET=rehearsal-as OVH_CONSUMER_KEY=rehearsal-ck PATH="/tmp/rehearsal-ovhbin:$PATH" bash -c 'source scripts/lib/preserved-guard.sh; _preserved_ip_set' 2>&1)"
 [ -f /tmp/rehearsal-ovh-calls.log ] || { echo 'guard skipped the API despite supplied credentials.' >&2; exit 1; }
@@ -500,14 +509,15 @@ bash scripts/rollback-app-workloads.sh --dry-run
 bash scripts/rollback-app-workloads.sh --dry-run --recreate demo --db-password dry-run-only
 # Topology unit test: the EXACT live extractor against synthetic inspect JSON.
 cat > /tmp/rehearsal-inspect.json <<'INSPECT_EOF'
-[{"Name": "/runtime-app", "Config": {"Image": "python:3.12-alpine", "Env": ["APP_MODE=proof", "DB_PASSWORD=s3cret"], "Labels": {"proof": "runtime"}, "Cmd": ["python3", "-m", "http.server", "8080"], "Entrypoint": ["/entry.sh", "--verbose-flag"], "WorkingDir": "/srv/www", "User": "65534", "Healthcheck": {"Test": ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8080/"], "Interval": 30000000000, "Timeout": 5000000000, "StartPeriod": 10000000000, "Retries": 3}}, "HostConfig": {"PortBindings": {"8080/tcp": [{"HostIp": "", "HostPort": "18081"}]}, "RestartPolicy": {"Name": "on-failure", "MaximumRetryCount": 5}}, "Mounts": [{"Type": "volume", "Source": "/var/lib/docker/volumes/runtime-www/_data", "Destination": "/srv/www", "Mode": "rw"}], "NetworkSettings": {"Networks": {"bridge": {}}}}]
+[{"Name": "/runtime-app", "Config": {"Image": "python:3.12-alpine", "Env": ["APP_MODE=proof", "DB_PASSWORD=s3cret", "DATABASE_URL=postgres://fixture:uri-proof@example.invalid/db", "DB=postgres://fixture:uri-proof@example.invalid/db"], "Labels": {"proof": "runtime"}, "Cmd": ["python3", "-m", "http.server", "8080"], "Entrypoint": ["/entry.sh", "--verbose-flag"], "WorkingDir": "/srv/www", "User": "65534", "Healthcheck": {"Test": ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8080/"], "Interval": 30000000000, "Timeout": 5000000000, "StartPeriod": 10000000000, "Retries": 3}}, "HostConfig": {"PortBindings": {"8080/tcp": [{"HostIp": "", "HostPort": "18081"}]}, "RestartPolicy": {"Name": "on-failure", "MaximumRetryCount": 5}}, "Mounts": [{"Type": "volume", "Source": "/var/lib/docker/volumes/runtime-www/_data", "Destination": "/srv/www", "Mode": "rw"}], "NetworkSettings": {"Networks": {"bridge": {}}}}]
 INSPECT_EOF
 topo_out="$(bash scripts/backup-app-workloads.sh --self-test-topology /tmp/rehearsal-inspect.json 2>/dev/null || true)"
 rm -f /tmp/rehearsal-inspect.json
-for want in '"ports": ["18081:8080/tcp"]' '"DB_PASSWORD": "REDACTED"' '"APP_MODE": "proof"' '"source": "/var/lib/docker/volumes/runtime-www/_data"' '"target": "/srv/www"' '"cmd": ["python3", "-m", "http.server", "8080"]' '"entrypoint": ["/entry.sh", "--verbose-flag"]' '"workdir": "/srv/www"' '"user": "65534"' '"restart": "on-failure"' '"restart_max": 5' '"CMD", "wget"' '"Interval": 30000000000' '"Timeout": 5000000000' '"Retries": 3'; do
+for want in '"ports": ["18081:8080/tcp"]' '"DB_PASSWORD": "REDACTED"' '"DATABASE_URL": "REDACTED"' '"DB": "REDACTED"' '"APP_MODE": "proof"' '"source": "/var/lib/docker/volumes/runtime-www/_data"' '"target": "/srv/www"' '"cmd": ["python3", "-m", "http.server", "8080"]' '"entrypoint": ["/entry.sh", "--verbose-flag"]' '"workdir": "/srv/www"' '"user": "65534"' '"restart": "on-failure"' '"restart_max": 5' '"CMD", "wget"' '"Interval": 30000000000' '"Timeout": 5000000000' '"Retries": 3'; do
   printf '%s' "$topo_out" | grep -qF "$want" || { echo "topology extractor broken (missing ${want})." >&2; exit 1; }
 done
-note_evidence backup_ready topology_assertions=15
+if printf '%s' "$topo_out" | grep -q 'uri-proof'; then echo 'topology extractor leaks credential-URI values.' >&2; exit 1; fi
+note_evidence backup_ready topology_assertions=18
 log 'topology extractor proven on synthetic inspect JSON (ports, redaction, mounts, full runtime contract).'
 dbflags_out="$(bash scripts/rollback-app-workloads.sh --self-test-db-flags 2>/dev/null || true)"
 for want in '--network' 'dbnet' '-p' '5433:5432/tcp' '--restart' 'on-failure:3' '--health-cmd' 'pg_isready -U dbowner' '--health-retries' '3' '-e' 'PGDATA=/var/lib/postgresql/data' '-l' 'proof=dbflags' '-u' 'postgres'; do
@@ -550,6 +560,21 @@ log 'recreate credential resolution proven: explicit > escrowed reuse > generate
 # empty output): missing PROVISION_HOST must exit nonzero with no network.
 if PROVISION_HOST='' bash scripts/verify-nomad-live.sh >/dev/null 2>&1; then echo 'live verifier accepts a missing target.' >&2; exit 1; fi
 log 'live verifier proven fail-closed without a target.'
+# Live-verifier health exception (structural): the cognee unhealthy carve-out
+# must be label-narrowed (three jobs share the task name "server"), never a
+# broad name-only exclusion that would also silence control-panel/unleash.
+if grep -q "grep -avE '\^server-" scripts/verify-nomad-live.sh; then echo 'broad server-* health exclusion still present.' >&2; exit 1; fi
+grep -q 'com.hashicorp.nomad.job_name' scripts/verify-nomad-live.sh || { echo 'health exclusion lost its job-label narrowing.' >&2; exit 1; }
+note_evidence backup_ready health_exception_narrowed=1
+log 'live health exception proven narrowed to the labeled cognee server task.'
+# Live reconciliation (structural): the retired ovh_vps.preserved record was
+# deleted with the old host, so the script must require the current VPS
+# record (platform resource + import-mode data source), never the deleted one.
+grep -q 'resource "ovh_vps" "platform"' scripts/verify-live-reconciliation.sh || { echo 'reconciliation omits the platform VPS record.' >&2; exit 1; }
+grep -q 'data\\.ovh_vps\\.existing' scripts/verify-live-reconciliation.sh || { echo 'reconciliation omits the imported-existing VPS mode.' >&2; exit 1; }
+if grep -q "families='[^']*ovh_vps.preserved" scripts/verify-live-reconciliation.sh; then echo 'reconciliation still requires the deleted retired VPS.' >&2; exit 1; fi
+note_evidence backup_ready reconciliation_current=1
+log 'live reconciliation proven current: platform/import VPS modes, retired record rejected.'
 # Bootstrap completeness chain (all executed against this repo, no network):
 # the provisioner ACL-bootstraps idempotently (BOOTSTRAP_EXISTS) and emits
 # the escrow line, and the runner captures + escrows + gates on it before
@@ -572,31 +597,12 @@ printf '%s' "$env_out" | grep -q 'credential source: env' || { echo 'rollback ig
 no_out="$(env -u APP_DB_PASSWORD bash scripts/rollback-app-workloads.sh --dry-run 2>&1 || true)"
 printf '%s' "$no_out" | grep -q 'credential source: absent' || { echo 'rollback misreports missing credential.' >&2; exit 1; }
 log 'rollback env credential proven: APP_DB_PASSWORD accepted, source reported.'
-# OmniRoute secret lifecycle (stubbed bao, no network): absent fields are
-# generated + escrowed (one patch per field, merge-safe), present fields
-# are reused with no write, and values never reach stdout.
-mkdir -p /tmp/rehearsal-omnibin
-cat > /tmp/rehearsal-omnibin/bao <<'STUBEOF'
-#!/usr/bin/env bash
-if [ "$1" = 'kv' ] && [ "$2" = 'get' ]; then
-  if [ -n "${STUB_OMNI_PRESENT:-}" ]; then printf 'present-test-value'; else exit 1; fi
-elif { [ "$1" = 'kv' ] && [ "$2" = 'patch' ]; } || { [ "$1" = 'kv' ] && [ "$2" = 'put' ]; }; then
-  printf '%s\n' "$*" >> /tmp/rehearsal-omni-puts.log; exit 0
-else exit 1; fi
-STUBEOF
-chmod +x /tmp/rehearsal-omnibin/bao
-rm -f /tmp/rehearsal-omni-puts.log
-omni_out="$(PATH="/tmp/rehearsal-omnibin:$PATH" bash scripts/ensure-omniroute-secrets.sh 2>&1 || true)"
-printf '%s' "$omni_out" | grep -q 'generated+escrowed' || { echo 'omniroute generation path broken.' >&2; exit 1; }
-[ "$(wc -l < /tmp/rehearsal-omni-puts.log | tr -d ' ')" -eq 3 ] || { echo 'omniroute escrow does not patch all three fields.' >&2; exit 1; }
-grep -q 'STORAGE_ENCRYPTION_KEY=-' /tmp/rehearsal-omni-puts.log || { echo 'omniroute patch passes values via stdin (-), not argv.' >&2; exit 1; }
-[ "$(printf '%s\n' "$omni_out" | grep -c .)" -eq 1 ] || { echo 'ensure leaks extra output (possible secret).' >&2; exit 1; }
-rm -f /tmp/rehearsal-omni-puts.log
-omni_out="$(STUB_OMNI_PRESENT=1 PATH="/tmp/rehearsal-omnibin:$PATH" bash scripts/ensure-omniroute-secrets.sh 2>&1 || true)"
-printf '%s' "$omni_out" | grep -q 'reused' || { echo 'omniroute reuse path broken.' >&2; exit 1; }
-[ -f /tmp/rehearsal-omni-puts.log ] && { echo 'omniroute rewrote present fields.' >&2; exit 1; }
-rm -rf /tmp/rehearsal-omnibin /tmp/rehearsal-omni-puts.log
-log 'omniroute lifecycle proven: generate-if-absent + escrow, reuse untouched, values never on stdout.'
+# OmniRoute retired 2026-09-19: the app-secret ensure script is gone and
+# the runner must not reference it. The generic escrow machinery below
+# (topology marking, re-injection, fetch) is proven with fixture data.
+[ ! -e scripts/ensure-omniroute-secrets.sh ] || { echo 'retired ensure-omniroute-secrets.sh still present.' >&2; exit 1; }
+if grep -q 'ensure-omniroute-secrets' scripts/run-remote-provision.sh; then echo 'runner still references retired OmniRoute secrets.' >&2; exit 1; fi
+log 'omniroute retirement proven: no ensure script, no runner reference.'
 # Topology escrow marking: synthetic container carrying an allowlisted
 # secret must record env_escrowed with path + field (exact live code).
 cat > /tmp/rehearsal-inspect-escrow.json <<'INSPECT_EOF'
@@ -605,7 +611,7 @@ INSPECT_EOF
 esc_out="$(bash scripts/backup-app-workloads.sh --self-test-topology /tmp/rehearsal-inspect-escrow.json 2>/dev/null || true)"
 rm -f /tmp/rehearsal-inspect-escrow.json
 printf '%s' "$esc_out" | grep -q '"STORAGE_ENCRYPTION_KEY": "REDACTED"' || { echo 'escrow fixture redaction broken.' >&2; exit 1; }
-printf '%s' "$esc_out" | grep -q '"STORAGE_ENCRYPTION_KEY": {"path": "secret/projects/nomad/OMNIROUTE"' || { echo 'topology omits env_escrowed mapping.' >&2; exit 1; }
+printf '%s' "$esc_out" | grep -q '"STORAGE_ENCRYPTION_KEY": {"path": "secret/projects/nomad/APPSHARED"' || { echo 'topology omits env_escrowed mapping.' >&2; exit 1; }
 log 'topology escrow marking proven: allowlisted secret recorded with path + field.'
 # Rollback re-injection: delivered env wins (needs empty), absent env
 # falls back to needs_secrets (exact live builder).
@@ -635,7 +641,7 @@ cat > /tmp/rehearsal-fetchbin/aws <<'STUBEOF'
 if printf '%s\n' "$@" | grep -q 'get-object'; then
   out=''; for a in "$@"; do out="$a"; done
   cat > "$out" <<'MANIFEST_EOF'
-{"stamp": "20200101T000000Z", "containers": [{"name": "escrow-app", "env_escrowed": {"STORAGE_ENCRYPTION_KEY": {"path": "secret/projects/nomad/OMNIROUTE", "field": "STORAGE_ENCRYPTION_KEY"}}}]}
+{"stamp": "20200101T000000Z", "containers": [{"name": "escrow-app", "env_escrowed": {"STORAGE_ENCRYPTION_KEY": {"path": "secret/projects/nomad/APPSHARED", "field": "STORAGE_ENCRYPTION_KEY"}}}]}
 MANIFEST_EOF
 else
   # Realistic `aws s3 ls` shape (date, time, size, name): the consumer
@@ -662,17 +668,14 @@ log 'fetch-app-secrets proven: resolve + channels + fail-closed, values never on
 grep -q "sudo bash -c 'eval" scripts/recreate-workload.sh || { echo 'recreate wrapper lost sudo-first delivery.' >&2; exit 1; }
 if grep -q 'sudo -E bash /root/host-backup/fetch-r2-env' scripts/recreate-workload.sh; then echo 'recreate wrapper regressed to sudo -E delivery (strips app secrets).' >&2; exit 1; fi
 log 'sudo-first delivery proven present (blob survives sudo for any var).'
-# Runner integration: ensure step precedes backup work in live order and
-# appears in the dry-run plan.
-grep -q 'ensure-omniroute-secrets.sh' scripts/run-remote-provision.sh || { echo 'runner omits the app-secret ensure step.' >&2; exit 1; }
+# Runner integration (OmniRoute retired): the backup stage must mint the R2
+# reader token with no app-secret ensure step anywhere in the plan.
+if grep -q 'ensure-omniroute-secrets' scripts/run-remote-provision.sh; then echo 'runner still references retired OmniRoute secrets.' >&2; exit 1; fi
 python3 - <<'PYEOF' || exit 1
 log = open('/tmp/rehearsal-runner-1.log').read().splitlines()
-def idx(pat):
-    hits = [i for i, l in enumerate(log) if pat in l]
-    assert hits, pat
-    return hits[0]
-assert idx('ensure-omniroute-secrets') < idx('mint R2 reader token'), 'ensure must precede backup work'
-print('runner app-secret order proven.')
+assert any('mint R2 reader token' in l for l in log), 'backup stage missing from runner dry-run'
+assert not any('ensure-omniroute-secrets' in l for l in log), 'retired ensure step still in runner plan'
+print('runner backup order proven (no retired app-secret step).')
 PYEOF
 bash scripts/ensure-service-token.sh --dry-run
 bash scripts/ensure-service-token.sh --dry-run --ensure-only

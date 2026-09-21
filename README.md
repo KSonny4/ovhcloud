@@ -47,9 +47,8 @@ The implementation handoff, evidence table, IaC boundaries and authorized-apply 
 5. [Configure Cloudflare DNS, Tunnel/Access and R2](docs/04-cloudflare.md)
 6. [Configure backups and test recovery](docs/05-backup-recovery.md)
 7. [Operate and upgrade the server](docs/06-operations.md)
-8. [Deploy OmniRoute safely](docs/07-omniroute.md)
-9. [Run a private Docker registry](docs/09-docker-registry.md)
-10. [Cut over the live host (operator-gated)](docs/10-cutover.md)
+8. [Run a private Docker registry](docs/09-docker-registry.md)
+9. [Cut over the live host (operator-gated)](docs/10-cutover.md)
 
 There is also a read-only [`scripts/healthcheck.sh`](scripts/healthcheck.sh) for routine server checks.
 
@@ -99,8 +98,8 @@ backup untested by restore is not trusted (see the
 [backup runbook](docs/05-backup-recovery.md)).
 - If the app needs secrets that must survive a rebuild from scratch
 (e.g. encryption keys, not just DB passwords), escrow them in OpenBao
-and follow the lifecycle in [Deploy OmniRoute safely](docs/07-omniroute.md)
-— that is the pattern for app-secret generate/escrow/re-inject.
+(mark `env_escrowed` in manifests; re-inject via `fetch-app-secrets.sh`)
+— never commit them.
 
 Do not skip the backup/recovery section. A Nomad snapshot does not contain application, database and volume data — those ride the host timer to R2.
 

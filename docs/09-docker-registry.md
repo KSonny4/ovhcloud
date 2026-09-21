@@ -24,7 +24,7 @@ registry:2 :5000 (/v2/ API)
 
 ## 1. No Cloudflare Access app
 
-Do NOT front the registry hostname with a Cloudflare Access policy. Docker clients are machines, not interactive users — the same rule as the OmniRoute API hostnames (`omni.`/`omniroute.`). Access would break `docker login`/`push`/`pull`. Authentication is the registry's own htpasswd auth (section 3); TLS is the Cloudflare edge.
+Do NOT front the registry hostname with a Cloudflare Access policy. Docker clients are machines, not interactive users — the same rule as other machine API hostnames. Access would break `docker login`/`push`/`pull`. Authentication is the registry's own htpasswd auth (section 3); TLS is the Cloudflare edge.
 
 ## 2. Nomad deploy steps
 

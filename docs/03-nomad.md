@@ -50,8 +50,8 @@ job "myapp" {
 }
 ```
 
-- Secrets: render via `template` stanza from OpenBao at deploy time
-  (pattern in [07](07-omniroute.md)).
+- Secrets: render via `-var-file` from OpenBao at deploy time
+  (example: `jobs/registry.nomad.hcl` + `docs/09-docker-registry.md`).
 - Deploy: `nomad job run jobs/myapp.nomad.hcl`; status:
   `nomad job status myapp`. Roll back with `nomad job revert myapp`.
 - Expose publicly: DNS CNAME + tunnel ingress route for the hostname

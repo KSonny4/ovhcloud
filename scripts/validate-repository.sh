@@ -49,11 +49,10 @@ bash -n scripts/emit-fresh-imports.sh
 bash -n scripts/adopt-fresh-edge.sh
 bash -n scripts/ensure-fresh-backend.sh
 bash -n scripts/fetch-app-secrets.sh
-bash -n scripts/ensure-omniroute-secrets.sh
 bash -n scripts/recreate-workload.sh
 bash -n scripts/collect-live-evidence.sh
 bash -n scripts/collect-stage-proofs.sh
-shellcheck scripts/bootstrap-vps.sh scripts/provision-nomad.sh scripts/verify-nomad-live.sh scripts/configure-tunnel-access.sh scripts/backup-r2-probe.sh scripts/rehearse-fresh-environment.sh scripts/healthcheck.sh scripts/validate-repository.sh scripts/run-remote-provision.sh scripts/schedule-host-backup.sh scripts/lib/preserved-guard.sh scripts/ensure-service-token.sh scripts/tf-env-from-openbao.sh scripts/rollback-nomad-snapshot.sh scripts/rollback-app-workloads.sh scripts/backup-app-workloads.sh scripts/ensure-tunnel.sh scripts/test-clean-target-install.sh scripts/wire-fresh-edge.sh scripts/fetch-r2-env.sh scripts/emit-fresh-imports.sh scripts/adopt-fresh-edge.sh scripts/ensure-fresh-backend.sh scripts/fetch-app-secrets.sh scripts/ensure-omniroute-secrets.sh scripts/recreate-workload.sh scripts/collect-live-evidence.sh scripts/collect-stage-proofs.sh
+shellcheck scripts/bootstrap-vps.sh scripts/provision-nomad.sh scripts/verify-nomad-live.sh scripts/configure-tunnel-access.sh scripts/backup-r2-probe.sh scripts/rehearse-fresh-environment.sh scripts/healthcheck.sh scripts/validate-repository.sh scripts/run-remote-provision.sh scripts/schedule-host-backup.sh scripts/lib/preserved-guard.sh scripts/ensure-service-token.sh scripts/tf-env-from-openbao.sh scripts/rollback-nomad-snapshot.sh scripts/rollback-app-workloads.sh scripts/backup-app-workloads.sh scripts/ensure-tunnel.sh scripts/test-clean-target-install.sh scripts/wire-fresh-edge.sh scripts/fetch-r2-env.sh scripts/emit-fresh-imports.sh scripts/adopt-fresh-edge.sh scripts/ensure-fresh-backend.sh scripts/fetch-app-secrets.sh scripts/recreate-workload.sh scripts/collect-live-evidence.sh scripts/collect-stage-proofs.sh
 
 # Nomad-only gate: no tracked reference to the retired plane may remain in
 # the active tree (history lives in git log + evidence-archive/, which this
@@ -66,10 +65,18 @@ if git ls-files "scripts/*${needle}*" 'docs/03-*.md' 2>/dev/null | grep -v 'docs
   git ls-files "scripts/*${needle}*" 'docs/03-*.md' 2>/dev/null | grep -v 'docs/03-nomad.md' >&2
   exit 1
 fi
+# Documented non-references (false positives, not the retired platform):
+# - the operator SSH key filename (operational reality, referenced by
+#   runbooks);
+# - legacy R2 object names inside the dated evidence record (recovery facts).
+retired_plane_allow="ovh_cool""ify_ed25519|cool""ify-db/redis"
 if git grep -i -l "$needle" -- CONTEXT.md README.md AGENTS.md docs scripts infra/terraform infra/terraform-fresh .github 2>/dev/null | grep -q .; then
-  echo 'retired-plane references remain in the active tree:' >&2
-  git grep -i -l "$needle" -- CONTEXT.md README.md AGENTS.md docs scripts infra/terraform infra/terraform-fresh .github 2>/dev/null >&2
-  exit 1
+  remaining="$(git grep -i "$needle" -- CONTEXT.md README.md AGENTS.md docs scripts infra/terraform infra/terraform-fresh .github 2>/dev/null | grep -viE "$retired_plane_allow" || true)"
+  if [ -n "$remaining" ]; then
+    echo 'retired-plane references remain in the active tree:' >&2
+    printf '%s\n' "$remaining" >&2
+    exit 1
+  fi
 fi
 
 git diff --check

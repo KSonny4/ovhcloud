@@ -35,20 +35,89 @@ Files loaded at adoption: `AGENTS.md` plus task-triggered playbooks
   still decide. Upstream notes this Mac has no local proxy (`:8100`/`:8200`
   refused) — operational follow-up outside guidance.
 
-## This repo's mapping (already aligned, verified 2026-09-17)
+## This repo's mapping (already aligned, verified 2026-09-17; cutover deltas verified 2026-09-19)
 
 - Transport: scripts default to `BAO_ADDR=https://secrets.pkubelka.cz`
-  (`ensure-omniroute-secrets.sh`, `verify-nomad-live.sh`, `fetch-r2-env.sh`);
+  (`verify-nomad-live.sh`, `fetch-r2-env.sh`);
   no `127.0.0.1:8100`/`:8200` consumer usage anywhere (`rehearsal.invalid` is
   test-stub addressing, not transport). No wording drift; no runbook changes.
 - Deploy target: Nomad only at `https://nomad.pkubelka.cz`
-  (Access OTP `ksonny4@gmail.com`); one job per deployable (`fabric`, OmniRoute,
-  `registry:2` per `docs/09-docker-registry.md`) via `nomad job run`.
+  (Access OTP `ksonny4@gmail.com` — human login verified 2026-09-19 on the
+  cutover tunnel; machine path via escrowed service token). One job per
+  deployable (`edge-proxy`, `registry:2` per `docs/09-docker-registry.md`,
+  `cognee` vendored from `KSonny4/cognee-setup` per `docs/11-cognee.md`)
+  via `nomad job run`. OmniRoute/Fabric retired, never migrated.
+- Plane topology since 2026-09-19: new VPS `vps-c85da816.vps.ovh.ca`
+  (148.113.245.89, BHS6) serves nomad/ssh/registry/cognee through dedicated
+  tunnel `nomad-148-113-245-89`; the old VPS was decommissioned 2026-09-19
+  (jobs stopped, data migrated, service canceled, VM off). Old-cluster ACL
+  token rescued to `NOMAD_BOOTSTRAP_PRESERVED` (runner `kv put` clobber
+  incident — runner now merges, never replaces).
 - Secrets edge: OpenBao escrow by name only (`docs/iac-interfaces.md`
-  inventory); Nomad `template`-stanza rendering; presence-only verification,
+  inventory); Nomad `-var-file`/stdin-pipe rendering at the deploy edge
+  (never `template`-stanza values in specs); presence-only verification,
   values never in Git/prompts/logs. Rotation per `docs/secret-rotation.md`.
-- Healthchecks: `/health` (registry), app-owned endpoints; public-hostname
+  Service-token OBJECT is API/OpenBao-managed (provider version trap —
+  Terraform binds `var.access_service_token_id` in app policies only).
+  `backup-r2-reader` policy covers both `ovhcloud/*` and `nomad/*` paths.
+- Healthchecks: TCP service checks (auth-gated endpoints 401 anonymous
+  callers); registry proven by anon-401 + authenticated catalog/push/pull,
+  cognee edge by anon-401 + `cognee edge ok` + MCP/REST smokes; public-hostname
   verification, never origin ports (tunnel-only invariant, `CONTEXT.md`).
+  The cognee image HEALTHCHECK targets static :8000 while the job binds a
+  dynamic port — structurally unhealthy, excluded from the live gate by name
+  with the smokes as real proof.
+- Dynamic-port discipline: the cognee edge takes a scheduler-assigned
+  loopback port, so every redeploy must re-point the tunnel ingress rule
+  AND the matching Terraform line, or the hostname 404s. Bulk image pushes
+  bypass the ~100MB edge cap via loopback (`registry_http_host` override,
+  then redeploy with the default).
+
+## Operating the new server (vps-c85da816, 148.113.245.89, BHS6)
+
+Sole live origin since 2026-09-19. SSH as `ubuntu` with the operator key
+(`~/.ssh/ovh_coolify_ed25519`); key-only auth, UFW default-deny with
+tunnel-only web ingress (no public 80/443). Old host `vps-1525c977`
+(57.129.155.203) is decommissioned: jobs purged, service canceled
+(deleteAtExpiration 2027-09-13), VM powered off — do not revive it; its
+data lives under `/srv/old-vps-migration/` on the new host.
+
+- Nomad UI/API: `https://nomad.pkubelka.cz` (human: Access OTP;
+  machine/agents: ACL token from OpenBao, piped via stdin, never pasted).
+  Direct origin access is loopback-only (`http://127.0.0.1:4646` on the
+host); public hostnames only, never origin ports.
+- Registry: `registry.pkubelka.cz` (anon 401; login + push/pull per
+  `docs/09-docker-registry.md`; bulk seeds via loopback
+  `registry_http_host` override past the ~100MB edge cap).
+- Cognee: `cognee.pkubelka.cz` (anon 401; smokes per `docs/11-cognee.md`).
+- Steady-state proof (run after any change):
+  `PROVISION_HOST=148.113.245.89 SSH_KEY=~/.ssh/ovh_coolify_ed25519 bash scripts/verify-nomad-live.sh`
+  must print `ALL LIVE CHECKS PASS`.
+- Snapshots/rollback: nightly Nomad snapshot → R2 (host timer); restore
+  proof runs on the host as root through
+  `fetch-r2-env.sh -- bash rollback-nomad-snapshot.sh` → `RESTORE_OK`.
+  A fresh snapshot must predate the proof or its strict job-table check
+  fails closed on newer jobs.
+- Terraform: `loader_out="$(BAO_ADDR=https://secrets.pkubelka.cz bash scripts/tf-env-from-openbao.sh)"; eval "$loader_out"`
+  plus `TF_VAR_edge_tunnel_id` for the new tunnel, then plan/apply in
+  `infra/terraform`. Every mutating apply needs a reviewed plan + an
+  empty second plan as evidence.
+
+### Credential map (OpenBao `BAO_ADDR=https://secrets.pkubelka.cz`, names only)
+
+| Need | Path.field |
+| --- | --- |
+| Nomad ACL (new cluster) | `secret/projects/nomad/NOMAD_BOOTSTRAP`.acl_token |
+| Nomad ACL (old cluster, archive reads) | `secret/projects/nomad/NOMAD_BOOTSTRAP_PRESERVED`.acl_token |
+| OVH API (same account) | `secret/projects/nomad/OVH_API` (endpoint/application_key/application_secret/consumer_key) |
+| R2 backup (least-privilege reader) | `secret/projects/nomad/BACKUP_R2` (access_key_id/secret_access_key/endpoint/bucket) |
+| Cloudflare Access service token | `secret/projects/nomad/EDGE_ACCESS_SERVICE_TOKEN` (client_id/client_secret/token_id) — object is API-managed, Terraform binds the ID only |
+| New edge tunnel secret | `secret/projects/nomad/EDGE_TUNNEL_SECRET`.tunnel_secret |
+| Registry login | `secret/projects/nomad/REGISTRY` (username/password) |
+| Cognee app + edge | `secret/projects/cognee/env`, `secret/projects/cognee/edge` |
+
+Rules: read by field name, pipe tokens via stdin, never print/persist/log
+values, never commit them; rotation per `docs/secret-rotation.md`.
 
 ## Deploy procedure for later (condensed, this overlay)
 
@@ -60,7 +129,9 @@ Files loaded at adoption: `AGENTS.md` plus task-triggered playbooks
 3. Secrets: values rendered from OpenBao escrow by name at deploy time;
    agent verifies presence-only, never values.
 4. Terraform (operator, authorized apply only): DNS CNAME + tunnel ingress per
-   `docs/deployment-plan.md`; `terraform plan` must show adds only.
+   `docs/deployment-plan.md`; `terraform plan` must show ONLY the intended
+   adds/changes (imports first for API-created objects), and a second plan
+   must be empty after apply.
 5. AFK verify: `curl https://<host>/<health>` → 200; webhook deliveries via
    `gh api repos/<owner>/<repo>/hooks/<id>/deliveries`; record SHA + build id.
 6. Rollback: `nomad job revert` to the prior known-good version, re-run step 5.
