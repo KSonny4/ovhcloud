@@ -1,8 +1,10 @@
 # 05. Backups and recovery
 
-Backups on this platform are **automated and proven**, not aspirational.
-Two executable procedures own all R2 backup/restore traffic; no control
-plane holds an S3 destination by design (single backup plane, no persisted
+The existing host and workload backups are automated and restore-tested.
+The OpenBao Neon-to-R2 addition is prepared but not live: it still needs
+its OpenBao credential entry and policy, host installation, and an isolated
+restore proof. Three executable procedures will own scheduled R2 backup
+traffic; no control plane holds an S3 destination by design (single backup plane, no persisted
 R2 copy anywhere; R2 credentials travel memory-only from OpenBao on every
 run). Do NOT create a control-plane S3 destination: it would reintroduce
 an at-rest credential copy for zero coverage gain.
@@ -12,7 +14,7 @@ Survival goals:
 - a broken deployment/application;
 - loss/corruption of the entire VPS.
 
-## Backup layers (implemented)
+## Backup layers
 
 ```text
 Layer 0  secrets needed for recovery
@@ -22,15 +24,19 @@ Layer 0  secrets needed for recovery
 Layer 1  Nomad cluster state
          -> host timer snapshot save -> Cloudflare R2 (daily, 14-day retention)
 
-Layer 2  application databases
+Layer 2  OpenBao Neon storage database (prepared; not live)
+         -> Neon point-in-time branch -> pg_dump openbao only -> R2 openbao/
+            (size + SHA-256 read-back, 14-day retention)
+
+Layer 3  application databases
          -> host timer pg_dump -Fc per DB -> R2 app-databases/ (+ manifest
             with tables/rows counts)
 
-Layer 3  persistent volumes/directories
+Layer 4  persistent volumes/directories
          -> host timer tar snapshots -> R2 app-volumes/ + app-binds/
             (+ manifest with file counts and full workload topology)
 
-Layer 4  whole-VPS safety net
+Layer 5  whole-VPS safety net
          -> OVH automated backup / optional snapshot
 ```
 
@@ -38,8 +44,10 @@ The timer is `host-backup.timer` (daily 02:00 UTC, Persistent=true) driving
 `host-backup.service`, whose `ExecStart` lines run the snapshot backup
 (`/root/host-backup/backup-to-r2.sh`) and the workload backup
 (`scripts/backup-app-workloads.sh`) through the memory-only wrapper
-(`scripts/fetch-r2-env.sh -- <script>`). The only secret file on the host is
-the least-privilege OpenBao accessor token (`openbao-token`, 0600,
+(`scripts/fetch-r2-env.sh -- <script>`). The Neon backup uses
+`scripts/fetch-openbao-db-env.sh` and `scripts/backup-openbao-db.sh`. The
+only secret file on the host is the least-privilege OpenBao accessor token
+(`openbao-token`, 0600,
 `backup-r2-reader` policy). R2 contract (all four escrowed at
 `secret/projects/nomad/BACKUP_R2`): `access_key_id`,
 `secret_access_key`, `bucket`, `endpoint` — preflight and fetch fail closed
@@ -70,6 +78,27 @@ disposable probe agent, verifies known data (jobs registered + node
 healthy), drops the probe, reports `RESTORE_OK` (fail closed).
 
 ## 3. Database backups (automated)
+
+### OpenBao's Neon storage database (prepared; not live)
+
+`scripts/backup-openbao-db.sh` creates a timestamped Neon point-in-time
+branch and read-write compute, dumps only the `openbao` database, verifies
+the R2 object by size and SHA-256 read-back, deletes the temporary branch,
+then publishes a manifest. Its R2 prefix is `openbao/`; only completed
+payloads with manifests are treated as valid. Objects older than 14 days are
+pruned. The Neon branch temporarily includes the sibling `neondb` database,
+but that database is never exported and the branch is deleted after each run.
+
+The host accessor policy must be granted read access to
+`secret/data/projects/nomad/OPENBAO_NEON_BACKUP` in addition to the existing
+R2 fields. The expected entry fields are `api_key`, `project_id`,
+`parent_branch_id`, `database`, `username`, and `password`; the Neon API key
+must be scoped to this project. Until the entry and policy exist, the new
+credential wrapper exits nonzero and the timer reports failure. Code tests
+do not prove a live R2 backup or restore.
+
+The source Neon project runs PostgreSQL 18. The host installer uses the
+official PostgreSQL APT repository to provision its PostgreSQL 18 client.
 
 `scripts/backup-app-workloads.sh` discovers every PostgreSQL database in
 non-infrastructure containers, dumps each (`-Fc`), records tables/rows per
@@ -223,6 +252,7 @@ record.
 | Nomad bootstrap material | OpenBao `NOMAD_BOOTSTRAP` | after install/change | yes (escrow verified; recovery drill at cutover) |
 | Provisioning SSH keys | OpenBao | after key changes | yes |
 | Nomad snapshots | R2 (host timer) | daily | cutover drill (M5 gate) |
+| OpenBao Neon storage DB | R2 `openbao/` | daily (prepared; not live) | no — isolated restore pending |
 | Application DBs | R2 `app-databases/` | daily | yes (3 live recreates) |
 | Persistent mounts | R2 `app-volumes/`/`app-binds/` | daily | yes (byte-identical) |
 | Whole VPS | OVH Automated Backup | daily | yes (API-verified 2026-09-14: `state: enabled`, schedule `14:59:00` UTC, rotation 1; no restore points listed yet) |
@@ -252,6 +282,7 @@ nightly R2 keys.
 - [x] bootstrap material exists outside the VPS (OpenBao `NOMAD_BOOTSTRAP`)
 - [x] Nomad snapshots land in R2 (nightly timer; `RESTORE_OK` at cutover drill)
 - [x] every important database has its own R2 backup (per-DB dumps + manifest)
+- [ ] OpenBao Neon storage DB lands in R2 and restores in isolated OpenBao
 - [x] every irreplaceable volume/directory is identified and backed up (coverage gate enforces)
 - [x] OVH daily Automated Backup is verified (read-only API 2026-09-14:
   `automated-backup get-config` → `state: enabled`, schedule 14:59 UTC;

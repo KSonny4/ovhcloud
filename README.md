@@ -49,6 +49,7 @@ The implementation handoff, evidence table, IaC boundaries and authorized-apply 
 7. [Operate and upgrade the server](docs/06-operations.md)
 8. [Run a private Docker registry](docs/09-docker-registry.md)
 9. [Cut over the live host (operator-gated)](docs/10-cutover.md)
+10. [Migrate OpenBao from the Pi to Nomad](docs/12-openbao-migration.md)
 
 There is also a read-only [`scripts/healthcheck.sh`](scripts/healthcheck.sh) for routine server checks.
 
