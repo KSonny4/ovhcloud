@@ -1,11 +1,11 @@
 # Dump stack on Nomad — restored 2026-09-19 from the decommissioned old VPS.
 #
 # Shape: postgres (owns /opt/nomad-volumes/dump-pg-prod, PG 17, single-writer)
-# + app (node dist/server/server.mjs on :3000, media at
+# + app (node dist/server/server.mjs on the tunnel's loopback port, media at
 # /opt/nomad-volumes/dump-prod-media). Image rescued from the old registry
 # blobs and re-pushed as registry.pkubelka.cz/dump:restored-20260919.
-# Conventions follow jobs/cognee.nomad.hcl: host network_mode, dynamic
-# loopback ports, TCP checks, no public listeners.
+# Conventions follow jobs/cognee.nomad.hcl: host network_mode, loopback
+# ports, TCP checks, no public listeners.
 #
 # Secrets arrive as HCL2 vars at the deploy edge (values from Bao):
 #   nomad job run -var="db_password=..." jobs/dump.nomad.hcl
@@ -65,6 +65,8 @@ job "dump" {
       }
       port "app" {
         host_network = "loopback"
+        # Cloudflare's dump ingress uses this fixed loopback origin port.
+        static       = 30692
       }
     }
 
