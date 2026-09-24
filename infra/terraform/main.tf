@@ -269,9 +269,9 @@ resource "cloudflare_zero_trust_tunnel_cloudflared_config" "edge_new" {
         service  = "http://localhost:30018"
       },
       {
-        # Resurrected 2026-09-19: dump app. DYNAMIC origin port. DNS for
-        # dump.petrzdena.cz lives outside this account — repoint its CNAME
-        # to the edge_new tunnel hostname out-of-band (operator).
+        # Dump app uses fixed loopback port 30692 to keep the tunnel origin
+        # stable across Nomad allocations. DNS for dump.petrzdena.cz lives
+        # outside this account and points to the edge_new tunnel hostname.
         hostname = "dump.petrzdena.cz"
         service  = "http://localhost:30692"
       },
