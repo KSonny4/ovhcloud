@@ -143,7 +143,7 @@ job "dump" {
 
       config {
         network_mode = "host"
-        image = "registry.pkubelka.cz/dump:restored-20260919@sha256:77cccb01cf4862de2d3171d9dbe0a11ed9859bc0bdeba98b9ad477912c8512cc"
+        image = "registry.pkubelka.cz/dump:e8e6b06@sha256:a1ed38d1b858a9309915d13bccf17e7d825d8798112d1be419b4984dd73faff6"
         ports = ["app"]
         # Nomad runs as root (no docker config): pull creds via vars.
         auth {
@@ -160,6 +160,7 @@ job "dump" {
       # HCL2 vars, and secrets must not transit extra files anyway.
       env {
         PORT            = "${NOMAD_PORT_app}"
+        PUBLIC_ORIGIN   = "https://dump.petrzdena.cz"
         DATABASE_URL    = "postgres://dump:${var.db_password}@127.0.0.1:${NOMAD_PORT_db}/dump"
         DB              = "postgres://dump:${var.db_password}@127.0.0.1:${NOMAD_PORT_db}/dump"
         DB_APPLY_SCHEMA = "true"
