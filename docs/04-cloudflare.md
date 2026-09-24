@@ -31,7 +31,16 @@ What the edge stage creates and verifies (idempotent, fail closed):
   second plan (encrypted R2 backend required; backendless mode refuses
   `--apply`).
 
-## 2. Daily use: SSH through the tunnel (workstation)
+## 2. Daily use: SSH (two routes — pick the right one)
+
+**Tunnel SSH = human workstation path.** It requires browser-based
+Cloudflare Access authentication, which agents do not have. An agent
+that blocks asking a human to authenticate `ovh-cloudflare` is on the
+wrong route — it must switch to direct SSH below instead of treating
+the Access login prompt (`302`, `websocket: bad handshake`) as
+progress.
+
+### 2a. Tunnel SSH (human workstations only)
 
 ```bash
 brew install cloudflared  # or your package manager
@@ -49,6 +58,20 @@ Host ovh-cloudflare
 
 Access authenticates you, then the native SSH session establishes. Public
 TCP 22 stays closed; the daemon listens locally for the tunnel only.
+First connection opens the browser for Access login — that human step is
+the reason this route is unsuitable for agents.
+
+### 2b. Direct SSH (agent path — no Access hop)
+
+Agents use direct SSH to the current primary with the owner-provisioned
+key (`ovh_coolify_ed25519`, `ubuntu` user). Resolve the primary IP and
+key per deploy from the overlay/issue/journal, or from the OVH API via
+Bao `projects/ovhcloud/OVH_API` — node identity is instance data, never
+a guess. Labelled fallback (observed 2026-09-24): `148.113.245.89`
+(`vps-c85da816`, `os-bhs6`, hostname `ovh-nomad-fresh`). Retired:
+`57.129.155.203` (`vps-1525c977`, STOPPED — port 22 times out, do not
+use). Nomad `:4646` and registry `:5000` listen on loopback; all agent
+HTTP runs on the box over this SSH session, never remote.
 
 ## 3. R2 backup storage (the single dashboard exception)
 
@@ -76,7 +99,8 @@ dashboard click.
 - [x] Nomad leader endpoint 200 via service token; SSH route gated
 - [x] generated IaC adopted with zero-change plan
 - [x] no origin A records; no control-plane S3 destination
-- [x] workstation SSH via tunnel works
+- [x] workstation SSH via tunnel works (human path, §2a)
+- [x] agent SSH via direct route documented with derive-not-guess primary (§2b)
 
 Next: [05. Backups and recovery](05-backup-recovery.md)
 
