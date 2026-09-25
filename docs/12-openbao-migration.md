@@ -1,16 +1,23 @@
 # OpenBao to Nomad migration
 
-## Status and current stop conditions
+## Single-instance move
 
-The Nomad job and Neon-to-R2 backup implementation are prepared but neither
-is live. Do not start a Nomad OpenBao allocation on the shared database or
-move the service hostname until the existing node is HA-configured, private
-two-way cluster traffic is proven, and Nomad administration is available.
+The requested move uses one OpenBao process at a time against the existing
+Neon PostgreSQL database. PostgreSQL HA and OpenBao cluster traffic are not
+part of this move. Starting the Nomad allocation while the Pi process is
+running would create two writers; stop the Pi process first and keep it
+stopped until rollback or the move is accepted.
 
-Nomad Variables protect values with Nomad's keyring, but Nomad's default
-AEAD key encryption key is held in Raft. The Raft snapshot and the Nomad
-recovery material therefore remain part of this service's secret recovery
-boundary; this is a known limitation of the existing single-node platform.
+The production OpenBao 2.6.2 state was backed up to R2 and the dump was
+restored into an isolated PostgreSQL 18 instance. The restored OpenBao was
+unsealed and an authenticated KV read succeeded. The daily Neon backup is
+still not scheduled: its runtime secret entry and reader-policy grant have
+not been provisioned.
+
+Nomad Variables protect the PostgreSQL URL with Nomad's keyring. Nomad's
+default AEAD key encryption key is held in Raft, so retain the existing
+Nomad snapshot and bootstrap material as part of this service's recovery
+boundary.
 
 ## Neon database backup to Cloudflare R2
 
@@ -35,36 +42,29 @@ Project's signed APT repository and installs its PostgreSQL 18 client. The
 credential wrapper keeps Neon and R2 credentials in process memory and does
 not put them in arguments, logs, manifests, or Git.
 
-## HA-assisted migration order
+## Cutover order
 
-1. Establish a private network path between Pi and OVH. Define the Nomad
-   host network `openbao-cluster` on the private interface only, allow TCP
-   `8201` only between the two Bao hosts, and prove both directions before
-   proceeding. Keep the API listener on OVH loopback `8200`. Current probes
-   fail this gate.
-2. Configure Pi OpenBao for PostgreSQL HA while it remains the public leader.
-   Confirm its existing storage table and secret reads still work.
-3. Store the PostgreSQL connection URL in Nomad Variable
+1. Store the existing PostgreSQL connection URL in Nomad Variable
    `nomad/jobs/openbao/openbao/server` with the `connection_url` item. The
    task's Nomad workload identity reads this job-owned path; a 0600 template
    file loads `BAO_PG_CONNECTION_URL` into the task. The job specification
    and job history contain only the variable path.
-4. Run `jobs/openbao.nomad.hcl` with the private cluster address.
-   Unseal the Nomad node using operator-held Shamir shares in the approved
-   secure terminal. Never put share values in Nomad, Git, or this runbook.
-5. Verify both nodes report HA enabled and a stable leader over Neon. Write a
-   synthetic marker through the public Pi endpoint and confirm readback from
-   the Nomad node.
-6. Change the existing Cloudflare Tunnel route for
-   `secrets.pkubelka.cz` to the Nomad loopback API only after step 5 passes.
-   Verify authenticated API behavior and a synthetic write/read/delete
-   through the public hostname. Keep the Pi running as rollback standby.
-7. Keep Pi as rollback until an R2 backup has completed and its isolated
-   restore has passed. Roll back by restoring the tunnel route to Pi while
-   that node remains healthy.
-8. After the OpenBao 2.6.2 backup and restore proof, patch both nodes to
-   OpenBao 2.6.3 as a separate rolling change and repeat the HA and API
-   checks.
+2. Pre-stage the Nomad job and the `secrets.pkubelka.cz` ingress on the
+   Nomad tunnel while the public DNS record still points to the Pi tunnel.
+   The API listener remains loopback-only on Nomad port 8200.
+3. Stop the Pi OpenBao process. Confirm it is stopped before starting the
+   Nomad job so only one process writes to Neon.
+4. Start one Nomad allocation. The operator unseals it with held Shamir
+   shares in the secure terminal; never put shares in Nomad, Git, or this
+   runbook. Verify authenticated KV reads through the local Nomad listener.
+5. Change the `secrets.pkubelka.cz` DNS CNAME to the Nomad tunnel and verify
+   authenticated API reads plus a synthetic write/read/delete through the
+   public hostname.
+6. Keep the Pi process stopped as rollback. To roll back, stop the Nomad
+   allocation, start OpenBao on the Pi, then point the DNS CNAME back to the
+   `secrets-openbao` tunnel. Never run both processes against Neon together.
+7. After the move, run the verified Neon-to-R2 backup and retain the Pi
+   rollback option until the Nomad endpoint is stable.
 
 ## First restore proof
 
@@ -74,6 +74,6 @@ start an isolated OpenBao 2.6.2 instance against that database. An operator
 unseals it with held shares and verifies a synthetic marker. Delete the
 disposable database and any temporary Neon branch after the proof.
 
-Do not mark the backup or migration complete until the restore and public
-endpoint checks pass. A created R2 object, running Nomad allocation, or
-successful health check alone is not sufficient proof.
+Do not mark the migration complete until the restore and public endpoint
+checks pass. A created R2 object, running Nomad allocation, or successful
+health check alone is not sufficient proof.

@@ -1,9 +1,10 @@
 # 05. Backups and recovery
 
 The existing host and workload backups are automated and restore-tested.
-The OpenBao Neon-to-R2 addition is prepared but not live: it still needs
-its OpenBao credential entry and policy, host installation, and an isolated
-restore proof. Three executable procedures will own scheduled R2 backup
+The OpenBao Neon-to-R2 backup has one verified live dump and isolated
+restore proof, but its daily schedule is not live: it still needs the
+OpenBao credential entry and policy, host installation, and timer update.
+Three executable procedures will own scheduled R2 backup
 traffic; no control plane holds an S3 destination by design (single backup plane, no persisted
 R2 copy anywhere; R2 credentials travel memory-only from OpenBao on every
 run). Do NOT create a control-plane S3 destination: it would reintroduce
@@ -24,7 +25,7 @@ Layer 0  secrets needed for recovery
 Layer 1  Nomad cluster state
          -> host timer snapshot save -> Cloudflare R2 (daily, 14-day retention)
 
-Layer 2  OpenBao Neon storage database (prepared; not live)
+Layer 2  OpenBao Neon storage database (one live run; daily schedule pending)
          -> Neon point-in-time branch -> pg_dump openbao only -> R2 openbao/
             (size + SHA-256 read-back, 14-day retention)
 
@@ -79,7 +80,7 @@ healthy), drops the probe, reports `RESTORE_OK` (fail closed).
 
 ## 3. Database backups (automated)
 
-### OpenBao's Neon storage database (prepared; not live)
+### OpenBao's Neon storage database (daily schedule pending)
 
 `scripts/backup-openbao-db.sh` creates a timestamped Neon point-in-time
 branch and read-write compute, dumps only the `openbao` database, verifies
@@ -89,13 +90,11 @@ payloads with manifests are treated as valid. Objects older than 14 days are
 pruned. The Neon branch temporarily includes the sibling `neondb` database,
 but that database is never exported and the branch is deleted after each run.
 
-The host accessor policy must be granted read access to
-`secret/data/projects/nomad/OPENBAO_NEON_BACKUP` in addition to the existing
-R2 fields. The expected entry fields are `api_key`, `project_id`,
-`parent_branch_id`, `database`, `username`, and `password`; the Neon API key
-must be scoped to this project. Until the entry and policy exist, the new
-credential wrapper exits nonzero and the timer reports failure. Code tests
-do not prove a live R2 backup or restore.
+The one-off backup and isolated PostgreSQL 18 restore have passed. The daily
+schedule still needs `secret/projects/nomad/OPENBAO_NEON_BACKUP`, the host
+accessor policy grant, client installation, and timer update. Until those
+are provisioned, the timer does not run this backup; the verified R2 object
+is not an automated backup.
 
 The source Neon project runs PostgreSQL 18. The host installer uses the
 official PostgreSQL APT repository to provision its PostgreSQL 18 client.
