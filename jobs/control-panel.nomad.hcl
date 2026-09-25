@@ -52,6 +52,18 @@ variable "grafana_sa_token" {
   description = "GRAFANA_SERVICE_ACCOUNT_TOKEN: meowlabs stack service-account token (OpenBao secret/projects/nomad/GRAFANA_SERVICE_ACCOUNT_TOKEN field value, non-expiring). Empty = Grafana panels inert."
 }
 
+variable "unleash_admin_token" {
+  type        = string
+  default     = ""
+  description = "UNLEASH_ADMIN_TOKEN: Unleash Admin API token (OpenBao secret/projects/unleash/server field admin_token). Empty = automatization toggles inert."
+}
+
+variable "unleash_url" {
+  type        = string
+  default     = "https://unleash.pkubelka.cz"
+  description = "UNLEASH_URL: Unleash server base URL (no /api suffix; the client appends admin paths)."
+}
+
 variable "nomad_token" {
   type        = string
   default     = ""
@@ -143,6 +155,8 @@ job "control-panel" {
         GRAFANA_SERVICE_ACCOUNT_TOKEN = "${var.grafana_sa_token}"
         NOMAD_TOKEN                 = "${var.nomad_token}"
         CONTROL_INGEST_TOKEN        = "${var.ingest_token}"
+        UNLEASH_ADMIN_TOKEN         = "${var.unleash_admin_token}"
+        UNLEASH_URL                 = "${var.unleash_url}"
       }
 
       resources {

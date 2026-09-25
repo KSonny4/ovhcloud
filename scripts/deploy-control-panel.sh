@@ -46,12 +46,16 @@ vars=(
   grafana_sa_token:GRAFANA_SERVICE_ACCOUNT_TOKEN
   nomad_token:NOMAD_TOKEN
   ingest_token:CONTROL_INGEST_TOKEN
+  unleash_admin_token:UNLEASH_ADMIN_TOKEN
+  unleash_url:UNLEASH_URL
 )
 
 NOMAD_TOKEN="$(bao_field acl_token projects/nomad/NOMAD_BOOTSTRAP)"
 export NOMAD_TOKEN
 grafana_token="$(bao_field value projects/nomad/GRAFANA_SERVICE_ACCOUNT_TOKEN)"
 [ -n "$grafana_token" ] || { echo 'OpenBao GRAFANA_SERVICE_ACCOUNT_TOKEN is empty; refusing.' >&2; exit 2; }
+unleash_admin_token="$(bao_field admin_token projects/unleash/server)"
+[ -n "$unleash_admin_token" ] || { echo 'OpenBao projects/unleash/server admin_token is empty; refusing.' >&2; exit 2; }
 
 sock="$(mktemp -u "${TMPDIR:-/tmp}/cp-deploy.XXXXXX")"
 local_port=$((20000 + RANDOM % 20000))
@@ -68,6 +72,8 @@ for pair in "${vars[@]}"; do
   var="${pair%%:*}" env_name="${pair#*:}"
   value="$(jq -r --arg k "$env_name" '.Job.TaskGroups[].Tasks[] | select(.Name=="server") | .Env[$k] // ""' <<<"$live")"
   [ "$var" = grafana_sa_token ] && value="$grafana_token"
+  [ "$var" = unleash_admin_token ] && value="$unleash_admin_token"
+  [ "$var" = unleash_url ] && value="${value:-https://unleash.pkubelka.cz}"
   export "NOMAD_VAR_${var}=${value}"
 done
 
