@@ -3,7 +3,9 @@
 The existing host and workload backups are automated and restore-tested.
 The OpenBao Neon-to-R2 backup has one verified live dump and isolated
 restore proof, but its daily schedule is not live: it still needs the
-OpenBao credential entry and policy, host installation, and timer update.
+worker policy grant and first service run. The credential entry is provisioned.
+Canonical Bao backup setup now lives in [secrets-local](https://github.com/KSonny4/secrets-local);
+use its installer and `docs/BACKUPS.md`.
 Three executable procedures will own scheduled R2 backup
 traffic; no control plane holds an S3 destination by design (single backup plane, no persisted
 R2 copy anywhere; R2 credentials travel memory-only from OpenBao on every
@@ -91,10 +93,10 @@ pruned. The Neon branch temporarily includes the sibling `neondb` database,
 but that database is never exported and the branch is deleted after each run.
 
 The one-off backup and isolated PostgreSQL 18 restore have passed. The daily
-schedule still needs `secret/projects/nomad/OPENBAO_NEON_BACKUP`, the host
-accessor policy grant, client installation, and timer update. Until those
-are provisioned, the timer does not run this backup; the verified R2 object
-is not an automated backup.
+schedule still needs the host accessor policy grant and a successful first
+service run. The Neon entry and isolated client tools are provisioned. Follow
+the canonical secrets-local installer; the verified R2 object alone is not
+an automated backup.
 
 The source Neon project runs PostgreSQL 18. The host installer uses the
 official PostgreSQL APT repository to provision its PostgreSQL 18 client.
@@ -251,7 +253,7 @@ record.
 | Nomad bootstrap material | OpenBao `NOMAD_BOOTSTRAP` | after install/change | yes (escrow verified; recovery drill at cutover) |
 | Provisioning SSH keys | OpenBao | after key changes | yes |
 | Nomad snapshots | R2 (host timer) | daily | cutover drill (M5 gate) |
-| OpenBao Neon storage DB | R2 `openbao/` | daily (prepared; not live) | no — isolated restore pending |
+| OpenBao Neon storage DB | R2 `openbao/` | daily (worker grant pending) | yes — earlier isolated restore and authenticated read |
 | Application DBs | R2 `app-databases/` | daily | yes (3 live recreates) |
 | Persistent mounts | R2 `app-volumes/`/`app-binds/` | daily | yes (byte-identical) |
 | Whole VPS | OVH Automated Backup | daily | yes (API-verified 2026-09-14: `state: enabled`, schedule `14:59:00` UTC, rotation 1; no restore points listed yet) |
@@ -281,7 +283,8 @@ nightly R2 keys.
 - [x] bootstrap material exists outside the VPS (OpenBao `NOMAD_BOOTSTRAP`)
 - [x] Nomad snapshots land in R2 (nightly timer; `RESTORE_OK` at cutover drill)
 - [x] every important database has its own R2 backup (per-DB dumps + manifest)
-- [ ] OpenBao Neon storage DB lands in R2 and restores in isolated OpenBao
+- [x] OpenBao Neon storage DB lands in R2 and restores in isolated OpenBao
+- [ ] Recurring Bao backup worker can read the Neon credential and completes its first service run
 - [x] every irreplaceable volume/directory is identified and backed up (coverage gate enforces)
 - [x] OVH daily Automated Backup is verified (read-only API 2026-09-14:
   `automated-backup get-config` → `state: enabled`, schedule 14:59 UTC;

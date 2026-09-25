@@ -1,79 +1,38 @@
-# OpenBao to Nomad migration
+# OpenBao on Nomad
 
-## Single-instance move
+The canonical private setup is now [KSonny4/secrets-local](https://github.com/KSonny4/secrets-local).
+Its `jobs/openbao.nomad.hcl`, `docs/NOMAD.md`, `docs/WORKSTATION.md`, and
+`docs/BACKUPS.md` own Bao deployment, recovery, login, lookup, and backup setup.
+This repository owns the Nomad host, edge proxy, tunnel, and fleet backups.
+The local Bao job is a mirror; use the canonical repository for future changes.
 
-The requested move uses one OpenBao process at a time against the existing
-Neon PostgreSQL database. PostgreSQL HA and OpenBao cluster traffic are not
-part of this move. Starting the Nomad allocation while the Pi process is
-running would create two writers; stop the Pi process first and keep it
-stopped until rollback or the move is accepted.
+## Verified migration — 2026-09-25
 
-The production OpenBao 2.6.2 state was backed up to R2 and the dump was
-restored into an isolated PostgreSQL 18 instance. The restored OpenBao was
-unsealed and an authenticated KV read succeeded. The daily Neon backup is
-still not scheduled: its runtime secret entry and reader-policy grant have
-not been provisioned.
+- Operator revised the scope to two HA processes on the existing single host.
+  Both are unsealed against the existing Neon PostgreSQL database.
+- Public `secrets.pkubelka.cz` uses the Nomad tunnel and Traefik active-instance
+  health routing. Pi is stopped with restart policy disabled.
+- Pausing the active process proved a public authenticated read through the
+  new active instance after 23.59 seconds. Both listeners passed reads afterward.
+- Workstation AppRole login no longer depends on Pi. Requested Grafana entries
+  and `secret/projects/nomad/NOMAD_BOOTSTRAP` are readable; its `acl_token`
+  is the agreed deployment credential, rather than absent `projects/dump/acl`.
+- Same-host HA does not cover host or edge-proxy failure. Each restarted process
+  still needs two Shamir unseal shares. Fujitsu placement is tracked in
+  [secrets-local#2](https://github.com/KSonny4/secrets-local/issues/2).
 
-Nomad Variables protect the PostgreSQL URL with Nomad's keyring. Nomad's
-default AEAD key encryption key is held in Raft, so retain the existing
-Nomad snapshot and bootstrap material as part of this service's recovery
-boundary.
+## Backups
 
-## Neon database backup to Cloudflare R2
+An earlier R2 export was restored into isolated PostgreSQL 18/OpenBao 2.6.2,
+unsealed, and read successfully. The project-scoped Neon credential now exists
+in Bao. The existing worker still needs read permission for
+`secret/data/projects/nomad/OPENBAO_NEON_BACKUP`; recurring execution is pending
+that grant and a successful first service run. Follow the canonical backup
+installer, not the earlier installer from this implementation branch.
 
-`scripts/backup-openbao-db.sh` creates a timestamped Neon point-in-time
-branch at backup start, starts a read-write compute, waits for PostgreSQL,
-and runs `pg_dump -Fc` against only the `openbao` database. The temporary
-branch clones the Neon project while active, including sibling databases;
-only `openbao` is exported. The branch is deleted before a complete manifest
-is published. The dump and manifest are each checked by R2 object size and
-read-back SHA-256. Objects under `openbao/` older than 14 days are pruned.
+## Recovery
 
-Runtime fields are read by name from OpenBao
-`secret/projects/nomad/OPENBAO_NEON_BACKUP`: `api_key`, `project_id`,
-`parent_branch_id`, `database`, `username`, and `password`. The API key must
-be scoped to the intended Neon project. R2 fields remain at
-`secret/projects/nomad/BACKUP_R2`. The host accessor policy must also grant
-read access to the new entry. Neither that entry nor policy change is live;
-until provisioned the wrapper fails closed.
-
-The Neon project is PostgreSQL 18. The host installer uses the PostgreSQL
-Project's signed APT repository and installs its PostgreSQL 18 client. The
-credential wrapper keeps Neon and R2 credentials in process memory and does
-not put them in arguments, logs, manifests, or Git.
-
-## Cutover order
-
-1. Store the existing PostgreSQL connection URL in Nomad Variable
-   `nomad/jobs/openbao/openbao/server` with the `connection_url` item. The
-   task's Nomad workload identity reads this job-owned path; a 0600 template
-   file loads `BAO_PG_CONNECTION_URL` into the task. The job specification
-   and job history contain only the variable path.
-2. Pre-stage the Nomad job and the `secrets.pkubelka.cz` ingress on the
-   Nomad tunnel while the public DNS record still points to the Pi tunnel.
-   The API listener remains loopback-only on Nomad port 8200.
-3. Stop the Pi OpenBao process. Confirm it is stopped before starting the
-   Nomad job so only one process writes to Neon.
-4. Start one Nomad allocation. The operator unseals it with held Shamir
-   shares in the secure terminal; never put shares in Nomad, Git, or this
-   runbook. Verify authenticated KV reads through the local Nomad listener.
-5. Change the `secrets.pkubelka.cz` DNS CNAME to the Nomad tunnel and verify
-   authenticated API reads plus a synthetic write/read/delete through the
-   public hostname.
-6. Keep the Pi process stopped as rollback. To roll back, stop the Nomad
-   allocation, start OpenBao on the Pi, then point the DNS CNAME back to the
-   `secrets-openbao` tunnel. Never run both processes against Neon together.
-7. After the move, run the verified Neon-to-R2 backup and retain the Pi
-   rollback option until the Nomad endpoint is stable.
-
-## First restore proof
-
-Download the R2 dump and manifest to an isolated PostgreSQL 18 instance.
-Compare bytes and SHA-256 with the manifest, restore with `pg_restore`, and
-start an isolated OpenBao 2.6.2 instance against that database. An operator
-unseals it with held shares and verifies a synthetic marker. Delete the
-disposable database and any temporary Neon branch after the proof.
-
-Do not mark the migration complete until the restore and public endpoint
-checks pass. A created R2 object, running Nomad allocation, or successful
-health check alone is not sufficient proof.
+Follow the canonical Nomad runbook. Stop both Nomad instances before starting
+and unsealing the non-HA Pi rollback copy. Nomad's encrypted variable holds the
+PostgreSQL URL; retain Nomad snapshots and bootstrap material. Never copy
+credentials, database dumps, or unseal shares into either repository.
