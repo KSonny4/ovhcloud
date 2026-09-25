@@ -128,7 +128,7 @@ job "control-panel" {
 
       config {
         network_mode = "host"
-        image = "registry.pkubelka.cz/control-panel:ui-0db04a5@sha256:00c0289b058f26fbe5cf8b154611274fe05d1e22d9fac2a37c38b3a542fb0ffa"
+        image = "registry.pkubelka.cz/control-panel:ui-978bf11@sha256:961b7db9bb381b2ab7f506a576ce1cf89f55b5d810264cb9fe3ac5d613a0e9b6"
         ports = ["http"]
 
         volumes = [
