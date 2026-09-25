@@ -17,7 +17,9 @@
 # until wired. Public hostname control.pkubelka.cz is a parent-phase tunnel
 # ingress re-point (DNS already CNAMEs the retired tunnel).
 #
-# Deploy: nomad job run jobs/control-panel.nomad.hcl
+# Deploy: bash scripts/deploy-control-panel.sh [--apply]
+#   (Grafana token from OpenBao; every other secret carried over from the
+#   live job, so a redeploy never empties one.)
 # Roll back: nomad job revert control-panel
 
 variable "cf_dns_api_token" {
@@ -47,7 +49,7 @@ variable "github_token" {
 variable "grafana_sa_token" {
   type        = string
   default     = ""
-  description = "TODO: GRAFANA_SERVICE_ACCOUNT_TOKEN (user-held, meowlabs Grafana Cloud). Empty = Grafana panels inert."
+  description = "GRAFANA_SERVICE_ACCOUNT_TOKEN: meowlabs stack service-account token (OpenBao secret/projects/nomad/GRAFANA_SERVICE_ACCOUNT_TOKEN field value, non-expiring). Empty = Grafana panels inert."
 }
 
 variable "nomad_token" {
@@ -69,11 +71,13 @@ job "control-panel" {
   group "control-panel" {
     count = 1
 
-    # DYNAMIC loopback port (cognee pattern 2026-09-19): statics on host lo
-    # get squatted by phantom responders; the tunnel re-points post-deploy.
+    # Cloudflare's control ingress uses this fixed loopback origin port
+    # (infra/terraform/main.tf). A dynamic port changed on every allocation
+    # and left control.pkubelka.cz answering 502 (2026-09-25).
     network {
       port "http" {
         host_network = "loopback"
+        static       = 30811
       }
     }
 
@@ -130,7 +134,8 @@ job "control-panel" {
         CONTROL_PANEL_URL     = "https://control.pkubelka.cz"
         CONTROL_HOST_NAME     = "vps-c85da816"
         NOMAD_ADDR            = "http://127.0.0.1:4646"
-        # TODO (see vars): empty until the user supplies values.
+        GRAFANA_URL           = "https://meowlabs.grafana.net"
+        # Secrets (see vars): empty ones keep their feature inert.
         CF_DNS_API_TOKEN            = "${var.cf_dns_api_token}"
         CF_ACCESS_CLIENT_ID         = "${var.cf_access_client_id}"
         CF_ACCESS_CLIENT_SECRET     = "${var.cf_access_client_secret}"

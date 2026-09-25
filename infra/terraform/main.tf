@@ -259,7 +259,8 @@ resource "cloudflare_zero_trust_tunnel_cloudflared_config" "edge_new" {
         service  = "http://localhost:26065"
       },
       {
-        # Resurrected 2026-09-19: MeowLabs Control. DYNAMIC origin port.
+        # MeowLabs Control uses fixed loopback port 30811 (jobs/control-panel.nomad.hcl)
+        # so the tunnel origin survives Nomad allocations.
         hostname = "control.${var.domain}"
         service  = "http://localhost:30811"
       },
