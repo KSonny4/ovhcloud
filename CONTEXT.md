@@ -1,6 +1,6 @@
 # Deployment context
 
-This repository is the source of truth for the OVHcloud VPS deployment runbook and its safe, non-live infrastructure plan.
+This repository (`KSonny4/platform`, formerly `KSonny4/ovhcloud`; Refs #15) is the source of truth for the OVHcloud VPS deployment runbook and its safe, non-live infrastructure plan.
 
 ## System boundary
 

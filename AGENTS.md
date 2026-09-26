@@ -1,4 +1,6 @@
-# ovhcloud — agent instructions
+# platform — agent instructions
+
+Repository: `KSonny4/platform` (renamed from `KSonny4/ovhcloud`; Refs #15).
 
 Source of truth for the OVHcloud VPS deployment runbook is [CONTEXT.md](CONTEXT.md);
 infra plan under `infra/terraform` (reviewable, non-live by default), scripts under `scripts/`.
