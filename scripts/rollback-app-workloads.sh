@@ -412,7 +412,9 @@ if [ -n "$recreate" ]; then
     run_args+=(-e "POSTGRES_USER=${cuser}" -e "POSTGRES_PASSWORD=${newpw}")
     docker run -d --name "$cname" "${run_args[@]}" "$cimage" ${cmd_args[@]+"${cmd_args[@]}"} >/dev/null 2>&1 || { echo "FAILED start ${cname}." >&2; FAILED=1; continue; }
     for net in $extra_nets; do
-      [ -n "$net" ] && docker network connect "$net" "$cname" >/dev/null 2>&1 || true
+      if [ -n "$net" ]; then
+        docker network connect "$net" "$cname" >/dev/null 2>&1 || true
+      fi
     done
     recreated_dbs="${recreated_dbs} ${cname}"
     sleep 8
@@ -468,7 +470,9 @@ if [ -n "$recreate" ]; then
     build_run_args || { echo "FAILED flags ${cname}." >&2; FAILED=1; continue; }
     if docker run -d --name "$cname" "${run_args[@]}" "$cimage" ${cmd_args[@]+"${cmd_args[@]}"} >/dev/null 2>&1; then
       for net in $extra_nets; do
-        [ -n "$net" ] && docker network connect "$net" "$cname" >/dev/null 2>&1 || true
+        if [ -n "$net" ]; then
+          docker network connect "$net" "$cname" >/dev/null 2>&1 || true
+        fi
       done
       sleep 5
       if docker inspect "$cname" --format '{{.State.Running}}' 2>/dev/null | grep -q true; then

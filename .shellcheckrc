@@ -1,0 +1,7 @@
+# Single source of truth for shellcheck options (local + CI must match).
+# - severity=style shows everything (error/warning/info/style); CI fails on any finding.
+# - enable=useless-use-of-cat: SC2002 is optional and off by default in
+#   shellcheck 0.11 (Homebrew) but on by default in the runner's older
+#   release. Enabling it explicitly makes both report the same set.
+severity=style
+enable=useless-use-of-cat

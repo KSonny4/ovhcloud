@@ -248,7 +248,7 @@ _s3mp_multipart_upload() {
       fi
       return 1
     fi
-    etag="$(cat "${S3MP_TMPDIR}/s3mp-etag.tmp" 2>/dev/null | tr -d '[:space:]\"' || true)"
+    etag="$(tr -d '[:space:]\"' < "${S3MP_TMPDIR}/s3mp-etag.tmp" 2>/dev/null || true)"
     rm -f "$partfile" "${S3MP_TMPDIR}/s3mp-etag.tmp"
     if [ -z "$etag" ]; then
       aws --endpoint-url "$endpoint" s3api abort-multipart-upload --bucket "$bucket" --key "$key" --upload-id "$upload_id" >/dev/null 2>&1 || true

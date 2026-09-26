@@ -23,7 +23,9 @@ while [ "$#" -gt 0 ]; do
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
-[ -n "$handoff" ] && [ -f "$handoff" ] || { echo 'handoff JSON file required.' >&2; exit 2; }
+if [ -z "$handoff" ] || [ ! -f "$handoff" ]; then
+  echo 'handoff JSON file required.' >&2; exit 2
+fi
 command -v terraform >/dev/null 2>&1 || { echo 'terraform is required.' >&2; exit 2; }
 command -v bao >/dev/null 2>&1 || { echo 'bao CLI is required.' >&2; exit 2; }
 [ -n "${BAO_ADDR:-}" ] || { echo 'BAO_ADDR must be set.' >&2; exit 2; }
