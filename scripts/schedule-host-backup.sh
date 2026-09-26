@@ -7,10 +7,10 @@
 #   every backup through fetch-r2-env.sh (OpenBao pull per run); no
 #   credential file is used, ever. This script never prints secret values.
 # - Installs: awscli + bao CLI (if missing), /root/host-backup/ scripts
-#   (snapshot backup, workload backup, fetch wrapper, both rollback
+#   (snapshot backup, workload backup, OpenBao Neon backup, fetch wrappers, both rollback
 #   procedures — a rollback-less schedule is refused),
 #   a systemd oneshot service + daily timer (02:00 UTC), 14-day retention.
-# - Runs the first backup immediately and verifies the object in R2.
+# - Runs the first snapshot + Neon backup immediately and verifies R2 objects.
 #
 # Usage (on the host, as root):
 #   bash scripts/schedule-host-backup.sh [--dry-run] [--install-only]
@@ -67,19 +67,51 @@ if ! command -v nomad >/dev/null 2>&1 && [ "$dry_run" -eq 0 ]; then
   echo 'nomad not found on this host; cannot snapshot cluster state.' >&2
   exit 2
 fi
+pg_bin_dir='/usr/lib/postgresql/18/bin'
+pg_dump_bin="${PG_DUMP_BIN:-${pg_bin_dir}/pg_dump}"
+if [ ! -x "$pg_dump_bin" ] && [ "$dry_run" -eq 0 ]; then
+  log 'installing PostgreSQL 18 client tools for the Neon PostgreSQL 18 database'
+  run apt-get update -qq
+  run apt-get install -y -qq ca-certificates curl postgresql-common
+  run install -d -m 0755 /usr/share/postgresql-common/pgdg
+  run curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc
+  codename="$(awk -F= '$1 == "VERSION_CODENAME" { print $2; exit }' /etc/os-release)"
+  architecture="$(dpkg --print-architecture)"
+  [ -n "$codename" ] || { echo 'cannot determine the Ubuntu codename for the PostgreSQL package source.' >&2; exit 2; }
+  cat >/etc/apt/sources.list.d/pgdg.sources <<PGDG_EOF
+Types: deb
+URIs: https://apt.postgresql.org/pub/repos/apt
+Suites: ${codename}-pgdg
+Architectures: ${architecture}
+Components: main
+Signed-By: /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc
+PGDG_EOF
+  run apt-get update -qq
+  run apt-get install -y -qq postgresql-client-18
+fi
+if [ "$dry_run" -eq 0 ] && { [ ! -x "${PG_DUMP_BIN:-${pg_bin_dir}/pg_dump}" ] || [ ! -x "${PG_ISREADY_BIN:-${pg_bin_dir}/pg_isready}" ]; }; then
+  echo 'PostgreSQL 18 client binaries are required for the Neon backup.' >&2
+  exit 2
+fi
+if ! command -v python3 >/dev/null 2>&1 && [ "$dry_run" -eq 0 ]; then
+  echo 'python3 is required for the OpenBao Neon backup.' >&2
+  exit 2
+fi
 
 backup_dir="${BACKUP_DIR:-/root/host-backup}"
 systemd_dir="${SYSTEMD_DIR:-/etc/systemd/system}"
 backup_script="${backup_dir}/backup-to-r2.sh"
 app_installed="${backup_dir}/backup-app-workloads.sh"
+openbao_installed="${backup_dir}/backup-openbao-db.sh"
 log "backup dir: ${backup_dir}"
 
 if [ "$dry_run" -eq 1 ]; then
   log "DRY-RUN: write ${backup_script} (snapshot save with retry-backoff -> multipart-routed upload behind the 4 GiB gate, prune keys older than 14 days)"
   log 'DRY-RUN: ship backup-upload.sh lib beside both backup commands'
+  log 'DRY-RUN: install Neon point-in-time OpenBao database backup (14-day R2 retention)'
   log 'DRY-RUN: install host-backup.service + host-backup.timer (daily 02:00 UTC, Persistent=true)'
   log 'DRY-RUN: systemctl daemon-reload, enable --now host-backup.timer'
-  log 'DRY-RUN: run first backup now and verify with s3api head-object'
+  log 'DRY-RUN: run first snapshot and Neon backups now; verify size and SHA-256 by R2 read-back'
   exit 0
 fi
 
@@ -121,6 +153,20 @@ if [ -f "$app_src" ]; then
   fi
 elif [ ! -f "$app_installed" ] && [ "$dry_run" -eq 0 ]; then
   echo 'backup-app-workloads.sh found neither beside this script nor installed; refusing to schedule a partial backup.' >&2
+  exit 2
+fi
+
+openbao_src="$(cd "$(dirname "$0")" && pwd)/backup-openbao-db.sh"
+openbao_impl_src="$(cd "$(dirname "$0")" && pwd)/backup-openbao-db.py"
+fetch_openbao_src="$(cd "$(dirname "$0")" && pwd)/fetch-openbao-db-env.sh"
+if [ -f "$openbao_src" ] && [ -f "$openbao_impl_src" ] && [ -f "$fetch_openbao_src" ]; then
+  run cp "$openbao_src" "$openbao_installed"
+  run cp "$openbao_impl_src" "${backup_dir}/backup-openbao-db.py"
+  run cp "$fetch_openbao_src" "${backup_dir}/fetch-openbao-db-env.sh"
+  run chmod 700 "$openbao_installed" "${backup_dir}/backup-openbao-db.py" "${backup_dir}/fetch-openbao-db-env.sh"
+  log 'installed Neon point-in-time OpenBao backup and memory-only credential wrapper.'
+elif [ "$dry_run" -eq 0 ]; then
+  echo 'OpenBao Neon backup script, implementation, or credential wrapper missing; refusing a schedule without the requested database backup.' >&2
   exit 2
 fi
 
@@ -205,7 +251,7 @@ fi
 # fails if either fails.
 cat >"${systemd_dir}/host-backup.service" <<SERVICE_EOF
 [Unit]
-Description=Nightly Nomad snapshot + application workload backup to R2
+Description=Nightly Nomad, application workload, and OpenBao Neon backups to R2
 Wants=network-online.target
 After=network-online.target docker.service nomad.service
 
@@ -213,6 +259,7 @@ After=network-online.target docker.service nomad.service
 Type=oneshot
 ExecStart=${backup_dir}/fetch-r2-env.sh -- ${backup_script}
 ExecStart=${backup_dir}/fetch-r2-env.sh -- ${app_installed}
+ExecStart=${backup_dir}/fetch-openbao-db-env.sh -- ${openbao_installed}
 SERVICE_EOF
 
 cat >"${systemd_dir}/host-backup.timer" <<'TIMER_EOF'
@@ -250,4 +297,5 @@ fi
 # First backup now through the fetch wrapper (proves the memory-only path
 # end to end; the accessor token file must already be provisioned).
 bash "${backup_dir}/fetch-r2-env.sh" -- bash "$backup_script"
-log 'schedule live: first backup completed and verified in R2; retention 14 days.'
+bash "${backup_dir}/fetch-openbao-db-env.sh" -- "$openbao_installed"
+log 'schedule live: Nomad snapshot and OpenBao Neon database backup completed and verified in R2; retention 14 days.'
