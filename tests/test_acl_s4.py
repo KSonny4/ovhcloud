@@ -41,8 +41,17 @@ KNOWN_SUBMIT_POLICIES = {"deployer.policy.hcl", "agent-sandbox.policy.hcl"}
 
 # Top-level HCL blocks that must not appear in the Slice 4 policies (a
 # Variables read would leak secrets; the rest are never deploy/sandbox
-# business). Checked across every acl/*.policy.hcl.
-FORBIDDEN_BLOCKS = {"operator", "agent", "quota", "plugin", "host_volume", "variables", "sentinel"}
+# business). Checked across every acl/*.policy.hcl. host_volume is NOT in
+# this set: it is governed by the targeted host-volume tests below
+# (deployer may mount exactly FORGEJO_HOST_VOLUMES; every other policy
+# forbids host_volume entirely).
+FORBIDDEN_BLOCKS = {"operator", "agent", "quota", "plugin", "variables", "sentinel"}
+
+# The ONLY host_volume names the deployer policy may grant. Mirrors
+# KSonny4/forgejo nomad/volumes/*.hcl (forgejo-pg-data, forgejo-data,
+# forgejo-runner-data); if that repo adds a volume, update this constant
+# deliberately — a 4th/wildcard name fails the tests below.
+FORGEJO_HOST_VOLUMES = ("forgejo-pg-data", "forgejo-data", "forgejo-runner-data")
 
 
 def _strip_comments(text: str) -> str:
@@ -81,6 +90,27 @@ def _capabilities(body: str) -> set[str]:
 
 def _policy_files() -> list[Path]:
     return sorted(ACL_DIR.glob("*.policy.hcl"))
+
+
+def _host_volume_violations(text: str) -> list[str]:
+    """Violations of the deployer host_volume contract in one policy text.
+
+    Empty list = exactly FORGEJO_HOST_VOLUMES, each with
+    capabilities == ["mount-readwrite"] and no `policy =` shorthand.
+    Anything else (missing/extra/wildcard name, wrong capabilities,
+    `policy = "write"` spelling) is a violation.
+    """
+    violations: list[str] = []
+    blocks = [(label, body) for kind, label, body in _top_level_blocks(text) if kind == "host_volume"]
+    labels = [label for label, _ in blocks]
+    if sorted(labels) != sorted(FORGEJO_HOST_VOLUMES):
+        violations.append(f"host_volume names {sorted(labels)} != {sorted(FORGEJO_HOST_VOLUMES)}")
+    for label, body in blocks:
+        if re.search(r"^\s*policy\s*=", body, re.MULTILINE):
+            violations.append(f"host_volume {label!r}: policy shorthand forbidden, use capabilities")
+        if _capabilities(body) != {"mount-readwrite"}:
+            violations.append(f"host_volume {label!r}: capabilities must be exactly [\"mount-readwrite\"]")
+    return violations
 
 
 class Slice4DataTest(unittest.TestCase):
@@ -168,13 +198,64 @@ class Slice4PolicyTest(unittest.TestCase):
 
     def test_deployer_covers_exactly_the_production_namespaces(self) -> None:
         blocks = _top_level_blocks(self.policies["deployer.policy.hcl"])
-        self.assertLessEqual({kind for kind, _, _ in blocks}, {"namespace", "node"})
+        self.assertLessEqual(
+            {kind for kind, _, _ in blocks}, {"namespace", "node", "host_volume"}
+        )
         namespaces = {label: body for kind, label, body in blocks if kind == "namespace"}
         self.assertEqual(set(namespaces), self.production, "deployer must cover exactly the production namespaces")
         for label, body in namespaces.items():
             self.assertEqual(
                 _capabilities(body), DEPLOYER_CAPABILITIES, f"deployer namespace {label!r} capability drift"
             )
+
+    def test_deployer_host_volumes_exactly_the_forgejo_three(self) -> None:
+        self.assertEqual(
+            _host_volume_violations(self.policies["deployer.policy.hcl"]),
+            [],
+            "deployer host_volume grant drifted",
+        )
+
+    def test_no_host_volume_outside_deployer(self) -> None:
+        for name, text in self.policies.items():
+            if name == "deployer.policy.hcl":
+                continue
+            kinds = {kind for kind, _, _ in _top_level_blocks(text)}
+            self.assertNotIn("host_volume", kinds, f"{name}: host_volume allowed only in deployer")
+
+    def test_host_volume_rejects_wildcard_and_fourth_name(self) -> None:
+        template = self.policies["deployer.policy.hcl"]
+        for bad in ('"*"', '"forgejo-extra"'):
+            mutated = re.sub(
+                r'host_volume\s+"forgejo-runner-data"',
+                f"host_volume {bad}",
+                template,
+                count=1,
+            )
+            self.assertNotEqual(
+                mutated,
+                template,
+                "fixture anchor host_volume forgejo-runner-data missing",
+            )
+            self.assertTrue(
+                _host_volume_violations(mutated),
+                f"wildcard/4th host_volume name {bad} must be a violation",
+            )
+
+    def test_host_volume_rejects_policy_write_spelling(self) -> None:
+        anchor = 'host_volume "forgejo-pg-data" {\n  capabilities = ["mount-readwrite"]'
+        self.assertIn(anchor, self.policies["deployer.policy.hcl"], "fixture anchor block missing")
+        bad = self.policies["deployer.policy.hcl"].replace(
+            anchor, 'host_volume "forgejo-pg-data" {\n  policy = "write"', 1
+        )
+        self.assertTrue(
+            _host_volume_violations(bad),
+            'policy = "write" spelling must be a violation',
+        )
+        # The global gate still forbids the shorthand everywhere.
+        self.assertIsNotNone(
+            re.search(r'policy\s*=\s*"write"', _strip_comments(bad)),
+            "mutated fixture must contain the write shorthand",
+        )
 
     def test_deployer_has_no_dispatch(self) -> None:
         # Dispatching a registered parameterized job stays with narrow
