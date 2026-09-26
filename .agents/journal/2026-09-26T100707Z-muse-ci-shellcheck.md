@@ -50,7 +50,8 @@
 - shellcheck 0.9.0 binary on validation list — PASS
 - shellcheck 0.10.0 binary on validation list — PASS
 - `bash scripts/validate-repository.sh` — "Repository validation passed." (exit 0)
-- PR CI watch — pending (next step)
+- PR #22 opened (eb68b87); CI watch attempt 1: shellcheck findings GONE, but validation still red on `graft not installed` — the wrong npm package `graft@0.3.1` (microservices framework, no `graft` binary) was masking behind the shellcheck failure. Local uses `@nanonets/graft@0.19.0`.
+- Attempt 2: fixed install line to `npm install --global @nanonets/graft@0.19.0` (matches local 0.19.0) — pending push + CI re-watch.
 
 ## Reflection and knowledge saved
 
