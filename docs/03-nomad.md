@@ -78,6 +78,45 @@ Schedule `nomad operator snapshot save` to the host backup plane → R2
 app volumes/databases ride the same timer separately. A backup untested
 by restore is not trusted.
 
+## 6. Agent read-only access (agent-reader)
+
+Slice N agents need a read-only memory baseline (job specs, alloc
+RSS/swap, logs) without ever holding a submit-capable token. The
+`agent-reader` ACL policy (`acl/agent-reader.policy.hcl`) grants exactly:
+
+- namespace `*`: `list-jobs`, `read-job` (covers per-alloc stats via
+  `/v1/client/allocation/:alloc_id/stats`), `read-logs`, `read-fs`;
+- `node { policy = "read" }` for node totals (the node block has no
+  capability list, so the shorthand is the only spelling).
+
+It denies everything else: no `submit-job`/`dispatch-job`/`scale-job`,
+no alloc lifecycle/exec, no Nomad Variables, no host volumes, no
+`operator`/`agent`/`quota`/`plugin`/`sentinel`, and no `policy = "write"`
+anywhere. Contract: `tests/test_acl_agent_reader.py`
+(`python3.14 -m unittest discover -s tests -p 'test_acl_*.py'`).
+
+Owner apply (owner only, never an agent lane):
+
+```bash
+NOMAD_ADDR=... NOMAD_TOKEN=<management> BAO_ADDR=... \
+  bash scripts/apply-agent-reader-acl.sh --apply
+```
+
+`--dry-run` is the default. `--apply` applies the policy, mints one
+`agent-reader` client token (TTL from `AGENT_READER_TTL`, default `720h`;
+needs the server's `acl.token_max_expiration_ttl` raised accordingly, else
+the mint fails closed), pipes the SecretID into Bao KV at
+`secret/projects/nomad/AGENT_READ_TOKEN` (field `token`), and prints only
+the accessor ID and the Bao path.
+
+Agent consumption: read the token into `NOMAD_TOKEN` for a single process
+only — never export it, never write it to history or files:
+
+```bash
+NOMAD_TOKEN="$(bao kv get -field=token secret/projects/nomad/AGENT_READ_TOKEN)" \
+  nomad job status <job>
+```
+
 ## Done when
 
 - [ ] Nomad server + client healthy on one node (`nomad server members`,
