@@ -53,7 +53,9 @@
 - PR #22 opened (eb68b87); CI watch attempt 1: shellcheck findings GONE, but validation still red on `graft not installed` — the wrong npm package `graft@0.3.1` (microservices framework, no `graft` binary) was masking behind the shellcheck failure. Local uses `@nanonets/graft@0.19.0`.
 - Attempt 2: fixed install line to `npm install --global @nanonets/graft@0.19.0` (matches local 0.19.0) — pushed 52f3010; CI attempt-2 red with `graft check: NO GRAPH` (fresh checkout has no graft/ graph; AGENTS.md: graph is checkout-local, untracked).
 - Root-cause proof (local): `@nanonets/graft@0.3.1` check exits 1 without graph (earlier EXIT:0 was `head` masking the pipe); 0.19.0 also exits 1 without graph. But 0.19.0 tolerates a wiring-only graph (pending meaning tier → still OK/0), verified: scratch `graft build` (offline, exit 0) then `graft check` → OK, exit 0.
-- Attempt 3 (final): workflow step `graft build` (wiring only, offline) before validation so the script's `graft check` gate has a fresh checkout-local graph — pending push + CI re-watch.
+- Attempt 3 (final): workflow step `graft build` (wiring only, offline) before validation so the script's `graft check` gate has a fresh checkout-local graph — pushed 622cc46.
+- Attempt-3 CI result: `Validate repository and non-live IaC` = PASS (`graph check: OK`, `Repository validation passed.`). Shellcheck lane objective achieved on all 3 shellcheck versions.
+- Remaining red (out of lane, 3-attempt budget exhausted): `Scan repository for secrets` (gitleaks) fails on 1 pre-existing leak — `evidence-archive/live-proofs.json:133`, rule generic-api-key. Pre-exists on master b7e26d3; our diff does not touch evidence-archive/. Previously masked (validation failed before gitleaks ran). Left for a secrets-lane follow-up; NOT touched (no secrets in logs/journals).
 
 ## Reflection and knowledge saved
 
@@ -62,11 +64,11 @@
 - Lesson / what worked: compare `shellcheck --version` + `--list-optional` first; fix the source to satisfy the oldest runner version AND pin CI to the newest, with options in `.shellcheckrc` — then verify with downloaded old binaries.
 - Applicability and evidence: any repo where Homebrew (rolling) and ubuntu-latest (frozen) shellcheck coexist; evidence scripts/healthcheck.sh:12 + validate.yml pin in this PR.
 - Next time / source correction: none (no shared source to correct).
-- Memory delivery: pending (to save at session end)
-- Destination and keys: agent-memory-ksonny4-platform (pending)
-- Verification: pending recall check
-- Pending sync: none yet
-- No-new-learning reason: n/a (lesson to save)
+- Memory delivery: saved (see session-end remember)
+- Destination and keys: agent-memory-ksonny4-platform (shellcheck version-drift + graft CI lessons)
+- Verification: recall queries run at session start and before --watch retry; project dataset to be verified on next session recall
+- Pending sync: none
+- No-new-learning reason: n/a (lesson saved)
 
 ## Blockers / unresolved
 
@@ -74,7 +76,7 @@
 
 ## Handoff
 
-- Final status: active
-- Remaining work: commit + push + open PR (Fixes #19) + watch checks (max 10 min, max 3 attempts) + comment on #19; do NOT merge.
-- Next safe action: `git add -A && git commit` then push/PR.
+- Final status: handed off (lane objective green; repo CI still red on out-of-lane gitleaks finding)
+- Remaining work: (1) secrets-lane follow-up for gitleaks generic-api-key in evidence-archive/live-proofs.json:133 (pre-existing on master); (2) owner review + merge of PR #22 (DO NOT MERGE from this lane).
+- Next safe action: open follow-up issue for the gitleaks finding referencing PR #22 attempt-3 log (run 36235098074); merge PR #22 only after secrets-lane decision.
 - Authoritative references: failed run 36234280214; issue KSonny4/platform#19; worktree ~/git_projects/platform/.worktrees/ci-shellcheck-19 @ b7e26d3.
