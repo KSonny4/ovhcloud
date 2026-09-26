@@ -177,6 +177,34 @@ Roll back: `nomad job stop nomad-metrics-alloy` stops shipping (history
 already in Cloud stays queryable); to silence the endpoint, remove the
 `telemetry` block, reship the config, and restart the agent again.
 
+## 9. Watcher-only deploys + agent sandbox (Slice 4, Refs #26)
+
+Git `main` is the only way to change a production job: only the watcher's
+token may submit there, and agents get a `sandbox` namespace for
+experiments. All of this is committed but NOT applied in the slice —
+the owner applies it after Slice 1 proves the watcher (runbook:
+[acl-cutover-runbook](acl-cutover-runbook.md)).
+
+- `acl/namespaces.json` is the single data file for namespace names
+  (production: `default`); policies, specs, script and test derive from it.
+- `acl/deployer.policy.hcl`: watcher only (`list-jobs, read-job,
+  parse-job, submit-job, read-logs` per production namespace + node read).
+- `acl/agent-sandbox.policy.hcl`: agents (`submit-job, dispatch-job,
+  read-job, list-jobs, read-logs`) ONLY in `sandbox`.
+- `acl/namespace-sandbox.hcl` + `jobs/sandbox-sweep.nomad.hcl`
+  (committed spec, stops sandbox jobs after 24h; never `job run` by hand).
+- Quotas and namespace pool pins are Enterprise-only, so this OSS cluster
+  takes the documented branch: 1024 MB memory cap + per-job
+  `node_pool = "home"` pin (Slice P) instead of server-side enforcement.
+- `scripts/apply-acl-s4.sh` (`--dry-run` default; `--apply` mints TTL
+  tokens into `secret/projects/nomad/WATCHER_DEPLOY_TOKEN` and
+  `secret/projects/nomad/AGENT_SANDBOX_TOKEN` without printing).
+  Contract: `tests/test_acl_s4.py`.
+
+The Bao cutover (revoke agent read on `NOMAD_BOOTSTRAP`, break-glass the
+management token, rotate it) is a later [YES] step, written as runbook
+section 4 only.
+
 ## Done when
 
 - [ ] Nomad server + client healthy on one node (`nomad server members`,

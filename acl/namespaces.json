@@ -1,0 +1,8 @@
+{
+  "_comment": "Single source of truth for Nomad namespace names used by Slice 4 ACL (KSonny4/platform#26). Edit here; acl/*.policy.hcl, acl/namespace-sandbox.hcl, jobs/sandbox-sweep.nomad.hcl, scripts/apply-acl-s4.sh and tests/test_acl_s4.py all derive from (or are verified against) this file. Namespace names are never invented anywhere else.",
+  "production": ["default"],
+  "sandbox": "sandbox",
+  "sandbox_node_pool": "home",
+  "sandbox_memory_cap_mb": 1024,
+  "sandbox_max_age_hours": 24
+}
