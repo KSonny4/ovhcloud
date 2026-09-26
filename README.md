@@ -4,6 +4,16 @@ Opinionated runbook for turning a fresh OVHcloud VPS into a small self-hosted ap
 
 **Last verified:** 2026-09-18 (Nomad-only; retired previous control plane)
 
+Repository: `KSonny4/platform` (renamed from `KSonny4/ovhcloud`; Refs #15).
+
+## Ownership
+
+| Concern | Owner |
+|---|---|
+| Hosts (OVH, Raspberry Pi, Fujitsu), Nomad server+client config, ACL policies, namespaces, tunnel/Access, Terraform, backups | `platform` |
+| Platform jobs: registry, edge-proxy (Traefik), watcher, tunnel-nomad-admin, openbao | `platform/jobs/` |
+| App jobs | each app repo, at its watcher path |
+
 ## Start here
 
 Read [`CONTEXT.md`](CONTEXT.md) for the architectural invariants, then use the [deployment plan](docs/deployment-plan.md) for the evidence table and non-live IaC handoff. If you have just bought the VPS and nothing is configured yet, follow:
