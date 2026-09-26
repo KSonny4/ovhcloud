@@ -77,7 +77,7 @@
 
 ## Final status
 
-- Committed <sha>, pushed, PR <url> (Refs #16), #16 commented. NOT merged.
+- Committed 0a38f76, pushed branch feat/agent-reader-acl-16, PR https://github.com/KSonny4/platform/pull/21 (Refs #16), #16 commented (https://github.com/KSonny4/platform/issues/16#issuecomment-5845335755). NOT merged.
 - All lane checks green; no open code questions. Owner action: run the
   apply script (needs server `acl.token_max_expiration_ttl` >= 720h or a
   smaller AGENT_READER_TTL), then run the Slice N baseline.
