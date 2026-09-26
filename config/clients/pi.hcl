@@ -28,11 +28,10 @@ client {
   node_class = "rpi"
 
   # OVH server over ZeroTier; mirrors inventory `server_join_ip`.
-  # TODO(owner): OVH ZeroTier IP — the OVH host is not on the ZeroTier
-  # network yet (Slice P step 3 [YES]); replace the placeholder in
-  # inventory.json and reship.
+  # OVH host ovh-nomad-fresh joined ZeroTier on 2026-09-26 (owner manual
+  # join + Central authorize); this address is its member IP.
   server_join {
-    retry_join = ["TODO(owner): OVH ZeroTier IP"]
+    retry_join = ["172.23.6.223"]
   }
 
   # Keep >= 2 GB for the Pi's existing systemd/Docker services (n8n,

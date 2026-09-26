@@ -50,3 +50,36 @@ gossip stays encrypted; mTLS comes later.
 - Fujitsu keeps ~8 GB reserved for its existing recorder set while it doubles
   as a client; the Pi keeps 2 GB for its systemd/Docker services. Both
   reservations are data in the inventory, revisited after Slice N telemetry.
+
+## OVH joined (2026-09-26)
+
+The owner joined the OVH host to the ZeroTier network by hand on 2026-09-26
+(~17:25 CEST) and authorized it in ZeroTier Central (manual step; no Central
+API token exists in our tooling, so that step cannot be automated):
+
+- Host `ovh-nomad-fresh` (Ubuntu 26.04.1 LTS) is a member of network
+  `856127940c7e2d03` ("Rpi network"), status OK, interface `ztcfwvtoip`,
+  address **172.23.6.223/16** (installed with the official
+  install.zerotier.com script). Recorded in `config/clients/inventory.json`
+  (`server_join_ip`, `zerotier_network_id`, `server`); both client configs
+  now `retry_join` that address. Reproducible join: `scripts/provision-zerotier.sh`
+  (dry-run by default, `--apply` to install + join, verifies status OK).
+- Verification from OVH over ZeroTier: ping Pi 172.23.215.6 and Fujitsu
+  172.23.229.176 both 3/3, 0% loss, ~110-450 ms rtt. Managed route is
+  172.23.0.0/16 (from the Mac member's route table); Fujitsu runs
+  Ubuntu 24.04.4 LTS (read over SSH 17:27 CEST).
+- OVH firewall unchanged (ufw default deny incoming, only 22/tcp in):
+  ZeroTier works outbound-only. Nomad is still loopback-bound.
+
+Rollback: `zerotier-cli leave 856127940c7e2d03`; `apt remove zerotier-one`.
+
+Follow-ups (not this change):
+
+- (a) Bind Nomad RPC/serf (4647, 4648) to the ZeroTier interface and allow
+  them in ufw only `in on zt+` [YES].
+- (b) Pin Docker `default-address-pools` away from 172.23.0.0/16 [YES] —
+  OVH routes in 172.16.0.0/12 show only 172.17.0.0/16 (docker0) today, but
+  Docker's default pools cover 172.17-172.31/16, so a future Docker network
+  could take 172.23.0.0/16 and break ZeroTier routing.
+
+The Tailscale migration is tracked separately in KSonny4/platform#36.
