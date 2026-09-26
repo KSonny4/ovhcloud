@@ -1,0 +1,40 @@
+{
+  "_comment": "Home Nomad clients (pool `home`) — single inventory data file (Refs KSonny4/platform#27, Slice P repo part). Values that can change (IPs, arch, pool, class, reservations, Nomad version) live HERE; config/clients/*.hcl mirror them and tests/test_nomad_clients.py fails if they drift apart. scripts/provision-client.sh reads the host facts and nomad_version from this file. Any fact that could not be sourced read-only is an explicit TODO(owner) placeholder — never invented.",
+  "nomad_version": "2.0.6",
+  "server_join_ip": "TODO(owner): OVH ZeroTier IP",
+  "server_join_ip_note": "The OVH host is not on the ZeroTier network yet (Slice P step 3 [YES]); put its ZeroTier address in server_join_ip, then reship the client configs.",
+  "zerotier_prefix": "TODO(owner): confirm the ZeroTier managed-route CIDR for the `ip rule` bypass (member IPs observed: Pi 172.23.215.6, Fujitsu 172.23.229.176)",
+  "hosts": {
+    "pi": {
+      "comment": "Facts from the approved plan Slice P (2026-09-26): Raspberry Pi 4B, 8 GB, arm64, Debian 13, ZeroTier 172.23.215.6. SSH user `pi` from automatization/CLAUDE.md (`ssh pi@172.23.215.6`, ZeroTier path).",
+      "hostname": "pi",
+      "model": "Raspberry Pi 4B, 8 GB",
+      "os": "Debian 13",
+      "arch": "arm64",
+      "zerotier_ip": "172.23.215.6",
+      "ssh_user": "pi",
+      "node_pool": "home",
+      "node_class": "rpi",
+      "reserved_memory_mb": 2048,
+      "reserved_comment": "Keep >= 2 GB for the Pi's existing systemd/Docker services (n8n, streaming stack, Guacamole); Nomad schedules from the rest."
+    },
+    "fujitsu": {
+      "comment": "Fujitsu joins per owner decision 2026-09-26 (Slice P step 5 in scope). Facts sourced read-only, never invented; anything unsourced is TODO(owner) below.",
+      "hostname": "fujitsu",
+      "cpu": "Intel i5-8400T, 6 cores (polymarket-wallet-finder docs/DECISIONS.md 2026-09-25 Nomad move entry)",
+      "memory_total_gb": 15,
+      "memory_total_source": "polymarket-wallet-finder docs/DECISIONS.md (`i5-8400T, 6c, 15 GB`) and docs/architecture/nomad-full-migration-plan.md (`6-core/15GB`)",
+      "os": "TODO(owner): confirm exact Ubuntu release (repo layout shows infra/ubuntu + systemd units, e.g. polymarket-wallet-finder infra/ubuntu/ and /opt/record-trade paths; release never stated)",
+      "arch": "amd64",
+      "arch_source": "derived from the sourced CPU model (Intel i5-8400T is x86-64)",
+      "zerotier_ip": "172.23.229.176",
+      "zerotier_ip_source": "polymarket-wallet-finder CLAUDE.md deploy section (`ssh ksonny@172.23.229.176`)",
+      "ssh_user": "ksonny",
+      "ssh_user_source": "same CLAUDE.md line (`ssh ksonny@172.23.229.176`)",
+      "node_pool": "home",
+      "node_class": "fujitsu",
+      "reserved_memory_mb": 8192,
+      "reserved_comment": "Recorder set uses ~3.4 cores / 4.9 GB on this box with ~7.7 GB unreserved (DECISIONS.md 2026-09-25 entry); 8 GB keeps the recorder + system headroom while the box doubles as a client. Revisit after Slice N telemetry."
+    }
+  }
+}
