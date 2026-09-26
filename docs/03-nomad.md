@@ -173,6 +173,17 @@ Apply (owner/operator edge; no lane ever applies):
    `nomad job run -var="grafana_cloud_rw2_token=$(bao kv get -field=token secret/projects/nomad/GRAFANA_CLOUD_RW2)" jobs/nomad-metrics-alloy.nomad.hcl`.
    Telemetry must be applied first — until step 1 the scrape 415s.
 
+The same job also scrapes the shared PostgreSQL 18 exporter (`pg-shared`,
+KSonny4/nomad-postgresql#1) at the static loopback target `127.0.0.1:9187`
+as `job="pg-shared"`. The Grafana-managed alert rules for it (PG down, WAL
+archive stale/failing, backup older than 26 h, restore drill failed or older
+than 8 days, connections above 80%) and the host disk rules (85% warn, 90%
+crit, from the node telemetry above) live in `grafana/alerts/pg-shared.json`,
+routed to the `keeper-telegram` contact. They are import-ready only: import
+them through the Grafana provisioning API at the owner/operator edge, after
+this job ships and pg-shared has recorded its first backup and restore
+drill, then confirm a test page arrives.
+
 Roll back: `nomad job stop nomad-metrics-alloy` stops shipping (history
 already in Cloud stays queryable); to silence the endpoint, remove the
 `telemetry` block, reship the config, and restart the agent again.

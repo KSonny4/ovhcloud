@@ -24,7 +24,9 @@ Layer 1  Nomad cluster state
 
 Layer 2  application databases
          -> host timer pg_dump -Fc per DB -> R2 app-databases/ (+ manifest
-            with tables/rows counts)
+            with tables/rows counts). pg-shared: every non-template DB
+            incl. postgres, exec'd as the OS user postgres (peer auth),
+            keyed app-databases/pg-shared-<db>-<stamp>.dump.gz
 
 Layer 3  persistent volumes/directories
          -> host timer tar snapshots -> R2 app-volumes/ + app-binds/

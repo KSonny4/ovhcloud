@@ -1,0 +1,734 @@
+{
+  "_comment": "Grafana-managed rules (POST /api/v1/provisioning/alert-rules, X-Disable-Provenance), same shape as cognee-setup grafana/alerts/cognee-health.json. Source series: postgres_exporter v0.17.1 of the pg-shared job (KSonny4/nomad-postgresql#1) scraped as job=\"pg-shared\" and Nomad host telemetry, both remote-written by jobs/nomad-metrics-alloy.nomad.hcl. Receiver keeper-telegram, folder MAIN, datasource grafanacloud-prom (confirm all three exist in the stack at import). Import-ready only: not live until imported, bound and a test page arrives. No secrets.",
+  "rules": [
+    {
+      "uid": "pg-shared-down",
+      "orgID": 1,
+      "folderUID": "ffz5bcn0ps4qob",
+      "ruleGroup": "pg-shared",
+      "title": "pg-shared down (pg_up==0 or no scrape for 5m)",
+      "condition": "C",
+      "data": [
+        {
+          "refId": "A",
+          "queryType": "",
+          "relativeTimeRange": {
+            "from": 600,
+            "to": 0
+          },
+          "datasourceUid": "grafanacloud-prom",
+          "model": {
+            "expr": "min(pg_up{job=\"pg-shared\"}) or on() vector(0)",
+            "intervalMs": 60000,
+            "maxDataPoints": 43200,
+            "refId": "A"
+          }
+        },
+        {
+          "refId": "B",
+          "queryType": "",
+          "relativeTimeRange": {
+            "from": 0,
+            "to": 0
+          },
+          "datasourceUid": "__expr__",
+          "model": {
+            "datasource": {
+              "type": "__expr__",
+              "uid": "__expr__"
+            },
+            "expression": "A",
+            "reducer": "last",
+            "refId": "B",
+            "type": "reduce",
+            "intervalMs": 1000,
+            "maxDataPoints": 43200
+          }
+        },
+        {
+          "refId": "C",
+          "queryType": "",
+          "relativeTimeRange": {
+            "from": 0,
+            "to": 0
+          },
+          "datasourceUid": "__expr__",
+          "model": {
+            "datasource": {
+              "type": "__expr__",
+              "uid": "__expr__"
+            },
+            "expression": "$B < 1",
+            "refId": "C",
+            "type": "math",
+            "intervalMs": 1000,
+            "maxDataPoints": 43200
+          }
+        }
+      ],
+      "noDataState": "Alerting",
+      "execErrState": "Error",
+      "for": "5m",
+      "annotations": {
+        "summary": "pg-shared PostgreSQL is unreachable: postgres_exporter reports pg_up==0, or the exporter at 127.0.0.1:9187 has not been scraped (series absent) for 5 minutes. Every tenant database is down.",
+        "runbook": "KSonny4/nomad-postgresql docs/runbooks/ (pg-shared); alerts listed in docs/cd-exception.md"
+      },
+      "labels": {
+        "service": "pg-shared",
+        "severity": "critical"
+      },
+      "isPaused": false,
+      "notification_settings": {
+        "receiver": "keeper-telegram"
+      }
+    },
+    {
+      "uid": "pg-shared-wal-archive-stale",
+      "orgID": 1,
+      "folderUID": "ffz5bcn0ps4qob",
+      "ruleGroup": "pg-shared",
+      "title": "pg-shared WAL archive stale (>15m)",
+      "condition": "C",
+      "data": [
+        {
+          "refId": "A",
+          "queryType": "",
+          "relativeTimeRange": {
+            "from": 600,
+            "to": 0
+          },
+          "datasourceUid": "grafanacloud-prom",
+          "model": {
+            "expr": "(time() - max(pg_shared_archiver_last_archived_timestamp_seconds{job=\"pg-shared\"})) and on() (max(pg_up{job=\"pg-shared\"}) == 1)",
+            "intervalMs": 60000,
+            "maxDataPoints": 43200,
+            "refId": "A"
+          }
+        },
+        {
+          "refId": "B",
+          "queryType": "",
+          "relativeTimeRange": {
+            "from": 0,
+            "to": 0
+          },
+          "datasourceUid": "__expr__",
+          "model": {
+            "datasource": {
+              "type": "__expr__",
+              "uid": "__expr__"
+            },
+            "expression": "A",
+            "reducer": "last",
+            "refId": "B",
+            "type": "reduce",
+            "intervalMs": 1000,
+            "maxDataPoints": 43200
+          }
+        },
+        {
+          "refId": "C",
+          "queryType": "",
+          "relativeTimeRange": {
+            "from": 0,
+            "to": 0
+          },
+          "datasourceUid": "__expr__",
+          "model": {
+            "datasource": {
+              "type": "__expr__",
+              "uid": "__expr__"
+            },
+            "expression": "$B > 900",
+            "refId": "C",
+            "type": "math",
+            "intervalMs": 1000,
+            "maxDataPoints": 43200
+          }
+        }
+      ],
+      "noDataState": "OK",
+      "execErrState": "Error",
+      "for": "0s",
+      "annotations": {
+        "summary": "No WAL segment has been archived by pgBackRest for more than 15 minutes (archive_timeout=300 plus the 5-minute sidecar heartbeat guarantee a switch at least every 5 minutes). Point-in-time recovery is falling behind. A value near now() means the last archive time is 0, i.e. nothing was ever archived.",
+        "runbook": "KSonny4/nomad-postgresql docs/runbooks/ (pg-shared); alerts listed in docs/cd-exception.md"
+      },
+      "labels": {
+        "service": "pg-shared",
+        "severity": "critical"
+      },
+      "isPaused": false,
+      "notification_settings": {
+        "receiver": "keeper-telegram"
+      }
+    },
+    {
+      "uid": "pg-shared-wal-archive-failing",
+      "orgID": 1,
+      "folderUID": "ffz5bcn0ps4qob",
+      "ruleGroup": "pg-shared",
+      "title": "pg-shared WAL archive failures",
+      "condition": "C",
+      "data": [
+        {
+          "refId": "A",
+          "queryType": "",
+          "relativeTimeRange": {
+            "from": 1800,
+            "to": 0
+          },
+          "datasourceUid": "grafanacloud-prom",
+          "model": {
+            "expr": "increase(pg_shared_archiver_failed_count{job=\"pg-shared\"}[15m]) and on() (max(pg_up{job=\"pg-shared\"}) == 1)",
+            "intervalMs": 60000,
+            "maxDataPoints": 43200,
+            "refId": "A"
+          }
+        },
+        {
+          "refId": "B",
+          "queryType": "",
+          "relativeTimeRange": {
+            "from": 0,
+            "to": 0
+          },
+          "datasourceUid": "__expr__",
+          "model": {
+            "datasource": {
+              "type": "__expr__",
+              "uid": "__expr__"
+            },
+            "expression": "A",
+            "reducer": "last",
+            "refId": "B",
+            "type": "reduce",
+            "intervalMs": 1000,
+            "maxDataPoints": 43200
+          }
+        },
+        {
+          "refId": "C",
+          "queryType": "",
+          "relativeTimeRange": {
+            "from": 0,
+            "to": 0
+          },
+          "datasourceUid": "__expr__",
+          "model": {
+            "datasource": {
+              "type": "__expr__",
+              "uid": "__expr__"
+            },
+            "expression": "$B > 0",
+            "refId": "C",
+            "type": "math",
+            "intervalMs": 1000,
+            "maxDataPoints": 43200
+          }
+        }
+      ],
+      "noDataState": "OK",
+      "execErrState": "Error",
+      "for": "0s",
+      "annotations": {
+        "summary": "pg_stat_archiver.failed_count increased in the last 15 minutes: archive_command (pgbackrest archive-push to R2) is failing. WAL piles up in pg_wal until it recovers.",
+        "runbook": "KSonny4/nomad-postgresql docs/runbooks/ (pg-shared); alerts listed in docs/cd-exception.md"
+      },
+      "labels": {
+        "service": "pg-shared",
+        "severity": "warning"
+      },
+      "isPaused": false,
+      "notification_settings": {
+        "receiver": "keeper-telegram"
+      }
+    },
+    {
+      "uid": "pg-shared-backup-stale",
+      "orgID": 1,
+      "folderUID": "ffz5bcn0ps4qob",
+      "ruleGroup": "pg-shared",
+      "title": "pg-shared last successful backup older than 26h",
+      "condition": "C",
+      "data": [
+        {
+          "refId": "A",
+          "queryType": "",
+          "relativeTimeRange": {
+            "from": 600,
+            "to": 0
+          },
+          "datasourceUid": "grafanacloud-prom",
+          "model": {
+            "expr": "(time() - (max(pg_shared_job_last_success_timestamp_seconds{job=\"pg-shared\",run_kind=~\"backup-full|backup-diff\"}) or on() vector(0))) and on() (max(pg_up{job=\"pg-shared\"}) == 1)",
+            "intervalMs": 60000,
+            "maxDataPoints": 43200,
+            "refId": "A"
+          }
+        },
+        {
+          "refId": "B",
+          "queryType": "",
+          "relativeTimeRange": {
+            "from": 0,
+            "to": 0
+          },
+          "datasourceUid": "__expr__",
+          "model": {
+            "datasource": {
+              "type": "__expr__",
+              "uid": "__expr__"
+            },
+            "expression": "A",
+            "reducer": "last",
+            "refId": "B",
+            "type": "reduce",
+            "intervalMs": 1000,
+            "maxDataPoints": 43200
+          }
+        },
+        {
+          "refId": "C",
+          "queryType": "",
+          "relativeTimeRange": {
+            "from": 0,
+            "to": 0
+          },
+          "datasourceUid": "__expr__",
+          "model": {
+            "datasource": {
+              "type": "__expr__",
+              "uid": "__expr__"
+            },
+            "expression": "$B > 93600",
+            "refId": "C",
+            "type": "math",
+            "intervalMs": 1000,
+            "maxDataPoints": 43200
+          }
+        }
+      ],
+      "noDataState": "OK",
+      "execErrState": "Error",
+      "for": "0s",
+      "annotations": {
+        "summary": "The newest successful pgBackRest backup (full or diff, from ops.job_runs) is older than 26 hours; backups are scheduled daily from 01:00 UTC. No recorded success at all also fires.",
+        "runbook": "KSonny4/nomad-postgresql docs/runbooks/ (pg-shared); alerts listed in docs/cd-exception.md"
+      },
+      "labels": {
+        "service": "pg-shared",
+        "severity": "critical"
+      },
+      "isPaused": false,
+      "notification_settings": {
+        "receiver": "keeper-telegram"
+      }
+    },
+    {
+      "uid": "pg-shared-restore-drill-failed",
+      "orgID": 1,
+      "folderUID": "ffz5bcn0ps4qob",
+      "ruleGroup": "pg-shared",
+      "title": "pg-shared restore drill failed",
+      "condition": "C",
+      "data": [
+        {
+          "refId": "A",
+          "queryType": "",
+          "relativeTimeRange": {
+            "from": 600,
+            "to": 0
+          },
+          "datasourceUid": "grafanacloud-prom",
+          "model": {
+            "expr": "(max(pg_shared_job_last_run_timestamp_seconds{job=\"pg-shared\",run_kind=\"restore-drill\"}) - max(pg_shared_job_last_success_timestamp_seconds{job=\"pg-shared\",run_kind=\"restore-drill\"})) and on() (max(pg_up{job=\"pg-shared\"}) == 1)",
+            "intervalMs": 60000,
+            "maxDataPoints": 43200,
+            "refId": "A"
+          }
+        },
+        {
+          "refId": "B",
+          "queryType": "",
+          "relativeTimeRange": {
+            "from": 0,
+            "to": 0
+          },
+          "datasourceUid": "__expr__",
+          "model": {
+            "datasource": {
+              "type": "__expr__",
+              "uid": "__expr__"
+            },
+            "expression": "A",
+            "reducer": "last",
+            "refId": "B",
+            "type": "reduce",
+            "intervalMs": 1000,
+            "maxDataPoints": 43200
+          }
+        },
+        {
+          "refId": "C",
+          "queryType": "",
+          "relativeTimeRange": {
+            "from": 0,
+            "to": 0
+          },
+          "datasourceUid": "__expr__",
+          "model": {
+            "datasource": {
+              "type": "__expr__",
+              "uid": "__expr__"
+            },
+            "expression": "$B > 0",
+            "refId": "C",
+            "type": "math",
+            "intervalMs": 1000,
+            "maxDataPoints": 43200
+          }
+        }
+      ],
+      "noDataState": "OK",
+      "execErrState": "Error",
+      "for": "0s",
+      "annotations": {
+        "summary": "The most recent pg-shared-restore-drill run did not succeed (its last run is newer than its last success, in ops.job_runs). Stays firing until a drill succeeds. Re-run with nomad job periodic force pg-shared-restore-drill after fixing (owner approval).",
+        "runbook": "KSonny4/nomad-postgresql docs/runbooks/ (pg-shared); alerts listed in docs/cd-exception.md"
+      },
+      "labels": {
+        "service": "pg-shared",
+        "severity": "critical"
+      },
+      "isPaused": false,
+      "notification_settings": {
+        "receiver": "keeper-telegram"
+      }
+    },
+    {
+      "uid": "pg-shared-restore-drill-stale",
+      "orgID": 1,
+      "folderUID": "ffz5bcn0ps4qob",
+      "ruleGroup": "pg-shared",
+      "title": "pg-shared restore drill: no success for more than 8 days",
+      "condition": "C",
+      "data": [
+        {
+          "refId": "A",
+          "queryType": "",
+          "relativeTimeRange": {
+            "from": 600,
+            "to": 0
+          },
+          "datasourceUid": "grafanacloud-prom",
+          "model": {
+            "expr": "(time() - (max(pg_shared_job_last_success_timestamp_seconds{job=\"pg-shared\",run_kind=\"restore-drill\"}) or on() vector(0))) and on() (max(pg_up{job=\"pg-shared\"}) == 1)",
+            "intervalMs": 60000,
+            "maxDataPoints": 43200,
+            "refId": "A"
+          }
+        },
+        {
+          "refId": "B",
+          "queryType": "",
+          "relativeTimeRange": {
+            "from": 0,
+            "to": 0
+          },
+          "datasourceUid": "__expr__",
+          "model": {
+            "datasource": {
+              "type": "__expr__",
+              "uid": "__expr__"
+            },
+            "expression": "A",
+            "reducer": "last",
+            "refId": "B",
+            "type": "reduce",
+            "intervalMs": 1000,
+            "maxDataPoints": 43200
+          }
+        },
+        {
+          "refId": "C",
+          "queryType": "",
+          "relativeTimeRange": {
+            "from": 0,
+            "to": 0
+          },
+          "datasourceUid": "__expr__",
+          "model": {
+            "datasource": {
+              "type": "__expr__",
+              "uid": "__expr__"
+            },
+            "expression": "$B > 691200",
+            "refId": "C",
+            "type": "math",
+            "intervalMs": 1000,
+            "maxDataPoints": 43200
+          }
+        }
+      ],
+      "noDataState": "OK",
+      "execErrState": "Error",
+      "for": "0s",
+      "annotations": {
+        "summary": "No successful restore drill in more than 8 days (the drill runs weekly, Wednesdays 05:00 UTC). No recorded success at all also fires, so force one drill after the first deploy before importing this rule.",
+        "runbook": "KSonny4/nomad-postgresql docs/runbooks/ (pg-shared); alerts listed in docs/cd-exception.md"
+      },
+      "labels": {
+        "service": "pg-shared",
+        "severity": "warning"
+      },
+      "isPaused": false,
+      "notification_settings": {
+        "receiver": "keeper-telegram"
+      }
+    },
+    {
+      "uid": "pg-shared-connections-high",
+      "orgID": 1,
+      "folderUID": "ffz5bcn0ps4qob",
+      "ruleGroup": "pg-shared",
+      "title": "pg-shared connections above 80% of max_connections",
+      "condition": "C",
+      "data": [
+        {
+          "refId": "A",
+          "queryType": "",
+          "relativeTimeRange": {
+            "from": 600,
+            "to": 0
+          },
+          "datasourceUid": "grafanacloud-prom",
+          "model": {
+            "expr": "sum(pg_stat_database_numbackends{job=\"pg-shared\"}) / max(pg_settings_max_connections{job=\"pg-shared\"})",
+            "intervalMs": 60000,
+            "maxDataPoints": 43200,
+            "refId": "A"
+          }
+        },
+        {
+          "refId": "B",
+          "queryType": "",
+          "relativeTimeRange": {
+            "from": 0,
+            "to": 0
+          },
+          "datasourceUid": "__expr__",
+          "model": {
+            "datasource": {
+              "type": "__expr__",
+              "uid": "__expr__"
+            },
+            "expression": "A",
+            "reducer": "last",
+            "refId": "B",
+            "type": "reduce",
+            "intervalMs": 1000,
+            "maxDataPoints": 43200
+          }
+        },
+        {
+          "refId": "C",
+          "queryType": "",
+          "relativeTimeRange": {
+            "from": 0,
+            "to": 0
+          },
+          "datasourceUid": "__expr__",
+          "model": {
+            "datasource": {
+              "type": "__expr__",
+              "uid": "__expr__"
+            },
+            "expression": "$B > 0.8",
+            "refId": "C",
+            "type": "math",
+            "intervalMs": 1000,
+            "maxDataPoints": 43200
+          }
+        }
+      ],
+      "noDataState": "OK",
+      "execErrState": "Error",
+      "for": "5m",
+      "annotations": {
+        "summary": "Backends across all pg-shared databases exceed 80% of max_connections (100, of which 3 are superuser-reserved). New tenant connections will start failing; check PgBouncer pooling and per-role CONNECTION LIMITs.",
+        "runbook": "KSonny4/nomad-postgresql docs/runbooks/ (pg-shared); alerts listed in docs/cd-exception.md"
+      },
+      "labels": {
+        "service": "pg-shared",
+        "severity": "warning"
+      },
+      "isPaused": false,
+      "notification_settings": {
+        "receiver": "keeper-telegram"
+      }
+    },
+    {
+      "uid": "ovh-vps-root-disk-warn",
+      "orgID": 1,
+      "folderUID": "ffz5bcn0ps4qob",
+      "ruleGroup": "pg-shared",
+      "title": "ovh-vps host disk above 85%",
+      "condition": "C",
+      "data": [
+        {
+          "refId": "A",
+          "queryType": "",
+          "relativeTimeRange": {
+            "from": 600,
+            "to": 0
+          },
+          "datasourceUid": "grafanacloud-prom",
+          "model": {
+            "expr": "max(nomad_client_host_disk_used_percent)",
+            "intervalMs": 60000,
+            "maxDataPoints": 43200,
+            "refId": "A"
+          }
+        },
+        {
+          "refId": "B",
+          "queryType": "",
+          "relativeTimeRange": {
+            "from": 0,
+            "to": 0
+          },
+          "datasourceUid": "__expr__",
+          "model": {
+            "datasource": {
+              "type": "__expr__",
+              "uid": "__expr__"
+            },
+            "expression": "A",
+            "reducer": "last",
+            "refId": "B",
+            "type": "reduce",
+            "intervalMs": 1000,
+            "maxDataPoints": 43200
+          }
+        },
+        {
+          "refId": "C",
+          "queryType": "",
+          "relativeTimeRange": {
+            "from": 0,
+            "to": 0
+          },
+          "datasourceUid": "__expr__",
+          "model": {
+            "datasource": {
+              "type": "__expr__",
+              "uid": "__expr__"
+            },
+            "expression": "$B > 85",
+            "refId": "C",
+            "type": "math",
+            "intervalMs": 1000,
+            "maxDataPoints": 43200
+          }
+        }
+      ],
+      "noDataState": "OK",
+      "execErrState": "Error",
+      "for": "10m",
+      "annotations": {
+        "summary": "A Nomad client host disk on ovh-vps is above 85% used (pg-shared PGDATA and the pgBackRest spool live on /opt/nomad/volumes/pg-shared on the root disk). Source: Nomad telemetry (publish_node_metrics) via nomad-metrics-alloy. Before import, pin the disk label to the root device if other partitions exist.",
+        "runbook": "docs/03-nomad.md section 8 (agent telemetry); docs/06-operations.md"
+      },
+      "labels": {
+        "service": "ovh-vps",
+        "severity": "warning"
+      },
+      "isPaused": false,
+      "notification_settings": {
+        "receiver": "keeper-telegram"
+      }
+    },
+    {
+      "uid": "ovh-vps-root-disk-crit",
+      "orgID": 1,
+      "folderUID": "ffz5bcn0ps4qob",
+      "ruleGroup": "pg-shared",
+      "title": "ovh-vps host disk above 90%",
+      "condition": "C",
+      "data": [
+        {
+          "refId": "A",
+          "queryType": "",
+          "relativeTimeRange": {
+            "from": 600,
+            "to": 0
+          },
+          "datasourceUid": "grafanacloud-prom",
+          "model": {
+            "expr": "max(nomad_client_host_disk_used_percent)",
+            "intervalMs": 60000,
+            "maxDataPoints": 43200,
+            "refId": "A"
+          }
+        },
+        {
+          "refId": "B",
+          "queryType": "",
+          "relativeTimeRange": {
+            "from": 0,
+            "to": 0
+          },
+          "datasourceUid": "__expr__",
+          "model": {
+            "datasource": {
+              "type": "__expr__",
+              "uid": "__expr__"
+            },
+            "expression": "A",
+            "reducer": "last",
+            "refId": "B",
+            "type": "reduce",
+            "intervalMs": 1000,
+            "maxDataPoints": 43200
+          }
+        },
+        {
+          "refId": "C",
+          "queryType": "",
+          "relativeTimeRange": {
+            "from": 0,
+            "to": 0
+          },
+          "datasourceUid": "__expr__",
+          "model": {
+            "datasource": {
+              "type": "__expr__",
+              "uid": "__expr__"
+            },
+            "expression": "$B > 90",
+            "refId": "C",
+            "type": "math",
+            "intervalMs": 1000,
+            "maxDataPoints": 43200
+          }
+        }
+      ],
+      "noDataState": "OK",
+      "execErrState": "Error",
+      "for": "5m",
+      "annotations": {
+        "summary": "A Nomad client host disk on ovh-vps is above 90% used. PostgreSQL stops when the disk fills (WAL cannot be written). Free space or grow the disk now. Source: Nomad telemetry via nomad-metrics-alloy. Before import, pin the disk label to the root device if other partitions exist.",
+        "runbook": "docs/03-nomad.md section 8 (agent telemetry); docs/06-operations.md"
+      },
+      "labels": {
+        "service": "ovh-vps",
+        "severity": "critical"
+      },
+      "isPaused": false,
+      "notification_settings": {
+        "receiver": "keeper-telegram"
+      }
+    }
+  ]
+}
