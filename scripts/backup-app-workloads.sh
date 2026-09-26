@@ -340,8 +340,12 @@ exclude="${APP_VOLUME_EXCLUDE:-}"
 # pg_dump loop below dumps every database, and pgBackRest ships base backups
 # and WAL to its own R2 bucket. A tar of live PGDATA would be neither
 # consistent nor small, so the coverage gate treats this bind as covered.
-# The path mirrors host_volume "pg-shared" in config/nomad.hcl.
-pg_shared_volume='/opt/nomad/volumes/pg-shared'
+# The volume is a Nomad dynamic host volume (nomad-postgresql
+# jobs/volumes/pg-shared.hcl). The mkdir plugin creates it at
+# <host_volumes_dir>/<volume-id>, and the ID is only known once the volume
+# exists, so the gate matches the parent directory together with the
+# pg-shared image.
+pg_shared_volume_root='/opt/nomad/host_volumes'
 # pg-shared runs its postgres task from a registry image named pg-shared,
 # and Nomad names the container <task>-<alloc_id>. The same image also runs
 # the bootstrap, pgbouncer and pgbackrest tasks, so the name narrows it to
@@ -427,9 +431,10 @@ for cname in $(docker ps --format '{{.Names}}' 2>/dev/null || true); do
     [ "$sys" -eq 1 ] && continue
     case "$src" in
       /opt/nomad/alloc/*) continue ;;
-      "$pg_shared_volume"|"$pg_shared_volume"/*)
+      "$pg_shared_volume_root"/*)
         # Covered by the native pg-shared dumps + pgBackRest (see above);
-        # only for containers running the pg-shared image.
+        # only for containers running the pg-shared image. Any other
+        # container's dynamic host volume stays a gap.
         case "$image" in *pg-shared*) continue ;; esac ;;
       /opt/nomad-volumes/*auth*|*/htpasswd) continue ;;
       /opt/nomad-volumes/*)

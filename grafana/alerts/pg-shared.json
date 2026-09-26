@@ -637,7 +637,7 @@
       "execErrState": "Error",
       "for": "10m",
       "annotations": {
-        "summary": "A Nomad client host disk on ovh-vps is above 85% used (pg-shared PGDATA and the pgBackRest spool live on /opt/nomad/volumes/pg-shared on the root disk). Source: Nomad telemetry (publish_node_metrics) via nomad-metrics-alloy. Before import, pin the disk label to the root device if other partitions exist.",
+        "summary": "A Nomad client host disk on ovh-vps is above 85% used (pg-shared PGDATA and the pgBackRest spool live on the pg-shared dynamic host volume under /opt/nomad/host_volumes on the root disk). Source: Nomad telemetry (publish_node_metrics) via nomad-metrics-alloy. Before import, pin the disk label to the root device if other partitions exist.",
         "runbook": "docs/03-nomad.md section 8 (agent telemetry); docs/06-operations.md"
       },
       "labels": {
