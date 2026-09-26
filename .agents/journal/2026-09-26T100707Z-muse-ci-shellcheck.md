@@ -51,7 +51,9 @@
 - shellcheck 0.10.0 binary on validation list — PASS
 - `bash scripts/validate-repository.sh` — "Repository validation passed." (exit 0)
 - PR #22 opened (eb68b87); CI watch attempt 1: shellcheck findings GONE, but validation still red on `graft not installed` — the wrong npm package `graft@0.3.1` (microservices framework, no `graft` binary) was masking behind the shellcheck failure. Local uses `@nanonets/graft@0.19.0`.
-- Attempt 2: fixed install line to `npm install --global @nanonets/graft@0.19.0` (matches local 0.19.0) — pending push + CI re-watch.
+- Attempt 2: fixed install line to `npm install --global @nanonets/graft@0.19.0` (matches local 0.19.0) — pushed 52f3010; CI attempt-2 red with `graft check: NO GRAPH` (fresh checkout has no graft/ graph; AGENTS.md: graph is checkout-local, untracked).
+- Root-cause proof (local): `@nanonets/graft@0.3.1` check exits 1 without graph (earlier EXIT:0 was `head` masking the pipe); 0.19.0 also exits 1 without graph. But 0.19.0 tolerates a wiring-only graph (pending meaning tier → still OK/0), verified: scratch `graft build` (offline, exit 0) then `graft check` → OK, exit 0.
+- Attempt 3 (final): workflow step `graft build` (wiring only, offline) before validation so the script's `graft check` gate has a fresh checkout-local graph — pending push + CI re-watch.
 
 ## Reflection and knowledge saved
 
