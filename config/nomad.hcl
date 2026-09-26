@@ -90,10 +90,10 @@ telemetry {
 
 plugin "docker" {
   config {
-    # Driver-level registry auth (KSonny4/dump#3): the dump job pulls a
-    # private image and task-level auth{} would land in git. This host file
-    # (dockercfg format, root-only, written at the deploy edge from Bao
-    # NomadSetup/registry) lets the driver pull with auth on every node.
+    # Client-level registry auth (KSonny4/polymarket-wallet-finder#2438):
+    # auths file written at the deploy edge from Bao
+    # secret/projects/nomad/REGISTRY (fields username/password).
+    # Jobspecs must not carry task-level auth blocks (they override this).
     # Pre-pull + force_pull=false is NOT sufficient alone: Nomad's own
     # image GC (default image=true, 3m delay) eats unused pre-pulled images.
     auth {
