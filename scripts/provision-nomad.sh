@@ -4,8 +4,9 @@
 # Contract:
 # - Runs as root ON the target host (fresh provision or rebuild).
 # - Installs the pinned Nomad release (checksum-verified zip, never an
-#   unreviewed pipe), writes the single-node config (loopback bind,
-#   bootstrap_expect = 1, ACL enabled, Docker driver), installs the
+#   unreviewed pipe), installs the single committed agent config
+#   (config/nomad.hcl, absorbed from NomadSetup) as /etc/nomad.d/nomad.hcl
+#   plus the provision-time gossip file, installs the
 #   systemd unit, enables + starts the agent, waits for leadership.
 # - ACL bootstrap: the runner supplies NOMAD_GOSSIP_KEY (generated +
 #   escrowed runner-side when absent). This script ACL-bootstraps once and
@@ -53,7 +54,7 @@ refuse_preserved_self || exit 2
 log "nomad version: ${NOMAD_VERSION}"
 
 if [ "$dry_run" -eq 1 ]; then
-  log 'DRY-RUN: install nomad binary (checksum-verified) + write /etc/nomad.d/nomad.hcl (single server+client, loopback, ACL on, docker driver) + systemd unit'
+  log 'DRY-RUN: install nomad binary (checksum-verified) + install committed config/nomad.hcl -> /etc/nomad.d/nomad.hcl (single server+client, loopback, ACL on, docker driver) + systemd unit'
   log 'DRY-RUN: enable --now nomad, wait for leadership, ACL-bootstrap once (or BOOTSTRAP_EXISTS), emit escrow line for runner-side escrow'
   exit 0
 fi
@@ -85,57 +86,26 @@ else
   log "installed nomad ${NOMAD_VERSION} (checksum verified)."
 fi
 
-mkdir -p /opt/nomad /etc/nomad.d /opt/nomad-volumes/registry
-cat >/etc/nomad.d/nomad.hcl <<HCL_EOF
-datacenter = "ovh-vps"
-data_dir   = "/opt/nomad"
-bind_addr  = "127.0.0.1"
-
-# Single node: loopback advertise is correct — all consumers (tunnel,
-# local CLI) use loopback. Required on Nomad 2.x with a loopback bind.
-advertise {
-  http = "127.0.0.1:4646"
-  rpc  = "127.0.0.1:4647"
-  serf = "127.0.0.1:4648"
-}
-
-server {
-  enabled          = true
-  bootstrap_expect = 1
-}
-
-client {
-  enabled = true
-  servers = ["127.0.0.1:4647"]
-
-  host_network "loopback" {
-    interface = "lo"
-  }
-
-  # Backs the registry job's volume "data" (type = host). The htpasswd
-  # file content is rendered from OpenBao escrow at deploy time into
-  # /opt/nomad-volumes/registry-auth/ (see docs/09-docker-registry.md).
-  host_volume "registry-data" {
-    path      = "/opt/nomad-volumes/registry"
-    read_only = false
-  }
-}
-
-acl {
-  enabled = true
-}
-
-plugin "docker" {
-  config {
-    allow_privileged = false
-    volumes {
-      enabled = true
-    }
-  }
-}
-HCL_EOF
-chmod 600 /etc/nomad.d/nomad.hcl
-log 'wrote /etc/nomad.d/nomad.hcl (single server+client, loopback, ACL on).'
+mkdir -p /opt/nomad /etc/nomad.d /opt/nomad-volumes/registry \
+  /opt/nomad-volumes/dump-dev-media /opt/nomad-volumes/dump-prod-media \
+  /opt/nomad-volumes/dump-pg-dev /opt/nomad-volumes/dump-pg-prod
+# pg dirs must be writable by uid 999 (postgres image user); see config/nomad.hcl.
+chown 999:999 /opt/nomad-volumes/dump-pg-dev /opt/nomad-volumes/dump-pg-prod
+# The agent config is the single committed file config/nomad.hcl (absorbed
+# from NomadSetup; Refs #15) — install it, never generate a copy here, so
+# the host always runs exactly what Git holds. The file travels next to this
+# script: ../config/nomad.hcl in a checkout, or flattened to ./nomad.hcl
+# when shipped by run-remote-provision.sh.
+NOMAD_AGENT_SRC=''
+for candidate in "${GUARD_SCRIPT_DIR}/../config/nomad.hcl" "${GUARD_SCRIPT_DIR}/nomad.hcl"; do
+  if [ -f "$candidate" ]; then NOMAD_AGENT_SRC="$candidate"; break; fi
+done
+if [ -z "$NOMAD_AGENT_SRC" ]; then
+  echo 'committed agent config not found (expected ../config/nomad.hcl or ./nomad.hcl next to this script).' >&2
+  exit 2
+fi
+run install -m 600 "$NOMAD_AGENT_SRC" /etc/nomad.d/nomad.hcl
+log "installed /etc/nomad.d/nomad.hcl from ${NOMAD_AGENT_SRC} (single server+client, loopback, ACL on)."
 
 # Gossip key ships in a separate protected file (0600, never in Git) so
 # the main config stays committable. Written BEFORE the first start: the

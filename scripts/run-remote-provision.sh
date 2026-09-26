@@ -490,7 +490,11 @@ run ssh "${ssh_opts[@]}" "${ssh_user}@${host}" "mkdir -p ${remote_dir}/lib && ch
 remote_touched=1
 # Both backup scripts travel together: schedule-host-backup.sh fails closed
 # on a clean host when its application-workload companion is absent.
+# provision-nomad.sh installs the single committed agent config
+# (config/nomad.hcl, absorbed from NomadSetup), so the file ships flat into
+# the remote stage dir next to the script (./nomad.hcl fallback).
 run scp -p "${ssh_opts[@]}" "$repo_root/scripts/bootstrap-vps.sh" "$repo_root/scripts/provision-nomad.sh" \
+  "$repo_root/config/nomad.hcl" \
   "$repo_root/scripts/ensure-docker-firewall.sh" \
   "$repo_root/scripts/configure-tunnel-access.sh" "$repo_root/scripts/schedule-host-backup.sh" \
   "$repo_root/scripts/backup-app-workloads.sh" "$repo_root/scripts/fetch-r2-env.sh" \

@@ -117,6 +117,27 @@ NOMAD_TOKEN="$(bao kv get -field=token secret/projects/nomad/AGENT_READ_TOKEN)" 
   nomad job status <job>
 ```
 
+## 7. Absorbed from NomadSetup
+
+The single-node agent setup was absorbed from the (read-only) `NomadSetup`
+repository (Refs #15). `config/nomad.hcl` is now the single committed Nomad
+agent config: `scripts/provision-nomad.sh` installs it verbatim and only
+adds the provision-time secrets (gossip file, Docker auth file) on the host.
+The absorbed file keeps the dump host volumes, the Docker driver auth
+reference, and the gossip mechanism (separate 0600 file from
+`NOMAD_GOSSIP_KEY`, never committed). The source file contained no literal
+secrets, so no placeholder substitution was needed.
+
+| Old NomadSetup path | New platform path / disposition |
+|---|---|
+| `config/nomad.hcl` | `config/nomad.hcl` (single committed agent config) |
+| `scripts/registry-chunked-push.py` | `scripts/registry-chunked-push.py` (verbatim copy) |
+| `scripts/install-nomad.sh` | dropped, duplicate of `scripts/provision-nomad.sh` |
+| `scripts/bootstrap-acl.sh` | dropped, duplicate of the ACL-bootstrap section in `scripts/provision-nomad.sh` |
+| `scripts/verify.sh` | dropped, duplicate of `scripts/verify-nomad-live.sh` |
+| `config/nomad.service` | dropped, duplicate of the systemd unit embedded in `scripts/provision-nomad.sh` |
+| `jobs/registry.nomad.hcl` | dropped, duplicate of `jobs/registry.nomad.hcl` (platform copy is the evolved one) |
+
 ## Done when
 
 - [ ] Nomad server + client healthy on one node (`nomad server members`,
