@@ -88,14 +88,9 @@ fi
 
 mkdir -p /opt/nomad /etc/nomad.d /opt/nomad-volumes/registry \
   /opt/nomad-volumes/dump-dev-media /opt/nomad-volumes/dump-prod-media \
-  /opt/nomad-volumes/dump-pg-dev /opt/nomad-volumes/dump-pg-prod \
-  /opt/nomad/volumes/pg-shared
+  /opt/nomad-volumes/dump-pg-dev /opt/nomad-volumes/dump-pg-prod
 # pg dirs must be writable by uid 999 (postgres image user); see config/nomad.hcl.
-chown 999:999 /opt/nomad-volumes/dump-pg-dev /opt/nomad-volumes/dump-pg-prod \
-  /opt/nomad/volumes/pg-shared
-# pg-shared holds PGDATA + the pgBackRest spool (KSonny4/nomad-postgresql#1);
-# 0700 keeps every other host user out of the cluster files.
-chmod 0700 /opt/nomad/volumes/pg-shared
+chown 999:999 /opt/nomad-volumes/dump-pg-dev /opt/nomad-volumes/dump-pg-prod
 # The agent config is the single committed file config/nomad.hcl (absorbed
 # from NomadSetup; Refs #15) — install it, never generate a copy here, so
 # the host always runs exactly what Git holds. The file travels next to this
