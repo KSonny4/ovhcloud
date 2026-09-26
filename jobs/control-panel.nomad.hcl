@@ -17,7 +17,9 @@
 # until wired. Public hostname control.pkubelka.cz is a parent-phase tunnel
 # ingress re-point (DNS already CNAMEs the retired tunnel).
 #
-# Deploy: nomad job run jobs/control-panel.nomad.hcl
+# Deploy: bash scripts/deploy-control-panel.sh [--apply]
+#   (Grafana token from OpenBao; every other secret carried over from the
+#   live job, so a redeploy never empties one.)
 # Roll back: nomad job revert control-panel
 
 variable "cf_dns_api_token" {
@@ -47,7 +49,19 @@ variable "github_token" {
 variable "grafana_sa_token" {
   type        = string
   default     = ""
-  description = "TODO: GRAFANA_SERVICE_ACCOUNT_TOKEN (user-held, meowlabs Grafana Cloud). Empty = Grafana panels inert."
+  description = "GRAFANA_SERVICE_ACCOUNT_TOKEN: meowlabs stack service-account token (OpenBao secret/projects/nomad/GRAFANA_SERVICE_ACCOUNT_TOKEN field value, non-expiring). Empty = Grafana panels inert."
+}
+
+variable "unleash_admin_token" {
+  type        = string
+  default     = ""
+  description = "UNLEASH_ADMIN_TOKEN: Unleash Admin API token (OpenBao secret/projects/unleash/server field admin_token). Empty = automatization toggles inert."
+}
+
+variable "unleash_url" {
+  type        = string
+  default     = "https://unleash.pkubelka.cz"
+  description = "UNLEASH_URL: Unleash server base URL (no /api suffix; the client appends admin paths)."
 }
 
 variable "nomad_token" {
@@ -69,11 +83,13 @@ job "control-panel" {
   group "control-panel" {
     count = 1
 
-    # DYNAMIC loopback port (cognee pattern 2026-09-19): statics on host lo
-    # get squatted by phantom responders; the tunnel re-points post-deploy.
+    # Cloudflare's control ingress uses this fixed loopback origin port
+    # (infra/terraform/main.tf). A dynamic port changed on every allocation
+    # and left control.pkubelka.cz answering 502 (2026-09-25).
     network {
       port "http" {
         host_network = "loopback"
+        static       = 30811
       }
     }
 
@@ -112,7 +128,7 @@ job "control-panel" {
 
       config {
         network_mode = "host"
-        image = "registry.pkubelka.cz/control-panel@sha256:0a0dc15a312ebc6f0aa27a3911d44ff9a52850c04b781f2a10e1e3c8451b3b7e"
+        image = "registry.pkubelka.cz/control-panel:ui-d5e0d66@sha256:1980a93fbdd08393871b37997001803ecbad90cca384aa0016fa3464da947409"
         ports = ["http"]
 
         volumes = [
@@ -130,7 +146,8 @@ job "control-panel" {
         CONTROL_PANEL_URL     = "https://control.pkubelka.cz"
         CONTROL_HOST_NAME     = "vps-c85da816"
         NOMAD_ADDR            = "http://127.0.0.1:4646"
-        # TODO (see vars): empty until the user supplies values.
+        GRAFANA_URL           = "https://meowlabs.grafana.net"
+        # Secrets (see vars): empty ones keep their feature inert.
         CF_DNS_API_TOKEN            = "${var.cf_dns_api_token}"
         CF_ACCESS_CLIENT_ID         = "${var.cf_access_client_id}"
         CF_ACCESS_CLIENT_SECRET     = "${var.cf_access_client_secret}"
@@ -138,6 +155,8 @@ job "control-panel" {
         GRAFANA_SERVICE_ACCOUNT_TOKEN = "${var.grafana_sa_token}"
         NOMAD_TOKEN                 = "${var.nomad_token}"
         CONTROL_INGEST_TOKEN        = "${var.ingest_token}"
+        UNLEASH_ADMIN_TOKEN         = "${var.unleash_admin_token}"
+        UNLEASH_URL                 = "${var.unleash_url}"
       }
 
       resources {
