@@ -145,7 +145,7 @@ job "dump" {
 
       config {
         network_mode = "host"
-        image = "registry.pkubelka.cz/dump:1704041@sha256:2420804846754b6d3a242c69462ace2452e262bf811208ee2bc143d11f9c90ef"
+        image = "registry.pkubelka.cz/dump:7ac2708@sha256:55d93ed47826aee7f1acc307e9428bcd12b86c59cdb65b2049a85210783cbf63"
         ports = ["app"]
         # Nomad runs as root (no docker config): pull creds via vars.
         auth {
