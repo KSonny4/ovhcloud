@@ -334,11 +334,29 @@ if [ "$(id -u)" -ne 0 ] && [ "$dry_run" -eq 0 ]; then
 fi
 
 exclude="${APP_VOLUME_EXCLUDE:-}"
+
+# Shared PostgreSQL 18 `pg-shared` (KSonny4/nomad-postgresql#1). Its host
+# volume holds PGDATA and the pgBackRest spool. It is covered natively: the
+# pg_dump loop below dumps every database, and pgBackRest ships base backups
+# and WAL to its own R2 bucket. A tar of live PGDATA would be neither
+# consistent nor small, so the coverage gate treats this bind as covered.
+# The path mirrors host_volume "pg-shared" in config/nomad.hcl.
+pg_shared_volume='/opt/nomad/volumes/pg-shared'
+# pg-shared runs its postgres task from a registry image named pg-shared,
+# and Nomad names the container <task>-<alloc_id>. The same image also runs
+# the bootstrap, pgbouncer and pgbackrest tasks, so the name narrows it to
+# the postgres task. Matching on the image and name (not only Nomad labels)
+# keeps this working when the docker plugin sets no extra_labels.
+is_pg_shared_postgres() {
+  case "$2" in *pg-shared*) ;; *) return 1 ;; esac
+  case "$1" in postgres-*) return 0 ;; *) return 1 ;; esac
+}
 stamp="$(date -u +%Y%m%dT%H%M%SZ)"
 
 if [ "$dry_run" -eq 1 ]; then
   log 'DRY-RUN: enforce workload coverage contract (fail closed on unbackupable mounts/DBs)'
   log 'DRY-RUN: discover postgres containers (pg_dump each non-template DB to R2 app-databases/, record tables+rows+bytes+sha256)'
+  log 'DRY-RUN: pg-shared postgres container: docker exec -u postgres (peer auth on the local socket, no password), dump EVERY non-template DB incl. postgres to app-databases/pg-shared-<db>-<stamp>.dump.gz; enumeration failure fails the run'
   log 'DRY-RUN: snapshot each non-excluded Docker volume to R2 app-volumes/ (record files+bytes+sha256)'
   log 'DRY-RUN: snapshot APP_BIND_PATHS + Nomad-discovered host dirs to R2 app-binds/ (giant excludes apply, >4 GiB refused-and-named)'
   log 'DRY-RUN: upload every payload via size-safe transport (single-PUT under threshold, bounded multipart above; per-stage byte progress; remote-size verified) behind the 4 GiB refuse-and-name gate'
@@ -409,6 +427,10 @@ for cname in $(docker ps --format '{{.Names}}' 2>/dev/null || true); do
     [ "$sys" -eq 1 ] && continue
     case "$src" in
       /opt/nomad/alloc/*) continue ;;
+      "$pg_shared_volume"|"$pg_shared_volume"/*)
+        # Covered by the native pg-shared dumps + pgBackRest (see above);
+        # only for containers running the pg-shared image.
+        case "$image" in *pg-shared*) continue ;; esac ;;
       /opt/nomad-volumes/*auth*|*/htpasswd) continue ;;
       /opt/nomad-volumes/*)
         if [ -d "$src" ]; then
@@ -459,11 +481,41 @@ while IFS= read -r cname; do
   pgpass="$(printf '%s' "$cenv" | grep -E '^POSTGRES_PASSWORD=' | cut -d= -f2- | head -n1 || true)"
   db_exec=(docker exec)
   if [ -n "$pgpass" ]; then db_exec=(docker exec -e "PGPASSWORD=${pgpass}"); fi
-  dbs="$("${db_exec[@]}" "$cname" psql -U "$pguser" -d postgres -tAc "SELECT datname FROM pg_database WHERE NOT datistemplate AND datname NOT IN ('postgres');" 2>/dev/null || true)"
+  # Default (every other postgres container, unchanged): skip the postgres
+  # maintenance DB, count/precheck only the public schema, and key the dump
+  # by container name.
+  pg_shared=0
+  db_list_sql="SELECT datname FROM pg_database WHERE NOT datistemplate AND datname NOT IN ('postgres');"
+  table_scope="table_schema='public'"
+  key_name="$cname"
+  if is_pg_shared_postgres "$cname" "$image"; then
+    # pg-shared: pg_hba allows the postgres superuser only by peer auth on
+    # the local socket, so exec as the OS user postgres. No password and no
+    # OpenBao read are involved. Every non-template DB is dumped, including
+    # postgres (it holds the ops schema), with no empty-DB skip. The key
+    # uses a stable name because the alloc id in cname changes per deploy.
+    pg_shared=1
+    pguser='postgres'
+    db_exec=(docker exec -u postgres)
+    db_list_sql='SELECT datname FROM pg_database WHERE NOT datistemplate;'
+    table_scope="table_schema NOT IN ('pg_catalog','information_schema')"
+    key_name='pg-shared'
+  fi
+  if ! dbs="$("${db_exec[@]}" "$cname" psql -U "$pguser" -d postgres -tAc "$db_list_sql" 2>/dev/null)"; then
+    dbs=''
+    if [ "$pg_shared" -eq 1 ]; then
+      echo "FAILED to enumerate databases in ${cname} (pg-shared; fail closed)." >&2
+      FAILED=1
+    fi
+  fi
+  if [ "$pg_shared" -eq 1 ] && [ -z "$dbs" ] && [ "$FAILED" -eq 0 ]; then
+    echo "FAILED: pg-shared ${cname} listed no databases (fail closed)." >&2
+    FAILED=1
+  fi
   for db in $dbs; do
-    key="app-databases/${cname}-${db}-${stamp}.dump.gz"
-    precheck="$("${db_exec[@]}" "$cname" psql -U "$pguser" -d "$db" -tAc "SELECT count(*) FROM information_schema.tables WHERE table_schema='public';" 2>/dev/null || echo 0)"
-    if [ "${precheck:-0}" -eq 0 ]; then
+    key="app-databases/${key_name}-${db}-${stamp}.dump.gz"
+    precheck="$("${db_exec[@]}" "$cname" psql -U "$pguser" -d "$db" -tAc "SELECT count(*) FROM information_schema.tables WHERE ${table_scope};" 2>/dev/null || echo 0)"
+    if [ "$pg_shared" -eq 0 ] && [ "${precheck:-0}" -eq 0 ]; then
       log "database skipped (empty, no user tables): ${cname}/${db}"
       continue
     fi
@@ -484,7 +536,7 @@ while IFS= read -r cname; do
         dbytes="$(stat -c%s "$workdir/db.dump.gz" 2>/dev/null || stat -f%z "$workdir/db.dump.gz" 2>/dev/null || wc -c <"$workdir/db.dump.gz")"
         # Verifiable counts for restore: tables + total rows (in-service
         # restores must prove data parity, not just readability).
-        counts="$("${db_exec[@]}" "$cname" psql -U "$pguser" -d "$db" -tAc "SELECT (SELECT count(*) FROM information_schema.tables WHERE table_schema='public'), coalesce((SELECT sum(n_live_tup)::int FROM pg_stat_user_tables),0);" 2>/dev/null || echo '0|0')"
+        counts="$("${db_exec[@]}" "$cname" psql -U "$pguser" -d "$db" -tAc "SELECT (SELECT count(*) FROM information_schema.tables WHERE ${table_scope}), coalesce((SELECT sum(n_live_tup)::int FROM pg_stat_user_tables),0);" 2>/dev/null || echo '0|0')"
         tables="${counts%%|*}"; rows="${counts##*|}"
         manifest_db="$(printf '%s' "$manifest_db" | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin) + [{"container": sys.argv[1], "image": sys.argv[6], "user": sys.argv[7], "database": sys.argv[2], "key": sys.argv[3], "tables": int(sys.argv[4]), "rows": int(sys.argv[5]), "bytes": int(sys.argv[8]), "sha256": sys.argv[9]}]))' "$cname" "$db" "$key" "${tables:-0}" "${rows:-0}" "$image" "${pguser}" "$dbytes" "$dsha")"
         log "database backup ok: ${key} (tables=${tables:-0}, rows=${rows:-0}, bytes=${dbytes})"

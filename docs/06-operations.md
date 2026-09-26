@@ -70,6 +70,9 @@ Short build spikes are fine. Sustained saturation that affects the control plane
 
 There is no built-in notification center on this plane — alerting is the
 operator's external channel (see [05](05-backup-recovery.md) section 10).
+Grafana-managed rules committed here (import-ready, routed to the
+`keeper-telegram` contact): `grafana/alerts/pg-shared.json` covers pg-shared
+and the host disk thresholds (see [03](03-nomad.md) section 8).
 At minimum, watch:
 
 - Deployment failures (`nomad job status` degraded/failed allocations)
