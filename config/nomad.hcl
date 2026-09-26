@@ -76,6 +76,18 @@ acl {
   enabled = true
 }
 
+# Agent telemetry for Slice N right-sizing (Refs KSonny4/platform#16):
+# exposes Prometheus-format metrics at /v1/metrics?format=prometheus for
+# the nomad-metrics-alloy job to scrape. Reshipping this config requires
+# an agent restart (running allocations survive it); see docs/03-nomad.md.
+telemetry {
+  collection_interval        = "10s"
+  disable_hostname           = true
+  prometheus_metrics         = true
+  publish_allocation_metrics = true
+  publish_node_metrics       = true
+}
+
 plugin "docker" {
   config {
     # Driver-level registry auth (KSonny4/dump#3): the dump job pulls a

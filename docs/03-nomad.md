@@ -138,6 +138,45 @@ secrets, so no placeholder substitution was needed.
 | `config/nomad.service` | dropped, duplicate of the systemd unit embedded in `scripts/provision-nomad.sh` |
 | `jobs/registry.nomad.hcl` | dropped, duplicate of `jobs/registry.nomad.hcl` (platform copy is the evolved one) |
 
+## 8. Agent telemetry → Grafana Cloud (Slice N, Refs #16)
+
+The agent config (`config/nomad.hcl`) enables Prometheus telemetry so the
+Slice N right-size pass has real usage history:
+
+```hcl
+telemetry {
+  collection_interval        = "10s"
+  disable_hostname           = true
+  prometheus_metrics         = true
+  publish_allocation_metrics = true
+  publish_node_metrics       = true
+}
+```
+
+The `nomad-metrics-alloy` job (`jobs/nomad-metrics-alloy.nomad.hcl`)
+scrapes `http://127.0.0.1:4646/v1/metrics?format=prometheus` every 30s and
+`remote_write`s to Grafana Cloud (`prometheus-prod-55-...`). No Nomad token
+is needed for the scrape: `/v1/metrics` requires no ACL (Nomad HTTP API
+docs: "ACL Required: none"; verified live — an unauthenticated GET reached
+the endpoint). The Cloud write token arrives via `-var` from Bao
+(`secret/projects/nomad/GRAFANA_CLOUD_RW2`, field `token`), never in Git.
+
+Apply (owner/operator edge; no lane ever applies):
+
+1. Ship the config: `scripts/provision-nomad.sh` installs
+   `config/nomad.hcl` as `/etc/nomad.d/nomad.hcl`, then
+   `systemctl restart nomad`. Running allocations survive an agent
+   restart. Verify: `curl http://127.0.0.1:4646/v1/metrics?format=prometheus`
+   returns series (before telemetry it answers 415 "Prometheus is not
+   enabled").
+2. Submit the scraper with the Cloud token from Bao:
+   `nomad job run -var="grafana_cloud_rw2_token=$(bao kv get -field=token secret/projects/nomad/GRAFANA_CLOUD_RW2)" jobs/nomad-metrics-alloy.nomad.hcl`.
+   Telemetry must be applied first — until step 1 the scrape 415s.
+
+Roll back: `nomad job stop nomad-metrics-alloy` stops shipping (history
+already in Cloud stays queryable); to silence the endpoint, remove the
+`telemetry` block, reship the config, and restart the agent again.
+
 ## Done when
 
 - [ ] Nomad server + client healthy on one node (`nomad server members`,
