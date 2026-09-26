@@ -17,9 +17,15 @@
 # submit-job (the watcher deploy path), read-logs (deploy diagnosis).
 # Deliberately absent: dispatch-job (dispatch stays with narrow per-project
 # tokens such as graph-prep-dispatch), scale-job, alloc-lifecycle,
-# alloc-exec, Nomad Variables (no `variables` block), host volumes (no
-# `host_volume` block), and no `operator`, `agent`, `quota`, `plugin` or
-# `sentinel` block. There is no `policy = "write"` anywhere in this file.
+# alloc-exec, Nomad Variables (no `variables` block), and no `operator`,
+# `agent`, `quota`, `plugin` or `sentinel` block. There is no
+# `policy = "write"` anywhere in this file.
+#
+# Scoped host_volume exception (KSonny4/forgejo#1): exactly the three
+# Forgejo volumes below, each `capabilities = ["mount-readwrite"]` (the
+# capabilities spelling — `policy = "write"` stays forbidden everywhere).
+# No other host_volume block is allowed here; no host_volume block is
+# allowed in any other policy (enforced by tests/test_acl_s4.py).
 #
 # `node { policy = "read" }` gives the watcher node totals for scheduling
 # proof; the node block has no capability list, so the shorthand is the only
@@ -36,4 +42,16 @@ namespace "default" {
 
 node {
   policy = "read"
+}
+
+host_volume "forgejo-pg-data" {
+  capabilities = ["mount-readwrite"]
+}
+
+host_volume "forgejo-data" {
+  capabilities = ["mount-readwrite"]
+}
+
+host_volume "forgejo-runner-data" {
+  capabilities = ["mount-readwrite"]
 }
