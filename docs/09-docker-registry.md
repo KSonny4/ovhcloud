@@ -102,3 +102,23 @@ terraform import cloudflare_zero_trust_tunnel_cloudflared_config.admin <account-
 
   then `terraform plan` must show no changes. IDs above are the live objects created 2026-09-17 (zone/account/tunnel IDs per the existing configuration).
 - **Duplicate note:** a separate `registry:3` instance already exists on the host, predating this deployment. Consolidate on one registry later; the proven one is this job (`registry.pkubelka.cz`, `registry:2.8.3`).
+
+## 8. Client-level pull auth (Nomad docker plugin, Refs #16)
+
+Since 2026-09-26 the Nomad client itself carries registry credentials, so
+jobspecs stay password-free
+(Refs KSonny4/polymarket-wallet-finder#2438 — a leaked `-var` password in a
+lane transcript forced a rotation):
+
+- The docker plugin in `config/nomad.hcl` points at
+  `auth { config = "/opt/nomad/docker-auth.json" }` (dockercfg format, one
+  `auths` entry per registry host the jobs pull from).
+- The file is written at the deploy edge from Bao
+  `secret/projects/nomad/REGISTRY` (fields `username`/`password`), piped
+  over stdin and installed `0600 root:root`. It lives outside
+  `/etc/nomad.d` (the agent parses that dir as HCL and fails on JSON).
+  Path and field names only here — never values, never in Git.
+- Jobspecs MUST NOT carry task-level docker `auth` blocks: a task-level
+  `auth` block OVERRIDES the plugin-level config, so a stale inline
+  password breaks the next pull even with healthy node auth. Any job still
+  carrying one fails its next pull until redeployed without it.
