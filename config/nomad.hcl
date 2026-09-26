@@ -70,6 +70,15 @@ client {
     path      = "/opt/nomad-volumes/dump-pg-prod"
     read_only = false
   }
+
+  # Shared PostgreSQL 18 `pg-shared` (KSonny4/nomad-postgresql#1): PGDATA +
+  # pgBackRest WAL spool. Owned 999:999 (postgres image user), mode 0700 —
+  # created by scripts/provision-nomad.sh. Path is fixed by the
+  # nomad-postgresql runbooks. Reshipping needs an agent restart.
+  host_volume "pg-shared" {
+    path      = "/opt/nomad/volumes/pg-shared"
+    read_only = false
+  }
 }
 
 acl {
