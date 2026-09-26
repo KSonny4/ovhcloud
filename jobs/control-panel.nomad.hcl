@@ -141,8 +141,9 @@ job "control-panel" {
       }
 
       resources {
-        cpu    = 250
-        memory = 512
+        cpu        = 100
+        memory     = 80
+        memory_max = 512
       }
 
       service {
