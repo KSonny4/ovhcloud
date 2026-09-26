@@ -31,7 +31,9 @@ ssh_run() { ssh -i "$SSH_KEY" -o BatchMode=yes -o ConnectTimeout=20 "ubuntu@$HOS
 
 CID="$(bao kv get -field=client_id secret/projects/nomad/EDGE_ACCESS_SERVICE_TOKEN 2>/dev/null || true)"
 CS="$(bao kv get -field=client_secret secret/projects/nomad/EDGE_ACCESS_SERVICE_TOKEN 2>/dev/null || true)"
-[ -n "$CID" ] && [ -n "$CS" ] || { echo 'FAIL access service token unreadable from OpenBao'; exit 2; }
+if [ -z "$CID" ] || [ -z "$CS" ]; then
+  echo 'FAIL access service token unreadable from OpenBao'; exit 2
+fi
 # Cluster ACL token for the Nomad read APIs (server members / node status
 # enforce ACLs; anonymous calls 403). Memory-only: piped to the target over
 # the encrypted channel, never printed, never in argv.

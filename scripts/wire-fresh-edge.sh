@@ -134,7 +134,9 @@ admin="$(bao kv get -field=ADMIN_CLOUDFLARE secret/projects/nomad/ADMIN_CLOUDFLA
 svc_id="$(bao kv get -field=client_id secret/projects/nomad/EDGE_ACCESS_SERVICE_TOKEN 2>/dev/null || true)"
 svc_secret="$(bao kv get -field=client_secret secret/projects/nomad/EDGE_ACCESS_SERVICE_TOKEN 2>/dev/null || true)"
 svc_token_id="$(bao kv get -field=token_id secret/projects/nomad/EDGE_ACCESS_SERVICE_TOKEN 2>/dev/null || true)"
-[ -n "$admin" ] && [ -n "$svc_id" ] && [ -n "$svc_secret" ] && [ -n "$svc_token_id" ] || { echo 'OpenBao escrow incomplete (admin + service-token triple required).' >&2; exit 2; }
+if [ -z "$admin" ] || [ -z "$svc_id" ] || [ -z "$svc_secret" ] || [ -z "$svc_token_id" ]; then
+  echo 'OpenBao escrow incomplete (admin + service-token triple required).' >&2; exit 2
+fi
 # Fail-closed envelope read: transport failure, empty body, bad JSON, or
 # "success":false all exit 2 BEFORE any caller can mistake absence for
 # emptiness (a failed ingress/DNS/app/policy read must never trigger a

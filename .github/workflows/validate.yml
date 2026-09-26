@@ -12,6 +12,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: '3.x'
@@ -22,7 +24,16 @@ jobs:
         with:
           node-version: '20.x'
       - name: Install graft freshness checker
-        run: npm install --global graft@0.3.1
+        run: npm install --global @nanonets/graft@0.19.0
+      - name: Build graft wiring graph (checkout-local cache, offline)
+        run: graft build
+      - name: Install pinned shellcheck
+        run: |
+          SC_VERSION=0.11.0
+          curl -sSL "https://github.com/koalaman/shellcheck/releases/download/v${SC_VERSION}/shellcheck-v${SC_VERSION}.linux.x86_64.tar.xz" -o /tmp/shellcheck.tar.xz
+          tar -xf /tmp/shellcheck.tar.xz -C /tmp
+          sudo install -m 0755 "/tmp/shellcheck-v${SC_VERSION}/shellcheck" /usr/local/bin/shellcheck
+          shellcheck --version
       - name: Validate repository and non-live IaC
         run: bash scripts/validate-repository.sh
       - name: Scan repository for secrets

@@ -201,7 +201,9 @@ rm -rf /tmp/rehearsal-adopt && mkdir -p /tmp/rehearsal-adopt
 printf '{"tunnel_id":"t","tunnel_name":"n","routes":[]}' > /tmp/rehearsal-adopt-handoff.json
 if BAO_ADDR=https://secrets.pkubelka.cz TERRAFORM_FRESH_DIR=/tmp/rehearsal-adopt bash scripts/adopt-fresh-edge.sh --handoff /tmp/rehearsal-adopt-handoff.json --apply >/tmp/rehearsal-adopt.log 2>&1; then echo 'backendless --apply accepted.' >&2; exit 1; fi
 grep -q 'without an encrypted remote backend' /tmp/rehearsal-adopt.log || { echo 'backendless refusal message missing.' >&2; exit 1; }
-[ -f /tmp/rehearsal-adopt/main.tf ] && { echo 'backendless --apply mutated before refusing.' >&2; exit 1; } || true
+if [ -f /tmp/rehearsal-adopt/main.tf ]; then
+  echo 'backendless --apply mutated before refusing.' >&2; exit 1
+fi
 rm -rf /tmp/rehearsal-adopt /tmp/rehearsal-adopt-handoff.json /tmp/rehearsal-adopt.log
 log 'backendless --apply refused fail-closed (validation/plan only without backend.hcl).'
 # Regression gate for the fresh-host partial-backup failure: the runner must
@@ -236,10 +238,14 @@ print(f'edge order proven: wire@{w} adopt@{a} connector@{c} token@{s} verify@{v}
 PYEOF
 sv_out="$(CLOUDFLARE_ACCOUNT_ID=rehearsal CLOUDFLARE_ZONE_ID=rehearsal TUNNEL_ID=rehearsal-tunnel EDGE_HOSTNAME=wire.rehearsal.invalid bash scripts/wire-fresh-edge.sh --dry-run --skip-verify 2>&1 || true)"
 printf '%s' "$sv_out" | grep -q 'verification deferred' || { echo 'skip-verify mode omits the deferral marker.' >&2; exit 1; }
-printf '%s' "$sv_out" | grep -q 'verify UI 200' && { echo 'skip-verify mode still verifies.' >&2; exit 1; } || true
+if printf '%s' "$sv_out" | grep -q 'verify UI 200'; then
+  echo 'skip-verify mode still verifies.' >&2; exit 1
+fi
 vo_out="$(CLOUDFLARE_ACCOUNT_ID=rehearsal CLOUDFLARE_ZONE_ID=rehearsal TUNNEL_ID=rehearsal-tunnel EDGE_HOSTNAME=wire.rehearsal.invalid bash scripts/wire-fresh-edge.sh --dry-run --verify-only 2>&1 || true)"
 printf '%s' "$vo_out" | grep -q 'verify UI 200' || { echo 'verify-only mode omits verification.' >&2; exit 1; }
-printf '%s' "$vo_out" | grep -q 'DRY-RUN: DNS CNAME' && { echo 'verify-only mode still mutates.' >&2; exit 1; } || true
+if printf '%s' "$vo_out" | grep -q 'DRY-RUN: DNS CNAME'; then
+  echo 'verify-only mode still mutates.' >&2; exit 1
+fi
 log 'wire mode partition proven: skip-verify wires without verifying, verify-only verifies without wiring.'
 # Dedicated tunnel identity: per-target secret path, preserved name refused,
 # preserved singleton escrow never consumed on the fresh path.
@@ -453,15 +459,21 @@ rm -rf /tmp/rehearsal-fresh-out
 CLOUDFLARE_ACCOUNT_ID=rehearsal CLOUDFLARE_ZONE_ID=rehearsal \
   bash scripts/emit-fresh-imports.sh --handoff /tmp/rehearsal-handoff.json --out-dir /tmp/rehearsal-fresh-out > /tmp/rehearsal-imports.log 2>&1 \
   || { echo 'emit generated config failed on synthetic handoff.' >&2; exit 1; }
-[ -f /tmp/rehearsal-fresh-out/main.tf ] && [ -f /tmp/rehearsal-fresh-out/imports.tf ] || { echo 'emitter omits main.tf/imports.tf.' >&2; exit 1; }
+if [ ! -f /tmp/rehearsal-fresh-out/main.tf ] || [ ! -f /tmp/rehearsal-fresh-out/imports.tf ]; then
+  echo 'emitter omits main.tf/imports.tf.' >&2; exit 1
+fi
 grep -q 'non_identity' /tmp/rehearsal-fresh-out/main.tf || { echo 'generated apps diverge from the nested non_identity convention.' >&2; exit 1; }
 # Exactness: generated config must mirror API-created resources attribute for
 # attribute (live converged shape), so post-adoption plan is empty.
 grep -q 'name                      = "Nomad UI"' /tmp/rehearsal-fresh-out/main.tf || { echo 'generated UI app name diverges from live.' >&2; exit 1; }
 grep -q 'name                      = "Nomad SSH Administration"' /tmp/rehearsal-fresh-out/main.tf || { echo 'generated ssh app name diverges from live.' >&2; exit 1; }
-grep -q '"Fresh ' /tmp/rehearsal-fresh-out/main.tf && { echo 'generated config carries Fresh-prefixed names.' >&2; exit 1; } || true
+if grep -q '"Fresh ' /tmp/rehearsal-fresh-out/main.tf; then
+  echo 'generated config carries Fresh-prefixed names.' >&2; exit 1
+fi
 grep -q 'allowed_idps              = \[\]' /tmp/rehearsal-fresh-out/main.tf || { echo 'generated apps diverge from converged empty allowed_idps.' >&2; exit 1; }
-grep -q 'comment = "Fresh ' /tmp/rehearsal-fresh-out/main.tf && { echo 'generated DNS carries comments wire never creates.' >&2; exit 1; } || true
+if grep -q 'comment = "Fresh ' /tmp/rehearsal-fresh-out/main.tf; then
+  echo 'generated DNS carries comments wire never creates.' >&2; exit 1
+fi
 ! grep -q 'allowed_idps.*otp' scripts/wire-fresh-edge.sh || { echo 'wire still injects OTP into app creation.' >&2; exit 1; }
 if command -v terraform >/dev/null 2>&1; then
   cp infra/terraform-fresh/versions.tf infra/terraform-fresh/variables.tf /tmp/rehearsal-fresh-out/
@@ -489,9 +501,13 @@ sed -n '/^ssh_keys_match() {/,/^}/p' scripts/run-remote-provision.sh > /tmp/rehe
 # shellcheck disable=SC1091 # generated snippet (exact function under test)
 . /tmp/rehearsal-sshfn.sh
 ssh-keygen -t ed25519 -N '' -f /tmp/rehearsal-k1 -q && ssh-keygen -t ed25519 -N '' -f /tmp/rehearsal-k2 -q
-ssh_keys_match /tmp/rehearsal-k1.pub "$(cat /tmp/rehearsal-k1.pub)" || { echo 'ssh_keys_match rejects identical keys.' >&2; exit 1; }
-ssh_keys_match /tmp/rehearsal-k1.pub "$(cat /tmp/rehearsal-k2.pub)" && { echo 'ssh_keys_match accepts different keys.' >&2; exit 1; } || true
-ssh_keys_match /tmp/rehearsal-k1.pub 'not-a-key' && { echo 'ssh_keys_match accepts garbage.' >&2; exit 1; } || true
+ssh_keys_match /tmp/rehearsal-k1.pub "$(< /tmp/rehearsal-k1.pub)" || { echo 'ssh_keys_match rejects identical keys.' >&2; exit 1; }
+if ssh_keys_match /tmp/rehearsal-k1.pub "$(< /tmp/rehearsal-k2.pub)"; then
+  echo 'ssh_keys_match accepts different keys.' >&2; exit 1
+fi
+if ssh_keys_match /tmp/rehearsal-k1.pub 'not-a-key'; then
+  echo 'ssh_keys_match accepts garbage.' >&2; exit 1
+fi
 rm -f /tmp/rehearsal-sshfn.sh /tmp/rehearsal-k1 /tmp/rehearsal-k1.pub /tmp/rehearsal-k2 /tmp/rehearsal-k2.pub
 log 'ssh key identity gate proven: identical accepted, different/garbage rejected.'
 note_evidence edge_ready dryrun_hostnames=2
@@ -524,7 +540,9 @@ for want in '--network' 'dbnet' '-p' '5433:5432/tcp' '--restart' 'on-failure:3' 
   printf '%s' "$dbflags_out" | grep -qF -- "$want" || { echo "db flag builder broken (missing ${want})." >&2; exit 1; }
 done
 for absent in 'POSTGRES_USER' 'POSTGRES_PASSWORD' 'REDACTED' 'dbproof-data:/var/lib/postgresql/data'; do
-  printf '%s' "$dbflags_out" | grep -qF -- "$absent" && { echo "db flag builder leaks ${absent}." >&2; exit 1; } || true
+  if printf '%s' "$dbflags_out" | grep -qF -- "$absent"; then
+    echo "db flag builder leaks ${absent}." >&2; exit 1
+  fi
 done
 note_evidence backup_ready dbflags_present=16
 note_evidence backup_ready dbflags_absent=4

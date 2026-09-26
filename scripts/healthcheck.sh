@@ -9,7 +9,7 @@ date -Is
 
 echo
 echo '== operating system =='
-cat /etc/os-release 2>/dev/null | grep -E '^(PRETTY_NAME|VERSION_ID)=' || true
+grep -E '^(PRETTY_NAME|VERSION_ID)=' /etc/os-release 2>/dev/null || true
 uname -a
 
 echo

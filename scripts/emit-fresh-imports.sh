@@ -33,7 +33,9 @@ while [ "$#" -gt 0 ]; do
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
-[ -n "$handoff" ] && [ -f "$handoff" ] || { echo 'handoff JSON file required (--handoff PATH).' >&2; exit 2; }
+if [ -z "$handoff" ] || [ ! -f "$handoff" ]; then
+  echo 'handoff JSON file required (--handoff PATH).' >&2; exit 2
+fi
 command -v python3 >/dev/null 2>&1 || { echo 'python3 is required.' >&2; exit 2; }
 [ -n "${CLOUDFLARE_ACCOUNT_ID:-}" ] || { echo 'CLOUDFLARE_ACCOUNT_ID must be set.' >&2; exit 2; }
 [ -n "${CLOUDFLARE_ZONE_ID:-}" ] || { echo 'CLOUDFLARE_ZONE_ID must be set.' >&2; exit 2; }
